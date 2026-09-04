@@ -13,6 +13,8 @@ use super::AppConfig;
 
 const MODEL_EVAL_CODEX_OAUTH_ENV: &str = "HA_MODEL_EVAL_LOCAL_CODEX_OAUTH";
 const MODEL_EVAL_CODEX_SECRET_SCHEMA: &str = "model-eval-codex-oauth.v1";
+const CONFIG_WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+const CONFIG_WRITE_LOCK_POLL: Duration = Duration::from_millis(25);
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -569,7 +571,7 @@ fn parse_config_str_with_migrations(data: &str) -> Result<(AppConfig, ConfigMigr
     let mut config: AppConfig = serde_json::from_value(raw)?;
     let mut migrations = ConfigMigrationReport::default();
     if !has_memory_v2 {
-        config.memory = crate::memory::MemoryRuntimeConfig::from_legacy(
+        config.memory = ha_config_schema::memory::MemoryRuntimeConfig::from_legacy(
             &config.memory_extract,
             &config.memory_selection,
             &config.memory_budget,
@@ -602,9 +604,11 @@ fn parse_config_str_with_migrations(data: &str) -> Result<(AppConfig, ConfigMigr
 /// write failure never discards the already parsed user config: the migrated
 /// in-memory view remains active and the next startup retries persistence.
 fn persist_config_migrations(path: &Path, config: &AppConfig, migrations: ConfigMigrationReport) {
+    // autosave 必须无条件执行（server setup / 启动迁移都发生在 init_runtime
+    // 之前或之外），故直调 config::autosave，绝不挂注入钩子。
     let _reason_guard =
-        crate::backup::scope_save_reason("memory-recall-opt-in", "startup-migration");
-    crate::backup::snapshot_before_write(path, "config");
+        super::autosave::scope_save_reason("memory-recall-opt-in", "startup-migration");
+    super::autosave::snapshot_before_write(path, "config");
     let result = serde_json::to_string_pretty(config)
         .map_err(std::io::Error::other)
         .and_then(|data| crate::platform::write_secure_file(path, data.as_bytes()));
@@ -613,16 +617,49 @@ fn persist_config_migrations(path: &Path, config: &AppConfig, migrations: Config
             "config",
             "migration",
             "Persisted Memory config contract v{} (implicit recall reset: {})",
-            crate::memory::MEMORY_RUNTIME_CONFIG_VERSION,
+            ha_config_schema::memory::MEMORY_RUNTIME_CONFIG_VERSION,
             migrations.recall_default_reset
         ),
         Err(error) => app_warn!(
             "config",
             "migration",
             "Could not persist Memory config contract v{}; using the migrated in-memory view and retrying next startup: {}",
-            crate::memory::MEMORY_RUNTIME_CONFIG_VERSION,
+            ha_config_schema::memory::MEMORY_RUNTIME_CONFIG_VERSION,
             error
         ),
+    }
+}
+
+// ── 写路径副作用注入（切 config → backup / globals / hooks 环边）────────
+//
+// persistence 是读写 contract 的家（AGENTS.md 红线）。写前 autosave 快照走
+// `config::autosave` **直调**（必须无条件执行，见该模块头注释——server setup
+// 等入口在 init_runtime 之前/之外写 config，注入钩子会静默失效）。这里只注入
+// 「保存后广播 / ConfigChange hook」：它们依赖 globals / hooks（大环成员），
+// 且在 init_runtime 之前本就没有订阅者（bus / terminal manager 均未初始化，
+// hook 注册表未加载），未注册即跳过与旧行为等价。
+
+pub struct ConfigSideEffects {
+    /// 保存并发布新快照后的联动（terminal 远程写开关 + `config:changed` 事件）。
+    pub post_save: fn(&AppConfig, &str, Option<&str>),
+    /// `reload_cache_from_disk` 后的联动（同上，rollback 语义的固定载荷）。
+    pub post_reload: fn(&AppConfig),
+    /// ConfigChange 观察 hook（`hooks::fire_config_change`）。
+    pub config_changed: fn(&str, &str),
+}
+
+static SIDE_EFFECTS: std::sync::OnceLock<ConfigSideEffects> = std::sync::OnceLock::new();
+
+/// 装配期一次性注册（`init_runtime` 内经 `Once` 保证单次调用）。
+///
+/// 冲突即 panic——`post_save` 携带 `allowRemoteWrites` 的远程 shell 即时
+/// 撤销（安全联动），来源被顶替与 dangerous-mode 配置源被顶替同级，宁可
+/// 起不来也不能带着被换掉的撤销逻辑继续跑。crate 内可见（`pub(crate)`），
+/// 外部无从抢注。
+pub(crate) fn register_side_effects(effects: ConfigSideEffects) {
+    if SIDE_EFFECTS.set(effects).is_err() {
+        eprintln!("[FATAL] config side effects already registered");
+        panic!("config side effects already registered");
     }
 }
 
@@ -640,7 +677,7 @@ pub fn cached_config() -> Arc<AppConfig> {
 /// of inheriting the developer's `~/.hope-agent/config.json` (which would
 /// otherwise leak provider lists, active models, etc. into tests on the
 /// developer machine).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn replace_cache_for_test(config: AppConfig) {
     cache().store(Arc::new(config));
     clear_config_load_failure();
@@ -665,7 +702,53 @@ pub fn load_config() -> Result<AppConfig> {
 /// Callers must pass the full, mutated config — this function does not merge
 /// with the existing on-disk content.
 pub fn save_config(config: &AppConfig) -> Result<()> {
+    let _write_guard = write_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let _cross_process_guard = acquire_config_write_lock()?;
     save_config_with_change(config, "app", None)
+}
+
+fn complete_config_write<Publish, PostSave, ConfigChanged>(
+    config: &AppConfig,
+    change_category: &str,
+    change_source: Option<&str>,
+    outcome: crate::platform::SecureWriteOutcome,
+    publish: Publish,
+    post_save: PostSave,
+    config_changed: ConfigChanged,
+) -> Result<()>
+where
+    Publish: FnOnce(&AppConfig),
+    PostSave: FnOnce(&AppConfig, &str, Option<&str>),
+    ConfigChanged: FnOnce(&str, &str),
+{
+    let durability_warning = match outcome {
+        crate::platform::SecureWriteOutcome::Durable => None,
+        crate::platform::SecureWriteOutcome::PublishedButNotDurable(error) => Some(error),
+        crate::platform::SecureWriteOutcome::NotPublished(error) => return Err(error.into()),
+    };
+
+    // Publication, rather than the final durability barrier, is the logical
+    // commit point. Both published outcomes must refresh the one process-wide
+    // snapshot and security-sensitive observers before best-effort diagnostics.
+    publish(config);
+    post_save(config, change_category, change_source);
+    if let Some(source) = change_source {
+        config_changed(change_category, source);
+    }
+    if let Some(error) = durability_warning {
+        app_warn!(
+            "config",
+            "save_config",
+            "Config change {}/{} was published, but its final durability barrier failed; \
+             runtime state remains aligned with the published file: {}",
+            change_category,
+            change_source.unwrap_or("unspecified"),
+            error
+        );
+    }
+    Ok(())
 }
 
 fn save_config_with_change(
@@ -712,34 +795,36 @@ fn save_config_with_change(
     );
     // Autosave the pre-change file so every settings edit is rollback-able.
     // Failures are logged inside the helper and never block the write.
-    crate::backup::snapshot_before_write(&path, "config");
+    super::autosave::snapshot_before_write(&path, "config");
 
     let data = serde_json::to_string_pretty(config)?;
-    std::fs::write(&path, data)?;
-
-    // Atomically publish the new snapshot so subsequent cached_config() calls
-    // see the refreshed state without touching disk.
-    cache().store(Arc::new(config.clone()));
-    clear_config_load_failure();
-
-    // `allowRemoteWrites` is also a live capability: publishing a disabled
-    // value must immediately revoke remote-created shells, not merely reject
-    // the next HTTP request. The terminal manager serializes this with remote
-    // creation so no shell can slip through the transition.
-    if let Some(manager) = crate::globals::get_terminal_manager() {
-        manager.set_remote_access_allowed(config.filesystem.allow_remote_writes);
-    }
-
-    // Notify subscribers (frontend hot-reload hooks, in-process listeners).
-    // Best-effort: the bus may not be initialized in tests or CLI-only modes.
-    if let Some(bus) = crate::globals::get_event_bus() {
-        let mut payload = serde_json::json!({ "category": change_category });
-        if let Some(source) = change_source {
-            payload["source"] = serde_json::json!(source);
-        }
-        bus.emit("config:changed", payload);
-    }
-    Ok(())
+    // Serialize completely before touching the destination, then fsync and
+    // atomically replace it. A crash can expose the old or the new UTF-8 JSON,
+    // never a half-written multibyte character or truncated document.
+    let outcome = crate::platform::write_secure_file_outcome(&path, data.as_bytes());
+    let effects = SIDE_EFFECTS.get();
+    complete_config_write(
+        config,
+        change_category,
+        change_source,
+        outcome,
+        |config| {
+            cache().store(Arc::new(config.clone()));
+            clear_config_load_failure();
+        },
+        |config, category, source| {
+            // 保存后联动（terminal 远程写开关 + `config:changed` 广播）经注入的
+            // side effects 执行——best-effort，未注册即跳过（测试 / CLI-only 模式）。
+            if let Some(e) = effects {
+                (e.post_save)(config, category, source);
+            }
+        },
+        |category, source| {
+            if let Some(e) = effects {
+                (e.config_changed)(category, source);
+            }
+        },
+    )
 }
 
 /// Serialize all "read-modify-write" config edits process-wide. Reads stay
@@ -751,10 +836,45 @@ fn write_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Single entry-point for every config mutation. Takes the global write lock,
-/// clones the latest cached snapshot, applies `f`, persists to disk, and
-/// atomically publishes the new snapshot so any `cached_config()` call made
-/// after `mutate_config` returns sees the change.
+fn config_write_lock_path() -> Result<PathBuf> {
+    let path = config_path()?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("config path has no parent directory"))?;
+    Ok(parent.join("config.write.lock"))
+}
+
+fn acquire_config_write_lock() -> Result<std::fs::File> {
+    acquire_config_write_lock_with_wait_observer(|| {})
+}
+
+/// Invoke `on_wait` only after the OS reports real lock contention. The
+/// observer keeps concurrency tests synchronized to the lock attempt instead
+/// of wall-clock sleeps; production passes a no-op closure.
+fn acquire_config_write_lock_with_wait_observer<OnWait>(
+    mut on_wait: OnWait,
+) -> Result<std::fs::File>
+where
+    OnWait: FnMut(),
+{
+    let path = config_write_lock_path()?;
+    let started = Instant::now();
+    loop {
+        match crate::platform::try_acquire_exclusive_lock(&path)? {
+            Some(file) => return Ok(file),
+            None if started.elapsed() < CONFIG_WRITE_LOCK_TIMEOUT => {
+                on_wait();
+                std::thread::sleep(CONFIG_WRITE_LOCK_POLL);
+            }
+            None => bail!("timed out waiting for the shared config write lock"),
+        }
+    }
+}
+
+/// Single entry-point for every config mutation. Takes the process-local and
+/// process-shared write locks, reloads the authoritative disk snapshot, applies
+/// `f`, persists to disk, and atomically publishes the new snapshot so any
+/// `cached_config()` call made after `mutate_config` returns sees the change.
 ///
 /// `reason` is a `(category, source)` pair recorded in the autosave snapshot
 /// and `config:changed` event so user-visible rollbacks and frontend hot-reload
@@ -772,15 +892,35 @@ pub fn mutate_config<F, T>(reason: (&str, &str), f: F) -> Result<T>
 where
     F: FnOnce(&mut AppConfig) -> Result<T>,
 {
+    mutate_config_observing_lock_wait(reason, f, || {})
+}
+
+fn mutate_config_observing_lock_wait<F, T, OnWait>(
+    reason: (&str, &str),
+    f: F,
+    on_lock_wait: OnWait,
+) -> Result<T>
+where
+    F: FnOnce(&mut AppConfig) -> Result<T>,
+    OnWait: FnMut(),
+{
     let _write_guard = write_lock()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
-    let _reason_guard = crate::backup::scope_save_reason(reason.0, reason.1);
-    let mut snapshot = load_config()?;
+    let _cross_process_guard = acquire_config_write_lock_with_wait_observer(on_lock_wait)?;
+    let _reason_guard = super::autosave::scope_save_reason(reason.0, reason.1);
+    // The ArcSwap cache is process-local. Starting a mutation from it can
+    // overwrite a setting committed by a sibling desktop/server/ACP process.
+    // Read config.json only after the shared OS lock is held and retain that
+    // lock through publication so disk read + mutation + write is one
+    // cross-process transaction.
+    let mut snapshot = read_from_disk()?;
+    // A successful authoritative read proves that any startup-time parse or
+    // transient read failure has been repaired. Clear the stale guard before
+    // the write path checks it, matching `load_config()` recovery semantics.
+    clear_config_load_failure();
     let result = f(&mut snapshot)?;
     save_config_with_change(&snapshot, reason.0, Some(reason.1))?;
-    // ConfigChange hook (observation): fire with the real category + source.
-    crate::hooks::fire_config_change(reason.0, reason.1);
     Ok(result)
 }
 
@@ -791,7 +931,9 @@ pub(crate) fn clear_legacy_server_token_without_backup() -> Result<()> {
     let _write_guard = write_lock()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
-    let mut snapshot = load_config()?;
+    let _cross_process_guard = acquire_config_write_lock()?;
+    let mut snapshot = read_from_disk()?;
+    clear_config_load_failure();
     if snapshot.server.api_key.take().is_none() {
         return Ok(());
     }
@@ -802,17 +944,27 @@ pub(crate) fn clear_legacy_server_token_without_backup() -> Result<()> {
     let path = config_path()?;
     ensure_no_initial_load_failure_for_write()?;
     let data = serde_json::to_string_pretty(&snapshot)?;
-    crate::platform::write_secure_file(&path, data.as_bytes())?;
-    cache().store(Arc::new(snapshot));
-    clear_config_load_failure();
-    if let Some(bus) = crate::globals::get_event_bus() {
-        bus.emit(
-            "config:changed",
-            serde_json::json!({ "category": "server.auth.migrate", "source": "system" }),
-        );
-    }
-    crate::hooks::fire_config_change("server.auth.migrate", "system");
-    Ok(())
+    let outcome = crate::platform::write_secure_file_outcome(&path, data.as_bytes());
+    complete_config_write(
+        &snapshot,
+        "server.auth.migrate",
+        Some("system"),
+        outcome,
+        |config| {
+            cache().store(Arc::new(config.clone()));
+            clear_config_load_failure();
+        },
+        |_config, category, source| {
+            if let Some(bus) = crate::globals::get_event_bus() {
+                let mut payload = serde_json::json!({ "category": category });
+                if let Some(source) = source {
+                    payload["source"] = serde_json::json!(source);
+                }
+                bus.emit("config:changed", payload);
+            }
+        },
+        crate::hooks::fire_config_change,
+    )
 }
 
 /// Async wrapper for [`mutate_config`]: runs the whole clone → mutate →
@@ -838,25 +990,280 @@ where
         .await
 }
 
+/// Force a fresh disk read into the cache and return the published snapshot.
+///
+/// The process-local write lock keeps this refresh ordered with ordinary
+/// [`mutate_config`] calls. Callers that already hold a subsystem's
+/// process-shared lock can use the returned snapshot as the authoritative
+/// starting point for a cross-process transaction.
+#[doc(hidden)]
+pub fn reload_config_snapshot_from_disk() -> Result<Arc<AppConfig>> {
+    let _write_guard = write_lock()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let _cross_process_guard = acquire_config_write_lock()?;
+    let fresh = read_from_disk()?;
+    let fresh = Arc::new(fresh);
+    cache().store(fresh.clone());
+    clear_config_load_failure();
+    // 重载后联动经注入的 side effects 执行（terminal 开关 + rollback 广播）。
+    if let Some(e) = SIDE_EFFECTS.get() {
+        (e.post_reload)(&fresh);
+    }
+    Ok(fresh)
+}
+
 /// Force a fresh disk read into the cache. Use after an out-of-band write
 /// to `config.json` (e.g. [`crate::backup::restore_backup`]) so hot-path
 /// readers don't keep serving the stale snapshot.
 pub fn reload_cache_from_disk() -> Result<()> {
-    let fresh = read_from_disk()?;
-    let allow_remote_terminal = fresh.filesystem.allow_remote_writes;
-    cache().store(Arc::new(fresh));
-    clear_config_load_failure();
-    if let Some(manager) = crate::globals::get_terminal_manager() {
-        manager.set_remote_access_allowed(allow_remote_terminal);
-    }
-    // Notify subscribers that the cache was force-reloaded (e.g. rollback).
-    if let Some(bus) = crate::globals::get_event_bus() {
-        bus.emit(
-            "config:changed",
-            serde_json::json!({ "category": "app", "source": "reload" }),
-        );
-    }
+    reload_config_snapshot_from_disk()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod write_outcome_tests {
+    use std::cell::{Cell, RefCell};
+    use std::time::Duration;
+
+    use super::{
+        acquire_config_write_lock, cache, clear_config_load_failure, complete_config_write,
+        current_config_load_failure, mutate_config, mutate_config_observing_lock_wait,
+        record_config_load_failure, reload_config_snapshot_from_disk, AppConfig,
+        CONFIG_WRITE_LOCK_TIMEOUT,
+    };
+
+    #[test]
+    fn authoritative_reload_replaces_a_stale_process_cache() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let original = cache().load_full();
+            struct RestoreCache(std::sync::Arc<AppConfig>);
+            impl Drop for RestoreCache {
+                fn drop(&mut self) {
+                    cache().store(self.0.clone());
+                    clear_config_load_failure();
+                }
+            }
+            let _restore = RestoreCache(original);
+
+            let stale = AppConfig {
+                theme: "stale-cache".into(),
+                ..AppConfig::default()
+            };
+            cache().store(std::sync::Arc::new(stale));
+
+            let authoritative = AppConfig {
+                theme: "authoritative-disk".into(),
+                ..AppConfig::default()
+            };
+            std::fs::write(
+                temp.path().join("config.json"),
+                serde_json::to_vec_pretty(&authoritative).expect("serialize config"),
+            )
+            .expect("write authoritative config");
+
+            let refreshed =
+                reload_config_snapshot_from_disk().expect("reload authoritative config");
+            assert_eq!(refreshed.theme, "authoritative-disk");
+            assert_eq!(cache().load().theme, "authoritative-disk");
+        });
+    }
+
+    #[test]
+    fn mutation_preserves_authoritative_disk_fields_when_process_cache_is_stale() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let original = cache().load_full();
+            struct RestoreCache(std::sync::Arc<AppConfig>);
+            impl Drop for RestoreCache {
+                fn drop(&mut self) {
+                    cache().store(self.0.clone());
+                    clear_config_load_failure();
+                }
+            }
+            let _restore = RestoreCache(original);
+
+            cache().store(std::sync::Arc::new(AppConfig {
+                theme: "stale-cache".into(),
+                ..AppConfig::default()
+            }));
+            let authoritative = AppConfig {
+                theme: "authoritative-disk".into(),
+                ..AppConfig::default()
+            };
+            let path = temp.path().join("config.json");
+            std::fs::write(
+                &path,
+                serde_json::to_vec_pretty(&authoritative).expect("serialize config"),
+            )
+            .expect("write authoritative config");
+
+            mutate_config(("accessibility", "test"), |config| {
+                config.enhanced_focus_indicators = true;
+                Ok(())
+            })
+            .expect("mutate authoritative config");
+
+            let persisted: AppConfig =
+                serde_json::from_slice(&std::fs::read(&path).expect("read persisted config"))
+                    .expect("parse persisted config");
+            assert_eq!(persisted.theme, "authoritative-disk");
+            assert!(persisted.enhanced_focus_indicators);
+            assert_eq!(cache().load().theme, "authoritative-disk");
+        });
+    }
+
+    #[test]
+    fn authoritative_mutation_clears_a_recovered_load_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let original = cache().load_full();
+            struct RestoreCache(std::sync::Arc<AppConfig>);
+            impl Drop for RestoreCache {
+                fn drop(&mut self) {
+                    cache().store(self.0.clone());
+                    clear_config_load_failure();
+                }
+            }
+            let _restore = RestoreCache(original);
+
+            let path = temp.path().join("config.json");
+            std::fs::write(
+                &path,
+                serde_json::to_vec_pretty(&AppConfig::default()).expect("serialize config"),
+            )
+            .expect("write repaired config");
+            record_config_load_failure(&path, "simulated transient startup failure");
+
+            mutate_config(("accessibility", "test"), |config| {
+                config.enhanced_focus_indicators = true;
+                Ok(())
+            })
+            .expect("mutation should proceed after authoritative read recovers");
+
+            assert!(current_config_load_failure().is_none());
+            let persisted: AppConfig =
+                serde_json::from_slice(&std::fs::read(path).expect("read persisted config"))
+                    .expect("parse persisted config");
+            assert!(persisted.enhanced_focus_indicators);
+        });
+    }
+
+    #[test]
+    fn mutation_waits_for_the_shared_config_write_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            std::fs::write(
+                temp.path().join("config.json"),
+                serde_json::to_vec_pretty(&AppConfig::default()).expect("serialize config"),
+            )
+            .expect("write config");
+            let first = acquire_config_write_lock().expect("acquire first config lock");
+            let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+            let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+            let waiter = std::thread::spawn(move || {
+                let mut reported_wait = false;
+                mutate_config_observing_lock_wait(
+                    ("accessibility", "test"),
+                    |config| {
+                        config.enhanced_focus_indicators = true;
+                        Ok(())
+                    },
+                    || {
+                        if !reported_wait {
+                            waiting_tx.send(()).expect("report lock contention");
+                            reported_wait = true;
+                        }
+                    },
+                )
+                .expect("mutate after shared lock release");
+                entered_tx.send(()).expect("report mutation");
+            });
+
+            waiting_rx
+                .recv_timeout(CONFIG_WRITE_LOCK_TIMEOUT)
+                .expect("waiting mutation should observe the held shared lock");
+            assert!(entered_rx.try_recv().is_err());
+            drop(first);
+            entered_rx
+                .recv_timeout(CONFIG_WRITE_LOCK_TIMEOUT + Duration::from_secs(5))
+                .expect("waiting mutation should enter after lock release");
+            waiter.join().expect("join config mutation waiter");
+        });
+    }
+
+    #[test]
+    fn unpublished_config_does_not_publish_or_fire_side_effects() {
+        let published = Cell::new(0);
+        let post_save = Cell::new(0);
+        let changed = Cell::new(0);
+        let config = AppConfig {
+            theme: "not-published".into(),
+            ..AppConfig::default()
+        };
+
+        let error = complete_config_write(
+            &config,
+            "appearance",
+            Some("test"),
+            crate::platform::SecureWriteOutcome::NotPublished(std::io::Error::other(
+                "injected pre-publication failure",
+            )),
+            |_| published.set(published.get() + 1),
+            |_, _, _| post_save.set(post_save.get() + 1),
+            |_, _| changed.set(changed.get() + 1),
+        )
+        .expect_err("unpublished config must fail");
+
+        assert!(error.to_string().contains("pre-publication"));
+        assert_eq!(published.get(), 0);
+        assert_eq!(post_save.get(), 0);
+        assert_eq!(changed.get(), 0);
+    }
+
+    #[test]
+    fn published_warning_updates_snapshot_and_subsequent_mutation_once() {
+        let snapshot = RefCell::new(AppConfig::default());
+        let post_save = Cell::new(0);
+        let changed = Cell::new(0);
+        let first = AppConfig {
+            theme: "first-published".into(),
+            ..AppConfig::default()
+        };
+
+        complete_config_write(
+            &first,
+            "appearance",
+            Some("test"),
+            crate::platform::SecureWriteOutcome::PublishedButNotDurable(std::io::Error::other(
+                "injected parent sync failure",
+            )),
+            |config| *snapshot.borrow_mut() = config.clone(),
+            |_, _, _| post_save.set(post_save.get() + 1),
+            |_, _| changed.set(changed.get() + 1),
+        )
+        .expect("published config is a logical commit");
+
+        let mut second = snapshot.borrow().clone();
+        second.enhanced_focus_indicators = true;
+        complete_config_write(
+            &second,
+            "accessibility",
+            Some("test"),
+            crate::platform::SecureWriteOutcome::Durable,
+            |config| *snapshot.borrow_mut() = config.clone(),
+            |_, _, _| post_save.set(post_save.get() + 1),
+            |_, _| changed.set(changed.get() + 1),
+        )
+        .expect("second config commit");
+
+        let final_snapshot = snapshot.borrow();
+        assert_eq!(final_snapshot.theme, "first-published");
+        assert!(final_snapshot.enhanced_focus_indicators);
+        assert_eq!(post_save.get(), 2);
+        assert_eq!(changed.get(), 2);
+    }
 }
 
 #[cfg(test)]
@@ -1002,6 +1409,97 @@ mod parse_tests {
             .contains("credential has an invalid shape"));
     }
 
+    /// `encode_model_eval_codex_secret` 是 kernel 唯一的凭据出口
+    /// （`mint_codex_evaluation_secret` 内部调用），它把明文 access token
+    /// 封成 JSON 交给隔离评测运行时。`validate_model_eval_codex_credential`
+    /// 是它的形状守卫——每一条边界都是「若失守 → 有理由不该 mint 的凭据被
+    /// mint 出去」，例如：
+    ///
+    /// - 太短 → 明显不是真 token，可能是错误的 fallback 值
+    /// - 太长 → 意外拼接了别的东西（例如整份 config），凭据以外的内容顺流
+    /// - 空 account_id → 之后的「同 Provider 不得混用不同凭据」一致性校验
+    ///   会永远命中（digest 相同）
+    /// - `\0` / `\r` / `\n` → JSON 编码后可以被下游解析器错切、或穿过日志脱敏
+    ///
+    /// 上面 `model_eval_codex_secret_rejects_expired_access_token` 已经守
+    /// expired 分支，本 test 覆盖其余每一条 branch，确保任何单点松动都会
+    /// 被抓到——future 编辑改边界值时也必须同步这里。
+    #[test]
+    fn encode_model_eval_codex_secret_enforces_credential_shape_bounds() {
+        let future_ms = (chrono::Utc::now().timestamp_millis() as u64) + 3_600_000;
+
+        let cases: &[(&str, String, String)] = &[
+            (
+                "access token 太短（<24）",
+                "short".into(),
+                "account-eval".into(),
+            ),
+            (
+                "access token 太长（>16 KiB）",
+                "x".repeat(16 * 1024 + 1),
+                "account-eval".into(),
+            ),
+            (
+                "account_id 空",
+                "codex-access-token-for-isolated-local-eval".into(),
+                String::new(),
+            ),
+            (
+                "account_id 太长（>512）",
+                "codex-access-token-for-isolated-local-eval".into(),
+                "a".repeat(513),
+            ),
+            (
+                "access token 含 NUL",
+                "codex-access-token-for-isolated-local\0eval".into(),
+                "account-eval".into(),
+            ),
+            (
+                "access token 含 CR",
+                "codex-access-token-for-isolated-local\reval".into(),
+                "account-eval".into(),
+            ),
+            (
+                "access token 含 LF",
+                "codex-access-token-for-isolated-local\neval".into(),
+                "account-eval".into(),
+            ),
+            (
+                "account_id 含 NUL",
+                "codex-access-token-for-isolated-local-eval".into(),
+                "account\0eval".into(),
+            ),
+            (
+                "account_id 含 CR",
+                "codex-access-token-for-isolated-local-eval".into(),
+                "account\reval".into(),
+            ),
+            (
+                "account_id 含 LF",
+                "codex-access-token-for-isolated-local-eval".into(),
+                "account\neval".into(),
+            ),
+        ];
+
+        for (label, token, account_id) in cases {
+            let err = encode_model_eval_codex_secret(token, account_id, future_ms)
+                .err()
+                .unwrap_or_else(|| panic!("{label}: 期望 bail，实际 encode 成功"));
+            assert!(
+                err.to_string().contains("credential has an invalid shape"),
+                "{label}: 错误信息应统一走 shape 通道，实际：{err}"
+            );
+        }
+
+        // 反面：合法输入必须成功，防止 test 因过度收紧误报。
+        assert!(encode_model_eval_codex_secret(
+            "codex-access-token-for-isolated-local-eval",
+            "account-eval-only",
+            future_ms,
+        )
+        .is_ok());
+    }
+
     #[test]
     fn plain_json_parses() {
         let (cfg, migrations) =
@@ -1011,7 +1509,7 @@ mod parse_tests {
         assert!(!cfg.memory.recall.enabled);
         assert_eq!(
             cfg.memory.config_version,
-            crate::memory::MEMORY_RUNTIME_CONFIG_VERSION
+            ha_config_schema::memory::MEMORY_RUNTIME_CONFIG_VERSION
         );
         assert!(migrations.memory_runtime_contract);
     }
@@ -1033,7 +1531,7 @@ mod parse_tests {
         .expect("parse legacy memory config");
         assert_eq!(
             cfg.memory.learning.mode,
-            crate::memory::MemoryLearningMode::Manual
+            ha_config_schema::memory::MemoryLearningMode::Manual
         );
         assert!(cfg.memory.deep_recall.enabled);
         assert!(cfg.memory.recall.enabled);
@@ -1063,7 +1561,7 @@ mod parse_tests {
         assert!(cfg.memory.core.enabled);
         assert_eq!(
             cfg.memory.learning.mode,
-            crate::memory::MemoryLearningMode::Smart
+            ha_config_schema::memory::MemoryLearningMode::Smart
         );
     }
 
@@ -1097,7 +1595,7 @@ mod parse_tests {
                     "recall": {{ "enabled": true, "userConfigured": true }}
                 }}
             }}"#,
-            crate::memory::MEMORY_RUNTIME_CONFIG_VERSION
+            ha_config_schema::memory::MEMORY_RUNTIME_CONFIG_VERSION
         );
         let (cfg, migrations) = parse_config_str_with_migrations(&input).expect("parse current");
 
@@ -1132,7 +1630,7 @@ mod parse_tests {
             .expect("parse migrated config");
             assert_eq!(
                 persisted["memory"]["configVersion"],
-                crate::memory::MEMORY_RUNTIME_CONFIG_VERSION
+                ha_config_schema::memory::MEMORY_RUNTIME_CONFIG_VERSION
             );
             assert_eq!(persisted["memory"]["recall"]["enabled"], false);
             assert_eq!(persisted["memory"]["recall"]["userConfigured"], false);
@@ -1177,7 +1675,7 @@ mod parse_tests {
         .expect("parse V2 memory config");
         assert_eq!(
             cfg.memory.learning.mode,
-            crate::memory::MemoryLearningMode::Smart
+            ha_config_schema::memory::MemoryLearningMode::Smart
         );
     }
 

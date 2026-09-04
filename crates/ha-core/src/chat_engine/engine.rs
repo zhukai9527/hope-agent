@@ -1,32 +1,47 @@
 use std::sync::Arc;
 
 use crate::agent::AssistantAgent;
-use crate::failover::{
-    self,
-    executor::{execute_with_failover_observed, ExecutorError, FailoverPolicy, RetryProgress},
-};
-use crate::provider::{ActiveModel, ApiType, AuthProfile, ProviderConfig};
+use crate::failover;
+use crate::provider::{ActiveModel, ApiType, ProviderConfig};
 use crate::session;
-use crate::turn_durability::{FlushReason, TurnDurabilitySink};
+use crate::turn_durability::TurnDurabilitySink;
 
 use super::context::*;
-use super::finalize::{self, PartialMeta, TerminationReason};
-use super::im_mirror::{attach_im_live_mirror, finalize_im_live_mirror};
+use super::finalize::{self, TerminationReason};
 use super::sink_registry;
 use super::stream_broadcast;
 use super::stream_seq;
 use super::types::*;
 
 const CHAT_CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-/// Once a turn has emitted runtime-visible output we first give the provider /
-/// tool loop a bounded window to propagate cancellation and clean up owned
-/// resources.  The previous unbounded await meant one cancellation-unaware
-/// tool or hook could keep the caller future alive forever, even though the
-/// stop watchdog had already made the turn look terminal to the UI.
-const CHAT_CANCEL_COOPERATIVE_GRACE: std::time::Duration = std::time::Duration::from_secs(6);
-const CHAT_CANCELLED_BY_CALLER: &str = "chat cancelled by caller";
+/// Deletes durable typed-resource snapshots unless the Initial Context event
+/// that references them has crossed the durability barrier. A backend run UUID
+/// in every basename gives crash recovery the same deterministic cleanup scope
+/// if the process exits before this guard can run.
+#[doc(hidden)]
+pub struct PendingTypedResourceSnapshots {
+    pub session_id: String,
+    pub snapshot_names: Vec<String>,
+    pub refs_committed: Arc<std::sync::atomic::AtomicBool>,
+}
 
-async fn wait_for_chat_cancel(cancel: Arc<std::sync::atomic::AtomicBool>) {
+impl Drop for PendingTypedResourceSnapshots {
+    fn drop(&mut self) {
+        if self
+            .refs_committed
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
+        crate::attachments::remove_uncommitted_typed_resource_snapshots(
+            &self.session_id,
+            &self.snapshot_names,
+        );
+    }
+}
+
+#[doc(hidden)]
+pub async fn wait_for_chat_cancel(cancel: Arc<std::sync::atomic::AtomicBool>) {
     loop {
         if cancel.load(std::sync::atomic::Ordering::SeqCst) {
             return;
@@ -35,14 +50,16 @@ async fn wait_for_chat_cancel(cancel: Arc<std::sync::atomic::AtomicBool>) {
     }
 }
 
-fn event_enters_runtime_loop(event: &str) -> bool {
+#[doc(hidden)]
+pub fn event_enters_runtime_loop(event: &str) -> bool {
     event.contains("\"type\":\"text_delta\"")
         || event.contains("\"type\":\"thinking_delta\"")
         || event.contains("\"type\":\"tool_call\"")
         || event.contains("\"type\":\"tool_result\"")
 }
 
-fn should_retry_model_chain(
+#[doc(hidden)]
+pub fn should_retry_model_chain(
     current_round: u32,
     max_rounds: u32,
     reason: Option<failover::FailoverReason>,
@@ -60,18 +77,37 @@ fn should_retry_model_chain(
         && !had_tool_activity
 }
 
-fn chain_reason_after_missing_provider(
+#[doc(hidden)]
+pub fn chain_reason_after_missing_provider(
     previous: Option<failover::FailoverReason>,
 ) -> failover::FailoverReason {
     match previous {
-        Some(reason @ (failover::FailoverReason::Timeout | failover::FailoverReason::Unknown)) => {
+        Some(reason)
+            if matches!(
+                reason,
+                failover::FailoverReason::Timeout
+                    | failover::FailoverReason::Unknown
+                    | failover::FailoverReason::ContextOverflow
+            ) =>
+        {
             reason
         }
         _ => failover::FailoverReason::ModelNotFound,
     }
 }
 
-fn has_resolvable_fallback(
+#[doc(hidden)]
+pub fn fallback_event_reason(
+    typed_reason: Option<failover::FailoverReason>,
+    display_error: Option<&str>,
+) -> failover::FailoverReason {
+    typed_reason
+        .or_else(|| display_error.map(failover::classify_error))
+        .unwrap_or(failover::FailoverReason::Unknown)
+}
+
+#[doc(hidden)]
+pub fn has_resolvable_fallback(
     model_chain: &[ActiveModel],
     providers: &[ProviderConfig],
     current_index: usize,
@@ -90,7 +126,116 @@ fn has_resolvable_fallback(
     })
 }
 
-fn terminal_turn_state(
+#[doc(hidden)]
+pub fn resolve_slash_skill_binding<'a>(
+    entries: &'a [crate::skills::SkillEntry],
+    target_id: &str,
+    command_name: &str,
+) -> Option<&'a crate::skills::SkillEntry> {
+    let names = entries
+        .iter()
+        .map(|entry| entry.all_command_names().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    crate::slash_defs::resolve_dynamic_command_names(
+        &names,
+        crate::slash_defs::builtin_command_names(),
+    )
+    .into_iter()
+    .find(|resolved| {
+        resolved.typed_name == command_name && entries[resolved.entry_index].name == target_id
+    })
+    .map(|resolved| &entries[resolved.entry_index])
+}
+
+#[doc(hidden)]
+pub fn ensure_explicit_slash_skill_requirements(
+    entry: &crate::skills::SkillEntry,
+    env_check: bool,
+    skill_env: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+) -> Result<(), String> {
+    if !env_check {
+        return Ok(());
+    }
+    let detail =
+        crate::skills::check_requirements_detail(&entry.requires, skill_env.get(&entry.name));
+    if detail.eligible {
+        Ok(())
+    } else {
+        Err(format!(
+            "Explicit slash skill '{}' is no longer eligible: {}",
+            entry.name,
+            crate::skills::format_requirements_diagnostic(entry, &detail)
+        ))
+    }
+}
+
+#[doc(hidden)]
+pub struct MaterializedSlashSkill {
+    pub content: String,
+    pub tool_ceiling: crate::skills::SkillToolCeiling,
+}
+
+#[doc(hidden)]
+pub fn require_explicit_mention_skill_activation(
+    requested_names: &[String],
+    activation: Option<crate::skills::MentionSkillActivation>,
+) -> Result<crate::skills::MentionSkillActivation, String> {
+    if requested_names.is_empty() {
+        return Err("explicit @skill activation set is empty".to_string());
+    }
+    let activation = activation
+        .ok_or_else(|| "explicit @skill resolver is unavailable; activation denied".to_string())?;
+    let requested = requested_names
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    let resolved = activation
+        .resolved_names
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    if !activation.rejected_names.is_empty()
+        || activation.content.trim().is_empty()
+        || resolved != requested
+    {
+        return Err(
+            "explicit @skill set could not be resolved and materialized atomically; activation denied"
+                .to_string(),
+        );
+    }
+    Ok(activation)
+}
+
+#[doc(hidden)]
+pub fn require_explicit_slash_skill_materialization(
+    entry: &crate::skills::SkillEntry,
+    args: Option<String>,
+    rendered: anyhow::Result<String>,
+) -> Result<MaterializedSlashSkill, String> {
+    let _args = args.ok_or_else(|| {
+        format!(
+            "Explicit slash skill '{}' arguments no longer match the validated command binding",
+            entry.name
+        )
+    })?;
+    let content = rendered.map_err(|error| {
+        format!(
+            "Explicit slash skill '{}' could not be materialized: {}",
+            entry.name, error
+        )
+    })?;
+    if content.trim().is_empty() {
+        return Err(format!(
+            "Explicit slash skill '{}' produced no model prompt",
+            entry.name
+        ));
+    }
+    Ok(MaterializedSlashSkill {
+        content,
+        tool_ceiling: entry.tool_ceiling(),
+    })
+}
+
+#[doc(hidden)]
+pub fn terminal_turn_state(
     db: &session::SessionDB,
     turn_id: Option<&str>,
 ) -> Option<(
@@ -106,7 +251,125 @@ fn terminal_turn_state(
         .map(|turn| (turn.status, turn.interrupt_reason, turn.error))
 }
 
-fn turn_accepts_stream_event(
+/// Consume an attached GUI / HTTP mirror and terminate its existing preview
+/// through the channel-owned abort path. The engine never waits on remote IM
+/// I/O: desktop completion remains independent, while the owned mirror state
+/// guarantees the same Message / Card / Native identity is used for the
+/// terminal mutation.
+///
+/// Returning the task makes the helper directly testable. Production callers
+/// intentionally detach it because these paths never replay the logical turn.
+#[doc(hidden)]
+pub fn abort_im_mirror_in_background(
+    im_mirror: &mut Option<Box<dyn crate::channel_hooks::ImLiveMirror>>,
+    session_id: &str,
+    reason: &TerminationReason,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let state = im_mirror.take()?;
+    let body = finalize::copy::im_notice(reason);
+    let session_id = session_id.to_string();
+    // Construct the channel-owned future before spawning. `abort` synchronously
+    // detaches the session fan-out sink, so a subsequent turn cannot race its
+    // first delta into this terminal generation while the task waits to poll.
+    let abort = state.abort(Some(body));
+    Some(tokio::spawn(async move {
+        let status = abort.await;
+        if !status.is_confirmed() {
+            app_warn!(
+                "channel",
+                "mirror",
+                "IM mirror abnormal terminal could not be confirmed for session {}",
+                session_id
+            );
+        }
+    }))
+}
+
+#[doc(hidden)]
+pub fn abort_im_mirror_after_internal_error(
+    im_mirror: &mut Option<Box<dyn crate::channel_hooks::ImLiveMirror>>,
+    session_id: &str,
+    message: &str,
+) -> Option<tokio::task::JoinHandle<()>> {
+    abort_im_mirror_in_background(
+        im_mirror,
+        session_id,
+        &TerminationReason::Other {
+            message: message.to_string(),
+        },
+    )
+}
+
+/// Consume a completed mirror, synchronously detach its stream sink while
+/// constructing the channel future, then move only that detached future to the
+/// background task.
+#[doc(hidden)]
+pub fn finalize_im_mirror_in_background(
+    im_mirror: &mut Option<Box<dyn crate::channel_hooks::ImLiveMirror>>,
+    response: String,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let state = im_mirror.take()?;
+    let finalize = state.finalize(response);
+    Some(tokio::spawn(finalize))
+}
+
+/// Reconstruct the closest public termination taxonomy when another owner
+/// (Stop watchdog / request guard) has already finalized `chat_turns` while
+/// the provider future is unwinding. This keeps IM copy aligned with the GUI
+/// event instead of collapsing every external terminal into an internal error.
+#[doc(hidden)]
+pub fn mirror_reason_from_terminal_state(
+    status: session::ChatTurnStatus,
+    interrupt: Option<session::ChatTurnInterruptReason>,
+    error: Option<&str>,
+) -> TerminationReason {
+    let detail = error
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("turn was finalized by another runtime owner")
+        .to_string();
+    match interrupt {
+        Some(session::ChatTurnInterruptReason::UserStop) => TerminationReason::UserStop,
+        Some(
+            session::ChatTurnInterruptReason::RuntimeCancel
+            | session::ChatTurnInterruptReason::ToolCancel,
+        ) => TerminationReason::RuntimeCancel,
+        Some(session::ChatTurnInterruptReason::Shutdown) => TerminationReason::Shutdown,
+        Some(session::ChatTurnInterruptReason::CrashRecovery) => TerminationReason::Crash,
+        Some(session::ChatTurnInterruptReason::NoProfile) => TerminationReason::NoProfileAvailable,
+        Some(session::ChatTurnInterruptReason::ProviderFailed) => {
+            TerminationReason::ProviderFailed {
+                last_kind: failover::classify_error(&detail),
+                last_message: detail,
+                // The terminal DB projection does not retain the exact
+                // provider/API identity. Never guess the Codex-specific hint.
+                is_codex_auth: false,
+            }
+        }
+        Some(session::ChatTurnInterruptReason::CurrentToolGroupOverflow) => {
+            TerminationReason::ProviderFailed {
+                last_kind: failover::FailoverReason::CurrentToolGroupOverflow,
+                last_message: detail,
+                is_codex_auth: false,
+            }
+        }
+        Some(session::ChatTurnInterruptReason::DispatchUnknown) => {
+            TerminationReason::ProviderFailed {
+                last_kind: failover::FailoverReason::DispatchUnknown,
+                last_message: detail,
+                is_codex_auth: false,
+            }
+        }
+        Some(session::ChatTurnInterruptReason::CompactionFailed) => {
+            TerminationReason::CompactionFailed { detail }
+        }
+        Some(session::ChatTurnInterruptReason::Unknown) | None => TerminationReason::Other {
+            message: format!("turn ended with status {}: {detail}", status.as_str()),
+        },
+    }
+}
+
+#[doc(hidden)]
+pub fn turn_accepts_stream_event(
     db: &session::SessionDB,
     session_id: &str,
     turn_id: Option<&str>,
@@ -129,63 +392,38 @@ fn turn_accepts_stream_event(
 /// Successful chat round payload returned by the executor closure.
 /// Bundles everything the post-success path needs to flush thinking, build
 /// the assistant message, save context, and run extraction follow-ups.
-struct ChatRoundOk {
-    response: String,
-    thinking: Option<String>,
-    agent: AssistantAgent,
-    history_len_before: usize,
-    chat_start: std::time::Instant,
+#[doc(hidden)]
+pub struct ChatRoundOk {
+    pub response: String,
+    pub thinking: Option<String>,
+    pub agent: AssistantAgent,
+    pub history_len_before: usize,
+    pub chat_start: std::time::Instant,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChatEngineFailureKind {
-    ProviderExhausted,
-    Cancelled,
-    Infrastructure,
-}
-
-#[derive(Debug)]
-pub(crate) struct ChatEngineFailure {
-    pub kind: ChatEngineFailureKind,
-    message: String,
-}
-
-impl ChatEngineFailure {
-    fn new(kind: ChatEngineFailureKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
+/// The mutable Agent cache is a runtime optimization, never part of the turn
+/// contract. Keeping it behind the engine boundary prevents shells from
+/// receiving a concrete `AssistantAgent` that could call the model directly.
+#[doc(hidden)]
+pub async fn retain_desktop_agent(source: stream_seq::ChatSource, agent: AssistantAgent) {
+    if source != stream_seq::ChatSource::Desktop {
+        return;
     }
-}
-
-impl From<String> for ChatEngineFailure {
-    fn from(message: String) -> Self {
-        Self::new(ChatEngineFailureKind::Infrastructure, message)
-    }
-}
-
-impl From<anyhow::Error> for ChatEngineFailure {
-    fn from(error: anyhow::Error) -> Self {
-        Self::new(ChatEngineFailureKind::Infrastructure, error.to_string())
-    }
-}
-
-impl std::fmt::Display for ChatEngineFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
+    if let Some(cache) = crate::get_cached_agent() {
+        *cache.lock().await = Some(agent);
     }
 }
 
 /// Drop-guarded scope for a session's visible stream lifecycle. Ensures
-/// `stream_seq::end` fires on every `run_chat_engine` return path (including
+/// `stream_seq::end` fires on every admitted runtime return path (including
 /// panics), while allowing the successful path to end the UI stream before
 /// post-turn follow-ups run. Desktop / HTTP / parent-injection turns broadcast
 /// on the main `chat:*` bus; IM channel turns have a separate `channel:*`
 /// lifecycle.
-struct StreamLifecycle {
+#[doc(hidden)]
+pub struct StreamLifecycle {
     session_id: String,
-    stream_id: Option<String>,
+    pub stream_id: Option<String>,
     source: stream_seq::ChatSource,
     turn_id: Option<String>,
     terminal_status: Option<session::ChatTurnStatus>,
@@ -196,7 +434,7 @@ struct StreamLifecycle {
 }
 
 impl StreamLifecycle {
-    fn begin(
+    pub fn begin(
         session_id: &str,
         source: stream_seq::ChatSource,
         turn_id: Option<String>,
@@ -219,7 +457,26 @@ impl StreamLifecycle {
         })
     }
 
-    fn arm_abandoned_recovery(
+    pub fn from_admission(
+        session_id: &str,
+        source: stream_seq::ChatSource,
+        turn_id: Option<String>,
+        stream_id: String,
+    ) -> Self {
+        Self {
+            session_id: session_id.to_string(),
+            stream_id: Some(stream_id),
+            source,
+            turn_id,
+            terminal_status: None,
+            interrupt_reason: None,
+            terminal_error: None,
+            abandoned_recovery: None,
+            finished: false,
+        }
+    }
+
+    pub fn arm_abandoned_recovery(
         &mut self,
         db: std::sync::Arc<session::SessionDB>,
         persistence_run_id: String,
@@ -227,7 +484,7 @@ impl StreamLifecycle {
         self.abandoned_recovery = Some((db, persistence_run_id));
     }
 
-    fn set_terminal(
+    pub fn set_terminal(
         &mut self,
         status: session::ChatTurnStatus,
         interrupt_reason: Option<session::ChatTurnInterruptReason>,
@@ -241,7 +498,7 @@ impl StreamLifecycle {
         }
     }
 
-    fn finish(&mut self) {
+    pub fn finish(&mut self) {
         if self.finished {
             return;
         }
@@ -298,7 +555,8 @@ impl Drop for StreamLifecycle {
 /// follow-up replies are visible while they stream. Channel / cron turns stay
 /// off the main chat bus; IM uses `ChannelStreamSink` to emit
 /// `channel:stream_delta` instead.
-fn emit_stream_event(
+#[doc(hidden)]
+pub fn emit_stream_event(
     db: &session::SessionDB,
     event_sink: &std::sync::Arc<dyn EventSink>,
     session_id: &str,
@@ -313,7 +571,8 @@ fn emit_stream_event(
     true
 }
 
-fn emit_context_compaction_progress(
+#[doc(hidden)]
+pub fn emit_context_compaction_progress(
     db: &session::SessionDB,
     event_sink: &std::sync::Arc<dyn EventSink>,
     session_id: &str,
@@ -401,7 +660,8 @@ fn persist_manual_context_compacted(
 /// accepts events this tick. The per-token streaming hot loop calls this after
 /// its own `turn_accepts_stream_event` guard, avoiding a second registry lock
 /// + snapshot clone per token.
-fn emit_stream_event_unchecked(
+#[doc(hidden)]
+pub fn emit_stream_event_unchecked(
     event_sink: &std::sync::Arc<dyn EventSink>,
     session_id: &str,
     source: stream_seq::ChatSource,
@@ -505,9 +765,12 @@ pub async fn compact_session_now(
         &mut agent,
         &agent_id,
         &session_id,
+        None,
         session_db.clone(),
         resolved_temperature,
         None,
+        &[],
+        &[],
         &[],
         &[],
         None,
@@ -519,6 +782,7 @@ pub async fn compact_session_now(
         true,
         source,
         kb_access_source(source),
+        None,
         None,
     );
     let original_context_json = session_db
@@ -532,23 +796,39 @@ pub async fn compact_session_now(
         let _ = emit_stream_event(&session_db, &event_sink, &session_id, source, None, delta);
     };
     let compact_result = agent.compact_conversation_now(&emit).await;
+    let summary_applied =
+        compact_result.tier_applied >= 3 && compact_result.description == "summarized";
 
     let compacted_context_json = serde_json::to_string(&agent.get_conversation_history())
         .map_err(|e| persist_failed(format!("Cannot serialize compacted context: {e}")))?;
     if original_context_json.as_deref() != Some(compacted_context_json.as_str()) {
-        let saved = session_db
-            .save_context_if_unchanged(
+        let saved = if summary_applied {
+            session_db.save_context_if_unchanged_and_clear_tier3_recovery(
                 &session_id,
                 original_context_json.as_deref(),
                 &compacted_context_json,
             )
-            .map_err(|e| persist_failed(format!("Cannot save compacted context: {e}")))?;
+        } else {
+            session_db.save_context_if_unchanged(
+                &session_id,
+                original_context_json.as_deref(),
+                &compacted_context_json,
+            )
+        }
+        .map_err(|e| persist_failed(format!("Cannot save compacted context: {e}")))?;
         if !saved {
             return Err(persist_failed(
                 "Session context changed during manual compaction; skipped stale compacted snapshot"
                     .to_string(),
             ));
         }
+    } else if summary_applied {
+        session_db
+            .clear_tier3_recovery_after_summary(&session_id)
+            .map_err(|e| persist_failed(format!("Cannot finalize compaction recovery: {e}")))?;
+    }
+    if summary_applied && crate::session::is_session_incognito(Some(&session_id)) {
+        crate::session::clear_incognito_tier3_recovery(&session_id);
     }
     persist_manual_context_compacted(&session_db, &session_id, source, &compact_result);
     app_info!(
@@ -570,2011 +850,118 @@ pub async fn compact_session_now(
 
 // ── Core Chat Engine ────────────────────────────────────────────────
 
-/// Run the shared chat execution engine.
-///
-/// Handles: model chain traversal → agent building → config → history restoration
-/// → streaming execution → tool persistence → failover → context compaction
-/// → response saving → context persistence → memory extraction.
-pub async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResult, String> {
-    run_chat_engine_classified(params)
-        .await
-        .map_err(|failure| failure.to_string())
+#[doc(hidden)]
+pub fn merge_explicit_skill_ceiling(
+    current: &mut Vec<String>,
+    selected: crate::skills::SkillToolCeiling,
+) {
+    crate::skills::narrow_skill_execution_filter(current, selected);
 }
 
-pub(crate) async fn run_chat_engine_classified(
-    params: ChatEngineParams,
-) -> Result<ChatEngineResult, ChatEngineFailure> {
-    let ChatEngineParams {
-        session_id,
-        agent_id,
-        turn_id,
-        message,
-        display_text,
-        attachments,
-        session_db: db,
-        model_chain,
-        providers,
-        codex_token,
-        resolved_temperature,
-        compact_config,
-        mut extra_system_context,
-        reasoning_effort,
-        cancel,
-        plan_context_override,
-        skill_allowed_tools,
-        denied_tools,
-        tool_scope,
-        subagent_depth,
-        steer_run_id,
-        auto_approve_tools,
-        follow_global_reasoning_effort,
-        post_turn_effects,
-        abort_on_cancel,
-        persist_final_error_event,
-        source,
-        ui_surface: _,
-        origin_source,
-        channel_kb_context,
-        event_sink,
-    } = params;
-
-    // Atomically register execution against the lifecycle gate. Every desktop,
-    // HTTP, channel, ACP, subagent, and parent-injection path must fail closed
-    // once an Agent is disabled, and deletion must see admitted work even
-    // before its durable activity rows have been written.
-    let _agent_run_guard =
-        crate::agent_lifecycle::begin_agent_run(&agent_id).map_err(|error| error.to_string())?;
-
-    // Effective KB-access origin for this turn (design D10): top-level turns
-    // have origin == source; a subagent carries its parent turn's origin so an
-    // IM-origin chain can't reacquire KB access via the neutral Subagent source.
-    let kb_origin = origin_source.unwrap_or_else(|| kb_access_source(source));
-
-    // Wrap attachments in Arc<[T]> so the failover-executor closure's per-
-    // retry capture is a pointer bump instead of a deep clone of base64
-    // image data (Attachment.data may carry MB-sized strings).
-    let attachments: std::sync::Arc<[crate::agent::Attachment]> = std::sync::Arc::from(attachments);
-
-    if model_chain.is_empty() {
-        return Err("No model configured for chat execution".to_string().into());
-    }
-
-    {
-        // `maybe_schedule_autonomous_start` runs synchronous SessionDB reads
-        // (title classification + goal-fallback repair) before spawning the
-        // title task; route it through the blocking pool so it never pins the
-        // async worker on the per-turn hot path (see `crate::blocking`).
-        let title_db = db.clone();
-        let title_session_id = session_id.clone();
-        let title_agent_id = agent_id.clone();
-        let title_model = model_chain[0].clone();
-        crate::blocking::run_blocking(move || {
-            crate::session_title::maybe_schedule_autonomous_start(
-                title_db,
-                title_session_id,
-                title_agent_id,
-                title_model,
-            )
+/// Reserve at most one fifth of the primary model's context for explicit
+/// typed notes and split it fairly across the selected set. Small notes are
+/// therefore injected completely; larger notes get a deterministic preview
+/// plus a version-checked `note_read` continuation. This is a byte upper bound
+/// used before provider-exact token accounting, so keep a conservative floor
+/// and cap.
+#[doc(hidden)]
+pub fn typed_note_byte_budget(
+    model_chain: &[ActiveModel],
+    providers: &[ProviderConfig],
+    note_count: usize,
+) -> usize {
+    const MIN_PER_NOTE: usize = 8 * 1024;
+    const MAX_PER_NOTE: usize = 200_000;
+    let context_tokens = model_chain
+        .first()
+        .and_then(|model| {
+            crate::provider::model_context_window(providers, &model.provider_id, &model.model_id)
         })
-        .await;
-    }
+        .unwrap_or(128_000) as usize;
+    // ~4 UTF-8 bytes/token conservative planning estimate, with 20% of the
+    // window available to all explicit notes.
+    let total_note_bytes = context_tokens.saturating_mul(4) / 5;
+    (total_note_bytes / note_count.max(1)).clamp(MIN_PER_NOTE, MAX_PER_NOTE)
+}
 
-    // Resolve the Plan-mode bundle once at turn start. Spawn-supplied
-    // overrides win (their child sessions have backend `plan_mode = Off`
-    // even though they're meant to run as PlanAgent); otherwise read this
-    // session's backend state. The `plan_context_locked` flag rides along
-    // so configure_agent picks the right setter and the streaming loop's
-    // mid-turn probe knows whether to leave the bundle alone.
-    //
-    // The plan-derived extra context is NOT merged into the caller's
-    // `extra_system_context` here — it goes into a separate agent slot
-    // (`plan_extra_context`) so the streaming loop's mid-turn probe can
-    // swap it on a state flip without losing the caller's framing
-    // (cron task / subagent role / etc.). `build_full_system_prompt`
-    // appends both.
-    let plan_context_locked = plan_context_override.is_some();
-    let plan_resolved = match plan_context_override {
-        Some(o) => o,
-        None => crate::chat_engine::resolve_plan_context_for_session(&session_id).await,
+/// Remove only the source spans already represented by typed Note bindings so
+/// the read-only `[[note]]` compatibility scanner can coexist with other typed
+/// mentions without resolving a typed Note twice. The wire has already passed
+/// UTF-8 boundary validation before this helper is called.
+#[doc(hidden)]
+pub fn message_without_typed_note_spans(
+    message: &str,
+    wire: &crate::prompt_context::IncomingTurnWire,
+) -> String {
+    let mut spans = wire
+        .mentions
+        .iter()
+        .filter(|mention| mention.kind == crate::prompt_context::MentionKind::Note)
+        .filter_map(|mention| match &mention.source_anchor {
+            crate::prompt_context::SourceAnchor::Inline {
+                start_utf8,
+                end_utf8,
+                ..
+            } => Some((*start_utf8 as usize, *end_utf8 as usize)),
+            crate::prompt_context::SourceAnchor::AdjacentContentPart { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    if spans.is_empty() {
+        return message.to_string();
+    }
+    spans.sort_unstable();
+    let mut result = String::with_capacity(message.len());
+    let mut cursor = 0usize;
+    for (start, end) in spans {
+        let (Some(prefix), true) = (message.get(cursor..start), end <= message.len()) else {
+            return message.to_string();
+        };
+        result.push_str(prefix);
+        result.push(' ');
+        cursor = end;
+    }
+    let Some(suffix) = message.get(cursor..) else {
+        return message.to_string();
     };
+    result.push_str(suffix);
+    result
+}
 
-    // Codex OAuth token lives on disk; it's the single source of truth for
-    // desktop / HTTP / IM channel entry points. Callers may pass None — when
-    // the chain actually needs Codex we hydrate from disk here so all three
-    // runtimes behave identically without threading AppState through.
-    let chain_needs_codex = model_chain.iter().any(|m| {
-        providers
-            .iter()
-            .any(|p| p.id == m.provider_id && p.api_type == ApiType::Codex)
-    });
-    let mut codex_token = codex_token;
-    if chain_needs_codex {
-        let current = codex_token.as_ref().map(|(t, _)| t.as_str()).unwrap_or("");
-        // Refresh on-disk token if stale; if a refresh produced a new pair,
-        // also update the in-memory hint we thread down to the agent builder
-        // — the disk write inside refresh may have failed, but the new token
-        // is still valid in this process.
-        if let Some(pair) = crate::oauth::ensure_fresh_codex_token(current).await {
-            codex_token = Some(pair);
-        }
-    }
-
-    let mut stream_lifecycle = StreamLifecycle::begin(&session_id, source, turn_id.clone())?;
-
-    // Every conversation-producing entry receives a persistence run, even
-    // when it has no user-visible chat_turn id. Incognito registrations stay
-    // memory-only inside the coordinator.
-    let durability = match super::durability::StreamCoordinator::create(
-        db.clone(),
-        session_id.clone(),
-        source,
-        stream_lifecycle.stream_id.clone(),
-        turn_id.clone(),
-        event_sink.clone(),
-        cancel.clone(),
+#[doc(hidden)]
+pub fn validate_engine_typed_resource_boundary(
+    message: &str,
+    incoming_turn: Option<&crate::prompt_context::IncomingTurnWire>,
+    attachments: &[crate::agent::Attachment],
+) -> Result<(), String> {
+    crate::attachments::validate_typed_resource_attachment_bindings(
+        message,
+        incoming_turn,
+        attachments,
     )
-    .await
-    {
-        Ok(coordinator) => coordinator,
-        Err(error) => {
-            let message = format!("Cannot initialize durable chat stream: {error}");
-            if let Some(turn_id) = turn_id.as_deref() {
-                if let Err(finish_error) = db.finish_chat_turn_once(
-                    turn_id,
-                    session::ChatTurnStatus::Failed,
-                    Some(session::ChatTurnInterruptReason::Unknown),
-                    Some(&message),
-                    None,
-                ) {
-                    app_error!(
-                        "chat",
-                        "stream_durability",
-                        "failed to converge turn {} after coordinator initialization error: {}",
-                        turn_id,
-                        finish_error
-                    );
-                }
-            }
-            stream_lifecycle.set_terminal(
-                session::ChatTurnStatus::Failed,
-                Some(session::ChatTurnInterruptReason::Unknown),
-                Some(message.clone()),
-            );
-            stream_lifecycle.finish();
-            return Err(message.into());
-        }
-    };
-    stream_lifecycle
-        .arm_abandoned_recovery(db.clone(), durability.persistence_run_id().to_string());
+    .map_err(|error| format!("Invalid typed resource attachment binding: {error}"))
+}
 
-    // Idle/busy tracking (R2 — §5.4 fix). Mark this session active for the whole
-    // turn so background-job / sub-agent completion injection yields to the live
-    // turn instead of splicing into it. Created here at the shared engine entry
-    // so all four foreground entry points are covered uniformly — desktop, HTTP,
-    // IM channel, and cron (cron turns carry `Channel`). Previously only the
-    // Tauri shell created the guard (`commands/chat.rs`), so on server / IM the
-    // gate `ACTIVE_CHAT_SESSIONS` stayed at 0 and injection fired immediately
-    // against a running turn. The Tauri shell keeps its own earlier guard (to
-    // cancel an in-flight injection the moment the user hits send, before this
-    // turn's preflight); the refcount in `ChatSessionGuard` makes the overlap
-    // safe — the engine guard drops first, the shell guard last, so idle/flush
-    // fires exactly once after the whole command. `ParentInjection` / `Subagent`
-    // are excluded by `holds_foreground_idle_guard` (the former is the injection
-    // itself; the latter is a distinct child session). ACP guards itself.
-    let _idle_guard = source
-        .holds_foreground_idle_guard()
-        .then(|| crate::subagent::ChatSessionGuard::new(&session_id));
-
-    if let (Some(ref turn_id), Some(ref stream_id)) =
-        (turn_id.as_ref(), stream_lifecycle.stream_id.as_ref())
-    {
-        let _ = super::active_turn::set_stream_id(&session_id, turn_id, stream_id);
-        if let Err(e) = db.update_chat_turn_stream_id(turn_id, stream_id) {
-            app_warn!(
-                "chat",
-                "turn",
-                "Failed to persist stream id for turn {}: {}",
-                turn_id,
-                e
-            );
-        }
-        if source.broadcasts_to_user_ui() {
-            stream_broadcast::broadcast_turn_started(&session_id, turn_id, Some(stream_id));
-        }
-    }
-
-    // SessionStart hook (startup / resume). Observation event — any
-    // additionalContext is merged into `extra_system_context` so it rides this
-    // turn's system prompt and survives failover retries (which rebuild the
-    // agent from this same local). The helper is shared with the ACP turn loop
-    // (which runs `AssistantAgent::chat` directly, not this engine) so both
-    // entry points fire SessionStart and resolve cwd identically.
-    //
-    // Gate on `source.fires_user_lifecycle_hooks()`: subagent / parent-injection
-    // runs are internal workers, not user-visible sessions, so they MUST NOT
-    // fire SessionStart. Without this gate an `agent` handler on `SessionStart`
-    // spawns a sub-agent on every run, whose own chat-engine pass fires another
-    // `SessionStart` (new session id ⇒ per-session `claim_session_start` doesn't
-    // dedupe), and so on — a single global SessionStart agent hook would burn
-    // tokens until concurrency or external limits intervene. Subagent
-    // observability lives on `SubagentStart` / `SubagentStop` instead, also
-    // gated against hook-spawned children in `subagent::spawn`.
-    if source.fires_user_lifecycle_hooks() {
-        if let Some(extra) = crate::hooks::fire_session_start_observation(
-            &session_id,
-            &agent_id,
-            model_chain
-                .first()
-                .map(|m| m.model_id.as_str())
-                .unwrap_or_default(),
-        )
-        .await
-        {
-            extra_system_context = Some(match extra_system_context.take() {
-                Some(e) => format!("{e}\n\n{extra}"),
-                None => extra,
-            });
-        }
-    }
-
-    // UserPromptSubmit hook context: the preflight chokepoint stashed any
-    // `additionalContext` from the UserPromptSubmit hook keyed by session;
-    // drain it here so it rides this turn's system prompt next to SessionStart
-    // (and survives failover for the same reason — it lives in this run-local).
-    // Drained exactly once per turn.
-    if let Some(extra) = crate::hooks::take_user_prompt_context(&session_id) {
-        extra_system_context = Some(match extra_system_context.take() {
-            Some(e) => format!("{e}\n\n{extra}"),
-            None => extra,
-        });
-    }
-
-    // Knowledge read bridge channel ① (D7): deterministically inject notes the
-    // user referenced inline with `[[ ]]`, scoped by `effective_kb_access` (D10)
-    // and wrapped as untrusted external data (#7). Skipped for incognito inside
-    // the resolver (zero KB access).
-    if let Some(extra) = crate::knowledge::inject::resolve_inline_injections(
-        &message,
-        &session_id,
-        kb_access_source(source),
-        kb_origin,
-        channel_kb_context.clone(),
-    ) {
-        extra_system_context = Some(match extra_system_context.take() {
-            Some(e) => format!("{e}\n\n{extra}"),
-            None => extra,
-        });
-    }
-
-    // Built-in skill activation via the composer's `@skill` mention. Mirrors the
-    // note bridge above: deterministic, user-controlled, injected into this
-    // turn's system context. The fixed allowlist (office trio + data analytics
-    // + browser + mac control) and the OS gate are enforced inside the resolver, so arbitrary
-    // skill names in the message can't ride here — they stay as plain text.
-    //
-    // Gate on `fires_user_lifecycle_hooks()` (Desktop / HTTP / IM): only a real
-    // user turn carries a composer `@skill` gesture. Internal Subagent /
-    // ParentInjection runs are excluded so a sub-agent's untrusted output
-    // containing a `[@…](#skill:…)` token can't self-activate a built-in skill
-    // into the parent's system context.
-    if source.fires_user_lifecycle_hooks() {
-        if let Some(extra) = crate::skills::resolve_inline_skill_mentions(&message) {
-            extra_system_context = Some(match extra_system_context.take() {
-                Some(e) => format!("{e}\n\n{extra}"),
-                None => extra,
-            });
-        }
-        if let Some(extra) = crate::subagent::resolve_inline_agent_mentions(&message) {
-            extra_system_context = Some(match extra_system_context.take() {
-                Some(e) => format!("{e}\n\n{extra}"),
-                None => extra,
-            });
-        }
-    }
-
-    // IM-mirror prefers the friendly `display_text` (e.g. `Using skill **X**...`
-    // rendered for `/skill` invocations) so attached IM chats see what the
-    // desktop user saw, not the raw `[SYSTEM:...]` prompt fed to the model.
-    let mut im_mirror = attach_im_live_mirror(
-        &session_id,
-        source,
-        Some(crate::chat_engine::im_mirror::LastUserSnapshot {
-            source: source.as_str().to_string(),
-            text: crate::util::non_empty_trim_or(display_text.as_deref(), &message).to_owned(),
-            attachment_count: attachments.len(),
-        }),
+#[doc(hidden)]
+pub fn prepare_typed_resource_mentions_for_session(
+    session: &crate::session::SessionMeta,
+    file_targets: &[String],
+    plan_targets: &[String],
+    attachments: &[crate::agent::Attachment],
+) -> anyhow::Result<crate::attachments::PreparedTypedResourceMentions> {
+    let working_dir = crate::session::effective_working_dir_for_meta(session);
+    crate::attachments::prepare_typed_resource_mentions(
+        working_dir.as_deref(),
+        file_targets,
+        plan_targets,
+        session.incognito,
+        attachments,
     )
-    .await;
-
-    let total_models = model_chain.len();
-    let mut last_error: Option<String> = None;
-    // Preserve the executor's typed verdict from `ExecutorError::Exhausted`
-    // so the IM mirror abort path can render a per-class friendly notice
-    // (`🔐 Authentication failed`, `⏱️ Rate limited`, …). Re-classifying
-    // `last_error` at the abort site is lossy — provider-specific
-    // wrapping can drop the original 4xx/5xx markers that
-    // `failover::classify_error` keys off.
-    let mut last_reason: Option<failover::FailoverReason> = None;
-    // Pinned to `true` only when the failing model's provider is Codex
-    // *and* its failure reason is Auth — drives the "re-authorize via
-    // desktop app" headline. Tracked per-failure rather than derived from
-    // primary-only because the failover chain may have rotated through
-    // multiple providers, and the user-facing hint depends on which one
-    // actually erred.
-    let mut last_is_codex_auth = false;
-    // Set when emergency compaction was attempted but still failed to
-    // bring history below the model's context window — promoted into
-    // `TerminationReason::CompactionFailed` by `derive_termination_reason`
-    // so the marker classifies the failure correctly instead of folding
-    // it into a generic provider error.
-    let mut compaction_failed: Option<String> = None;
-    // True when the most recent model attempt bailed with
-    // `ExecutorError::NoProfileAvailable`. We still fill `last_reason`
-    // / `last_error` in that branch so logs include the model id, but
-    // the unified finalize taxonomy needs to surface this as the
-    // explicit `NoProfileAvailable` reason (not generic `ProviderFailed`)
-    // so the user-facing copy can say "configure provider" instead of
-    // "all models failed".
-    let mut last_was_no_profile = false;
-
-    // Build primary model display name for fallback events
-    let primary_display = {
-        let first = &model_chain[0];
-        let prov_name = providers
-            .iter()
-            .find(|p| p.id == first.provider_id)
-            .map(|p| p.name.as_str())
-            .unwrap_or(&first.provider_id);
-        format!("{} / {}", prov_name, first.model_id)
-    };
-
-    let effort_str = reasoning_effort.clone();
-
-    // A complete second pass is reserved for timeout/unknown failures that may
-    // self-heal after every configured model has had a chance. Rate-limit and
-    // overload already consume the larger per-profile retry budget and rotate
-    // keys; auth/billing/model-not-found are deterministic. Never replay a
-    // whole chain after any tool boundary, where another pass could duplicate
-    // an external side effect.
-    const MAX_MODEL_CHAIN_ROUNDS: u32 = 2;
-    const MODEL_CHAIN_RETRY_BASE_MS: u64 = 4_000;
-    const MODEL_CHAIN_RETRY_MAX_MS: u64 = 10_000;
-    let mut model_chain_round = 1_u32;
-    let mut model_index = 0_usize;
-
-    loop {
-        if model_index >= model_chain.len() {
-            let can_retry_whole_chain = should_retry_model_chain(
-                model_chain_round,
-                MAX_MODEL_CHAIN_ROUNDS,
-                last_reason,
-                last_was_no_profile,
-                compaction_failed.is_some(),
-                durability.had_tool_activity(),
-            ) && !cancel.load(std::sync::atomic::Ordering::SeqCst);
-            if !can_retry_whole_chain {
-                break;
-            }
-
-            let delay_ms = failover::retry_delay_ms(
-                model_chain_round - 1,
-                MODEL_CHAIN_RETRY_BASE_MS,
-                MODEL_CHAIN_RETRY_MAX_MS,
-            );
-            let next_round = model_chain_round + 1;
-            app_info!(
-                "provider",
-                "retry_chain",
-                "Restarting model fallback chain for session {} (round {}/{}, delay={}ms)",
-                session_id,
-                next_round,
-                MAX_MODEL_CHAIN_ROUNDS,
-                delay_ms
-            );
-            let recovery_wait = crate::recovery_control::register(&session_id);
-            if let Ok(json_str) = serde_json::to_string(&serde_json::json!({
-                "type": "model_chain_retry",
-                "reason": last_reason,
-                "attempt": next_round,
-                "total": MAX_MODEL_CHAIN_ROUNDS,
-                "delay_ms": delay_ms,
-                "recovery_id": recovery_wait.id(),
-                "can_switch_model": false,
-            })) {
-                emit_stream_event(
-                    &db,
-                    &event_sink,
-                    &session_id,
-                    source,
-                    turn_id.as_deref(),
-                    &json_str,
-                );
-            }
-            match recovery_wait
-                .wait(std::time::Duration::from_millis(delay_ms), Some(&cancel))
-                .await
-            {
-                crate::recovery_control::RecoveryWaitOutcome::Cancelled => {
-                    last_reason = None;
-                    last_error = Some(CHAT_CANCELLED_BY_CALLER.to_string());
-                    break;
-                }
-                crate::recovery_control::RecoveryWaitOutcome::Elapsed
-                | crate::recovery_control::RecoveryWaitOutcome::SkipWait
-                | crate::recovery_control::RecoveryWaitOutcome::SwitchModel => {}
-            }
-            model_chain_round = next_round;
-            model_index = 0;
-            continue;
-        }
-
-        let idx = model_index;
-        let model_ref = &model_chain[idx];
-        let mut manual_model_switch = false;
-        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-            last_error = Some(CHAT_CANCELLED_BY_CALLER.to_string());
-            break;
-        }
-        // Look up provider once per model. Skip the model if missing — same
-        // semantics as the pre-Phase-3 build_agent_from_snapshot None path.
-        let current_provider = providers.iter().find(|p| p.id == model_ref.provider_id);
-        let prov = match current_provider {
-            Some(p) => p,
-            None => {
-                let msg = format!(
-                    "Provider not found: {} for model {}",
-                    model_ref.provider_id, model_ref.model_id
-                );
-                // A stale fallback is deterministic, but it must not erase a
-                // transient failure from an earlier usable model. Reaching the
-                // chain boundary should still give that model its bounded
-                // second-round opportunity.
-                last_reason = Some(chain_reason_after_missing_provider(last_reason));
-                last_error = Some(msg);
-                model_index += 1;
-                continue;
-            }
-        };
-
-        // Build the fallback event now, but enqueue it only after the next
-        // attempt has been opened. Otherwise it would land in the previous
-        // attempt and be correctly discarded together with that superseded
-        // output during replay/materialization.
-        let fallback_event_json = if idx > 0 {
-            let display = format!("{} / {}", prov.name, model_ref.model_id);
-            let reason_str = last_error
-                .as_deref()
-                .map(failover::classify_error)
-                .unwrap_or(failover::FailoverReason::Unknown);
-            crate::eval_context::record_model_retry(&session_id, true, reason_str.as_str(), 0);
-            let event = serde_json::json!({
-                "type": "model_fallback",
-                "model": display,
-                "from_model": primary_display,
-                "provider_id": model_ref.provider_id,
-                "model_id": model_ref.model_id,
-                "reason": reason_str,
-                "attempt": idx + 1,
-                "total": total_models,
-                "error": last_error.as_deref().unwrap_or(""),
-            });
-            serde_json::to_string(&event).ok()
-        } else {
-            None
-        };
-
-        // ── Outer compaction-retry loop ─────────────────────────
-        // The executor (execute_with_failover) handles profile rotation +
-        // retry-with-backoff in one call. Context overflow is the only
-        // signal that needs to escape and re-enter — emergency_compact
-        // borrows the agent mutably so it can't run inside the closure
-        // while the operation is still holding the agent. After compact,
-        // we write the failed profile back to PROFILE_STICKY so the next
-        // executor call's select_profile picks it (preserves prompt cache
-        // prefix that compaction did NOT invalidate).
-        let mut compaction_attempts: u32 = 0;
-        const MAX_COMPACTION_RETRIES: u32 = 1;
-        let model_provider_id = model_ref.provider_id.clone();
-        let model_id = model_ref.model_id.clone();
-
-        loop {
-            // Build the on-rotation callback that emits profile_rotation
-            // events. Borrows event_sink + session_id + provider/model ids;
-            // executor calls it inline so no Send/Sync gymnastics needed.
-            let on_rotate =
-                |from: &AuthProfile, to: &AuthProfile, reason: &failover::FailoverReason| {
-                    app_info!(
-                        "provider",
-                        "failover",
-                        "Rotating auth profile for {}::{}: {} -> {} (reason: {:?})",
-                        model_provider_id,
-                        model_id,
-                        from.label,
-                        to.label,
-                        reason
-                    );
-                    if let Ok(json_str) = serde_json::to_string(&serde_json::json!({
-                        "type": "profile_rotation",
-                        "provider_id": model_provider_id,
-                        "model_id": model_id,
-                        "from_profile": from.label,
-                        "to_profile": to.label,
-                        "reason": reason,
-                    })) {
-                        emit_stream_event(
-                            &db,
-                            &event_sink,
-                            &session_id,
-                            source,
-                            turn_id.as_deref(),
-                            &json_str,
-                        );
-                    }
-                };
-
-            let retry_model_display = format!("{} / {}", prov.name, model_ref.model_id);
-            let can_switch_model = has_resolvable_fallback(&model_chain, &providers, idx);
-            let on_retry = |progress: &RetryProgress| {
-                app_info!(
-                    "provider",
-                    "retry",
-                    "Retrying {}::{} after {:?} (attempt {}/{}, delay={}ms)",
-                    model_provider_id,
-                    model_id,
-                    progress.reason,
-                    progress.attempt,
-                    progress.max_attempts,
-                    progress.delay_ms
-                );
-                if let Ok(json_str) = serde_json::to_string(&serde_json::json!({
-                    "type": "model_retry",
-                    "provider_id": model_provider_id,
-                    "model_id": model_id,
-                    "model": retry_model_display,
-                    "reason": progress.reason,
-                    "attempt": progress.attempt,
-                    "total": progress.max_attempts,
-                    "delay_ms": progress.delay_ms,
-                    "recovery_id": progress.recovery_id,
-                    "can_switch_model": can_switch_model,
-                })) {
-                    emit_stream_event(
-                        &db,
-                        &event_sink,
-                        &session_id,
-                        source,
-                        turn_id.as_deref(),
-                        &json_str,
-                    );
-                }
-            };
-            let can_replay_operation = || !durability.had_tool_activity();
-
-            // Capture refs / clones the closure needs. `move` consumes per-
-            // call clones; the original chat_engine values stay borrowable
-            // for the next compaction-retry iteration.
-            let providers_ref = &providers;
-            let compact_config_ref = &compact_config;
-            let agent_id_ref = &agent_id;
-            let session_id_ref = &session_id;
-            let channel_kb_context_ref = &channel_kb_context;
-            let extra_system_context_ref = &extra_system_context;
-            let skill_allowed_tools_ref = &skill_allowed_tools;
-            let plan_resolved_ref = &plan_resolved;
-            let message_ref = &message;
-            let attachments_ref = &attachments;
-            let effort_str_ref = &effort_str;
-            let cancel_ref = &cancel;
-            let event_sink_ref = &event_sink;
-            let db_ref = &db;
-            let model_ref_for_op = model_ref;
-            let codex_token_ref = &codex_token;
-            let durability_ref = durability.clone();
-            let fallback_event_ref = fallback_event_json.as_deref();
-
-            let exec_result = execute_with_failover_observed(
-                prov,
-                &session_id,
-                FailoverPolicy::chat_engine_default().with_cancel(cancel.clone()),
-                Some(&on_rotate),
-                Some(&on_retry),
-                Some(&can_replay_operation),
-                |profile| {
-                    let profile_owned = profile.cloned();
-                    // Sync setup: build + configure + restore. If build
-                    // fails (e.g. Codex without token), surface as Unknown
-                    // so the executor exhausts and we move to next model.
-                    // Per-call clones for the streaming callback's `move ||`.
-                    let event_sink_for_cb = event_sink_ref.clone();
-                    let session_for_cb = session_id_ref.clone();
-                    let source_for_cb = source;
-                    let cancel_for_op = cancel_ref.clone();
-                    let cancel_for_check = cancel_for_op.clone();
-                    let cancel_for_wait = cancel_for_op.clone();
-                    let turn_id_for_cb = turn_id.clone();
-
-                    let agent_id_owned = agent_id_ref.clone();
-                    let session_id_owned = session_id_ref.clone();
-                    let extra_ctx_owned = extra_system_context_ref.clone();
-                    let skill_tools_owned = skill_allowed_tools_ref.clone();
-                    let denied_tools_owned = denied_tools.clone();
-                    let steer_run_id_owned = steer_run_id.clone();
-                    let plan_resolved_owned = plan_resolved_ref.clone();
-                    let channel_kb_context_owned = channel_kb_context_ref.clone();
-                    let message_owned = message_ref.clone();
-                    // Arc<[Attachment]> clone is a pointer bump regardless
-                    // of attachment size. See param destructure for the wrap.
-                    let attachments_owned = attachments_ref.clone();
-                    let effort_owned = effort_str_ref.clone();
-                    let db_owned = db_ref.clone();
-                    let provider_id_for_err = model_ref_for_op.provider_id.clone();
-                    let model_id_for_err = model_ref_for_op.model_id.clone();
-                    let codex_token_owned = codex_token_ref.clone();
-                    let durability_owned = durability_ref.clone();
-                    let fallback_event_owned = fallback_event_ref.map(ToOwned::to_owned);
-                    async move {
-                        let provider_shape = match &prov.api_type {
-                            ApiType::Anthropic => "anthropic",
-                            ApiType::OpenaiChat => "openai_chat",
-                            ApiType::OpenaiResponses => "openai_responses",
-                            ApiType::Codex => "codex",
-                        };
-                        durability_owned
-                            .begin_attempt(
-                                Some(&model_ref_for_op.provider_id),
-                                Some(&model_ref_for_op.model_id),
-                                Some(provider_shape),
-                            )
-                            .await?;
-                        if let Some(fallback_event) = fallback_event_owned.as_deref() {
-                            emit_stream_event(
-                                &db_owned,
-                                &event_sink_for_cb,
-                                &session_for_cb,
-                                source_for_cb,
-                                turn_id_for_cb.as_deref(),
-                                fallback_event,
-                            );
-                        }
-                        let mut agent = build_agent_from_snapshot(
-                            model_ref_for_op,
-                            providers_ref,
-                            codex_token_owned,
-                            compact_config_ref,
-                            profile_owned.as_ref(),
-                            session_id_ref,
-                        )
-                        .await
-                        .map_err(|e| {
-                            anyhow::anyhow!(
-                                "Cannot build agent for {}::{}: {}",
-                                provider_id_for_err,
-                                model_id_for_err,
-                                e
-                            )
-                        })?;
-                        configure_agent(
-                            &mut agent,
-                            &agent_id_owned,
-                            &session_id_owned,
-                            db_owned.clone(),
-                            resolved_temperature,
-                            extra_ctx_owned.as_deref(),
-                            &skill_tools_owned,
-                            &denied_tools_owned,
-                            tool_scope,
-                            subagent_depth,
-                            steer_run_id_owned,
-                            plan_resolved_owned,
-                            plan_context_locked,
-                            auto_approve_tools,
-                            follow_global_reasoning_effort,
-                            source,
-                            kb_origin,
-                            channel_kb_context_owned,
-                        );
-                        agent.set_turn_durability(durability_owned.clone());
-                        restore_agent_context(&db_owned, &session_id_owned, &agent);
-
-                        let history_len_before = agent.get_conversation_history().len();
-                        let chat_start = std::time::Instant::now();
-                        let allow_hard_cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
-                        let allow_hard_cancel_for_cb = allow_hard_cancel.clone();
-
-                        let mut chat_future = Box::pin(agent.chat(
-                            &message_owned,
-                            &attachments_owned,
-                            effort_owned.as_deref(),
-                            cancel_for_op,
-                            move |delta| {
-                                if !turn_accepts_stream_event(
-                                    &db_owned,
-                                    &session_for_cb,
-                                    turn_id_for_cb.as_deref(),
-                                ) {
-                                    return;
-                                }
-                                if event_enters_runtime_loop(delta) {
-                                    allow_hard_cancel_for_cb
-                                        .store(false, std::sync::atomic::Ordering::SeqCst);
-                                }
-                                // Guard already checked above this tick — skip
-                                // the redundant turn_accepts lock + snapshot.
-                                emit_stream_event_unchecked(
-                                    &event_sink_for_cb,
-                                    &session_for_cb,
-                                    source_for_cb,
-                                    turn_id_for_cb.as_deref(),
-                                    delta,
-                                );
-                            },
-                        ));
-                        let chat_result = match tokio::select! {
-                            biased;
-                            _ = wait_for_chat_cancel(cancel_for_wait) => None,
-                            result = &mut chat_future => Some(result),
-                        } {
-                            Some(result) => result,
-                            None if allow_hard_cancel.load(std::sync::atomic::Ordering::SeqCst) => {
-                                Err(anyhow::anyhow!(CHAT_CANCELLED_BY_CALLER))
-                            }
-                            None => match tokio::time::timeout(
-                                CHAT_CANCEL_COOPERATIVE_GRACE,
-                                chat_future.as_mut(),
-                            )
-                            .await
-                            {
-                                Ok(result) => result,
-                                Err(_) => {
-                                    app_warn!(
-                                        "chat",
-                                        "cancel",
-                                        "Force-dropping session {} model/tool loop after {}ms cancellation grace",
-                                        session_id_owned,
-                                        CHAT_CANCEL_COOPERATIVE_GRACE.as_millis()
-                                    );
-                                    Err(anyhow::anyhow!(CHAT_CANCELLED_BY_CALLER))
-                                }
-                            },
-                        };
-                        drop(chat_future);
-
-                        if abort_on_cancel
-                            && cancel_for_check.load(std::sync::atomic::Ordering::SeqCst)
-                        {
-                            return Err(anyhow::anyhow!("chat cancelled by caller"));
-                        }
-
-                        match chat_result {
-                            Ok((response, thinking)) => Ok(ChatRoundOk {
-                                response,
-                                thinking,
-                                agent,
-                                history_len_before,
-                                chat_start,
-                            }),
-                            Err(e) => Err(e),
-                        }
-                    }
-                },
-            )
-            .await;
-
-            match exec_result {
-                Ok(ok) => {
-                    let ChatRoundOk {
-                        response,
-                        thinking,
-                        agent,
-                        history_len_before,
-                        chat_start,
-                    } = ok;
-                    let duration_ms = chat_start.elapsed().as_millis() as u64;
-
-                    if let Some(ref tid) = turn_id {
-                        if let Ok(Some(turn)) = db.get_chat_turn(tid) {
-                            if turn.status.is_terminal() {
-                                // A watchdog/request guard may have finalized
-                                // chat_turns while the provider future was
-                                // still unwinding. The journal must still be
-                                // materialized atomically; merely marking the
-                                // run terminal would strand already displayed
-                                // bytes outside canonical messages/context.
-                                let terminal = if turn.status == session::ChatTurnStatus::Completed
-                                {
-                                    session::ChatTurnStatus::Failed
-                                } else {
-                                    turn.status
-                                };
-                                let interrupt = turn
-                                    .interrupt_reason
-                                    .unwrap_or(session::ChatTurnInterruptReason::Unknown);
-                                let convergence: Result<(), String> = async {
-                                    let final_seq = durability
-                                        .flush(FlushReason::Failure)
-                                        .await
-                                        .map_err(|error| error.to_string())?;
-                                    durability
-                                        .reconcile_spool_to_sqlite()
-                                        .await
-                                        .map_err(|error| error.to_string())?;
-                                    let mut partial_text = durability.trailing_text();
-                                    if partial_text.is_empty() && !durability.had_text_output() {
-                                        partial_text = response.clone();
-                                    }
-                                    let assistant = durability.had_text_output().then(|| {
-                                        build_durable_assistant_message(
-                                            &durability,
-                                            &partial_text,
-                                            thinking.clone(),
-                                            duration_ms,
-                                            source,
-                                        )
-                                    });
-                                    let context_json =
-                                        serde_json::to_string(&agent.get_conversation_history())
-                                            .map_err(|error| error.to_string())?;
-                                    let commit = session::CommitInterruptedTurn {
-                                        run_id: durability
-                                            .is_persistent()
-                                            .then(|| durability.persistence_run_id().to_string()),
-                                        attempt_no: durability.current_attempt_no(),
-                                        session_id: session_id.clone(),
-                                        assistant,
-                                        context_json,
-                                        expected_context_revision: durability.context_revision(),
-                                        turn_id: turn_id.clone(),
-                                        final_seq,
-                                        status: terminal,
-                                        interrupt_reason: Some(interrupt.as_str().to_string()),
-                                        error: turn.error.clone(),
-                                        recovery_event: None,
-                                    };
-                                    let db_for_commit = db.clone();
-                                    db_for_commit
-                                        .run(move |db| db.commit_interrupted_turn(&commit))
-                                        .await
-                                        .map_err(|error| error.to_string())?;
-                                    Ok(())
-                                }
-                                .await;
-                                if let Err(error) = convergence {
-                                    let message = format!(
-                                        "externally-terminal stream convergence failed: {error}"
-                                    );
-                                    app_error!(
-                                        "chat",
-                                        "stream_durability",
-                                        "run {}: {}",
-                                        durability.persistence_run_id(),
-                                        message
-                                    );
-                                    // Keep the DB run in `running` state so a
-                                    // restart can replay its durable journal.
-                                    durability.mark_interrupted("persistence_unavailable");
-                                    stream_lifecycle.set_terminal(
-                                        session::ChatTurnStatus::Failed,
-                                        Some(session::ChatTurnInterruptReason::Unknown),
-                                        Some(message.clone()),
-                                    );
-                                    stream_lifecycle.finish();
-                                    return Err(message.into());
-                                }
-                                durability.mark_interrupted(terminal.as_str());
-                                stream_lifecycle.set_terminal(
-                                    terminal,
-                                    Some(interrupt),
-                                    turn.error.clone(),
-                                );
-                                stream_lifecycle.finish();
-                                schedule_browser_turn_finalize(source, &session_id);
-                                return Ok(ChatEngineResult {
-                                    response,
-                                    model_used: Some(model_ref.clone()),
-                                    usage: durability.usage(),
-                                    agent: Some(agent),
-                                });
-                            }
-                        }
-                    }
-
-                    // A provider can finish before the 100ms durability writer
-                    // publishes its last batch. Publishing that batch may be
-                    // the moment the UI observes the first delta and requests
-                    // Stop, so check cancellation only after this barrier as
-                    // well as inside the provider loop. Otherwise a late Stop
-                    // races through the normal completed transaction.
-                    if !abort_on_cancel && persist_final_error_event {
-                        durability
-                            .flush(FlushReason::FinalEnd)
-                            .await
-                            .map_err(|error| {
-                                format!("pre-final durability barrier failed: {error}")
-                            })?;
-                        durability
-                            .reconcile_spool_to_sqlite()
-                            .await
-                            .map_err(|error| format!("pre-final spool import failed: {error}"))?;
-                    }
-
-                    if !abort_on_cancel
-                        && cancel.load(std::sync::atomic::Ordering::SeqCst)
-                        && persist_final_error_event
-                    {
-                        // Reuse the common journal-replay convergence below. It
-                        // appends the user-stop marker to provider context and
-                        // writes the matching UI event in the same transaction;
-                        // the former inline branch omitted both.
-                        last_reason = None;
-                        last_error = Some(CHAT_CANCELLED_BY_CALLER.to_string());
-                        last_was_no_profile = false;
-                        break;
-                    }
-
-                    // Emit usage event with duration
-                    let usage_event = serde_json::json!({
-                        "type": "usage",
-                        "duration_ms": duration_ms,
-                    });
-                    if let Ok(json_str) = serde_json::to_string(&usage_event) {
-                        emit_stream_event(
-                            &db,
-                            &event_sink,
-                            &session_id,
-                            source,
-                            turn_id.as_deref(),
-                            &json_str,
-                        );
-                    }
-
-                    // Freeze the complete durable prefix before deriving the
-                    // canonical assistant. Reading `trailing_text()` before
-                    // this barrier can miss the final <100ms pending batch and
-                    // would commit a truncated assistant despite the journal
-                    // containing (and the UI receiving) the full response.
-                    let final_seq = match durability.flush(FlushReason::FinalEnd).await {
-                        Ok(seq) => seq,
-                        Err(error) => {
-                            let message = format!("final durability barrier failed: {error}");
-                            stream_lifecycle.set_terminal(
-                                session::ChatTurnStatus::Failed,
-                                Some(session::ChatTurnInterruptReason::Unknown),
-                                Some(message.clone()),
-                            );
-                            stream_lifecycle.finish();
-                            return Err(message.into());
-                        }
-                    };
-                    if let Err(error) = durability.reconcile_spool_to_sqlite().await {
-                        let message = format!("cannot import emergency stream spool: {error}");
-                        stream_lifecycle.set_terminal(
-                            session::ChatTurnStatus::Failed,
-                            Some(session::ChatTurnInterruptReason::Unknown),
-                            Some(message.clone()),
-                        );
-                        stream_lifecycle.finish();
-                        return Err(message.into());
-                    }
-
-                    let mut trailing_text = durability.trailing_text();
-                    let trailing_placeholder_id = None;
-                    if trailing_text.is_empty()
-                        && !durability.had_text_output()
-                        && !response.is_empty()
-                    {
-                        // Defensive fallback for provider adapters that return
-                        // terminal text without emitting text_delta.
-                        trailing_text = response.clone();
-                    }
-                    let mut assistant_msg = build_durable_assistant_message(
-                        &durability,
-                        &trailing_text,
-                        thinking,
-                        duration_ms,
-                        source,
-                    );
-                    let active_trace = agent.current_active_memory_trace();
-                    let used_refs = agent.current_used_memory_refs();
-                    let retrieval_planner_trace = agent.current_retrieval_planner_trace(&used_refs);
-                    if active_trace.is_some()
-                        || !used_refs.is_empty()
-                        || retrieval_planner_trace.is_some()
-                    {
-                        let mut meta = serde_json::Map::new();
-                        if let Some(trace) = active_trace {
-                            meta.insert(
-                                session::ATTACHMENT_META_KEY_ACTIVE_MEMORY.to_string(),
-                                serde_json::to_value(&*trace).unwrap_or(serde_json::Value::Null),
-                            );
-                        }
-                        if !used_refs.is_empty() {
-                            meta.insert(
-                                session::ATTACHMENT_META_KEY_USED_MEMORY_REFS.to_string(),
-                                serde_json::to_value(used_refs).unwrap_or(serde_json::Value::Null),
-                            );
-                        }
-                        if let Some(trace) = retrieval_planner_trace {
-                            meta.insert(
-                                session::ATTACHMENT_META_KEY_RETRIEVAL_PLANNER.to_string(),
-                                serde_json::to_value(trace).unwrap_or(serde_json::Value::Null),
-                            );
-                        }
-                        assistant_msg.attachments_meta =
-                            serde_json::to_string(&serde_json::Value::Object(meta)).ok();
-                    }
-                    let usage = durability.usage();
-                    let mut ledger_event =
-                        crate::model_usage::ModelUsageEvent::new(crate::model_usage::KIND_CHAT)
-                            .with_usage(
-                                usage.input_tokens.unwrap_or(0) as u64,
-                                usage.output_tokens.unwrap_or(0) as u64,
-                                usage.cache_creation_input_tokens.unwrap_or(0) as u64,
-                                usage.cache_read_input_tokens.unwrap_or(0) as u64,
-                            )
-                            .with_context_usage(
-                                usage
-                                    .context_input_tokens
-                                    .or(usage.input_tokens)
-                                    .unwrap_or(0) as u64,
-                                usage.fresh_input_tokens.or(usage.input_tokens).unwrap_or(0) as u64,
-                            );
-                    ledger_event.timestamp = Some(chrono::Utc::now().to_rfc3339());
-                    ledger_event.operation = Some("chat".to_string());
-                    ledger_event.source = Some(source.as_str().to_string());
-                    ledger_event.provider_id = Some(model_ref.provider_id.clone());
-                    ledger_event.provider_name = Some(prov.name.clone());
-                    ledger_event.model_id = Some(
-                        usage
-                            .model
-                            .clone()
-                            .unwrap_or_else(|| model_ref.model_id.clone()),
-                    );
-                    ledger_event.session_id = Some(session_id.clone());
-                    ledger_event.agent_id = Some(agent_id.clone());
-                    ledger_event.duration_ms = Some(duration_ms);
-                    ledger_event.ttft_ms = usage.ttft_ms.map(|value| value.max(0) as u64);
-                    // Per-Provider-round accounting is recorded inside the
-                    // streaming adapter. The durable aggregate still carries
-                    // evaluation identity for traceability without counting a
-                    // second model call.
-                    crate::eval_context::enrich_usage_metadata(&mut ledger_event);
-
-                    let context_json = serde_json::to_string(&agent.get_conversation_history())
-                        .map_err(|error| format!("serialize final context failed: {error}"))?;
-                    let commit = session::CommitAssistantTurn {
-                        run_id: durability
-                            .is_persistent()
-                            .then(|| durability.persistence_run_id().to_string()),
-                        attempt_no: durability.current_attempt_no(),
-                        session_id: session_id.clone(),
-                        assistant: assistant_msg,
-                        trailing_placeholder_id,
-                        context_json,
-                        expected_context_revision: durability.context_revision(),
-                        turn_id: turn_id.clone(),
-                        usage: Some(ledger_event),
-                        final_seq,
-                    };
-                    let committed = {
-                        let db = db.clone();
-                        db.run(move |db| db.commit_assistant_turn(&commit)).await
-                    };
-                    let committed = match committed {
-                        Ok(committed) => committed,
-                        Err(_) if cancel.load(std::sync::atomic::Ordering::SeqCst) => {
-                            // Stop may win after the final in-memory cancel
-                            // check but before the atomic success transaction.
-                            // The DB refuses to overwrite `cancelling`; converge
-                            // the durable journal through the normal UserStop
-                            // finalizer instead of misclassifying that CAS as a
-                            // persistence failure.
-                            last_reason = None;
-                            last_error = Some(CHAT_CANCELLED_BY_CALLER.to_string());
-                            last_was_no_profile = false;
-                            break;
-                        }
-                        Err(error) => {
-                            let message = format!("final assistant transaction failed: {error}");
-                            // Do not terminalize the persistence run here.
-                            // Its journal is the only recovery source after a
-                            // failed final transaction; startup must still see
-                            // the run as recoverable.
-                            durability.mark_interrupted("failed");
-                            stream_lifecycle.set_terminal(
-                                session::ChatTurnStatus::Failed,
-                                Some(session::ChatTurnInterruptReason::Unknown),
-                                Some(message.clone()),
-                            );
-                            stream_lifecycle.finish();
-                            return Err(message.into());
-                        }
-                    };
-                    let assistant_id = Some(committed.assistant_message_id);
-                    durability.mark_committed(committed.committed_seq);
-
-                    // GUI / HTTP turns mirror into the attached IM chat via
-                    // the live stream sink. Kick the final IM flush before
-                    // ending the frontend lifecycle and before running
-                    // post-turn side effects so title/memory work cannot
-                    // delay the remote chat's finalization. It runs in the
-                    // background so slow IM network calls never hold the GUI
-                    // path open.
-                    if let Some(state) = im_mirror.take() {
-                        let mirror_response = response.clone();
-                        tokio::spawn(async move {
-                            finalize_im_live_mirror(state, &mirror_response).await;
-                        });
-                    }
-
-                    // The user-visible response is complete once the final
-                    // assistant row is durable. End the frontend stream here;
-                    // memory extraction and other follow-ups below must not
-                    // keep the stop button/sidebar spinner alive.
-                    let terminal_status = session::ChatTurnStatus::Completed;
-                    let interrupt_reason = None;
-                    stream_lifecycle.set_terminal(terminal_status, interrupt_reason, None);
-                    stream_lifecycle.finish();
-                    schedule_browser_turn_finalize(source, &session_id);
-
-                    // Stop hook: the agent finished responding. `terminal_status`
-                    // distinguishes a natural `completed` from an interrupt —
-                    // block-to-continue is honored ONLY on `completed`
-                    // (fire_stop guards on it), never on a user interrupt.
-                    // `response` is the turn's final assistant text
-                    // (`last_assistant_message`), so a Stop hook can inspect it.
-                    crate::hooks::fire_stop(
-                        &session_id,
-                        Some(&agent_id),
-                        terminal_status.as_str(),
-                        Some(&response),
-                    );
-
-                    if terminal_status == session::ChatTurnStatus::Completed {
-                        let continuation = {
-                            let session_id = session_id.clone();
-                            let agent_id = agent_id.clone();
-                            let turn_id = turn_id.clone();
-                            db.run(move |db| {
-                                crate::goal::maybe_schedule_goal_continuation(
-                                    db,
-                                    &session_id,
-                                    &agent_id,
-                                    source,
-                                    turn_id.as_deref(),
-                                    assistant_id,
-                                )
-                            })
-                            .await
-                        };
-                        if let Err(e) = continuation {
-                            app_warn!(
-                                "goal",
-                                "auto_continue",
-                                "Failed to schedule goal continuation for session {}: {}",
-                                session_id,
-                                e
-                            );
-                        }
-                    }
-
-                    if post_turn_effects {
-                        crate::session_title::maybe_schedule_after_success(
-                            db.clone(),
-                            session_id.clone(),
-                            agent_id.clone(),
-                            model_ref.clone(),
-                        );
-                        {
-                            let usage_snapshot = durability.usage();
-                            let round_tokens = {
-                                let input = usage_snapshot.input_tokens.unwrap_or(0);
-                                let output = usage_snapshot.output_tokens.unwrap_or(0);
-                                (input + output) as u32
-                            };
-                            let round_messages = agent
-                                .get_conversation_history()
-                                .len()
-                                .saturating_sub(history_len_before)
-                                as u32;
-                            agent.accumulate_extraction_stats(round_tokens, round_messages);
-                        }
-
-                        let idle_timeout = schedule_memory_extraction_after_turn(
-                            &agent_id,
-                            &session_id,
-                            model_ref,
-                            &agent,
-                        )
-                        .await;
-
-                        // Skill auto-review trigger (gate 1 of the five-gate
-                        // waterfall). Feed tool_use_count from this round's
-                        // conversation slice — pure-chat turns yield 0 and
-                        // are filtered by `require_tool_use` in the config.
-                        // `history_tail_stats` walks the slice under one lock
-                        // without cloning the whole history.
-                        {
-                            let round_tokens = {
-                                let u = durability.usage();
-                                let input = u.input_tokens.unwrap_or(0);
-                                let output = u.output_tokens.unwrap_or(0);
-                                (input + output) as usize
-                            };
-                            let (round_messages, tool_use_count) =
-                                agent.history_tail_stats(history_len_before);
-                            let cfg = crate::config::cached_config()
-                                .skills
-                                .auto_review
-                                .clone()
-                                .sanitize();
-                            // Two user messages within 30 seconds is the
-                            // "user is correcting themselves" signal — cheap
-                            // DB read, only consulted when the master
-                            // toggle is on.
-                            let user_correction = cfg.correction_signal_enabled
-                                && db.user_messages_within(&session_id, 30).unwrap_or(false);
-                            let signals = crate::skills::auto_review::TriggerSignals {
-                                turn_tokens: round_tokens,
-                                new_messages: round_messages,
-                                tool_use_count,
-                                user_correction,
-                            };
-                            if let Some(gate) = crate::skills::auto_review::touch_and_maybe_trigger(
-                                &session_id,
-                                signals,
-                                &cfg,
-                            ) {
-                                let session_id_for_review = session_id.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = crate::skills::auto_review::run_review_cycle(
-                                        &session_id_for_review,
-                                        crate::skills::auto_review::ReviewTrigger::PostTurn,
-                                        gate,
-                                        None,
-                                    )
-                                    .await
-                                    {
-                                        app_warn!(
-                                            "skills",
-                                            "auto_review",
-                                            "post-turn review cycle failed: {}",
-                                            e
-                                        );
-                                    }
-                                    crate::skills::auto_review::sweep_stale(7 * 24 * 3600);
-                                });
-                            }
-                        }
-
-                        if idle_timeout > 0 {
-                            let tokens_remain = agent
-                                .tokens_since_extraction
-                                .load(std::sync::atomic::Ordering::SeqCst);
-                            let msgs_remain = agent
-                                .messages_since_extraction
-                                .load(std::sync::atomic::Ordering::SeqCst);
-                            if tokens_remain > 0 || msgs_remain > 0 {
-                                let updated_at = db
-                                    .get_session(&session_id)
-                                    .ok()
-                                    .flatten()
-                                    .map(|s| s.updated_at)
-                                    .unwrap_or_default();
-                                crate::memory_extract::schedule_idle_extraction(
-                                    agent_id.clone(),
-                                    session_id.clone(),
-                                    updated_at,
-                                    idle_timeout,
-                                );
-                            }
-                        }
-                    }
-
-                    return Ok(ChatEngineResult {
-                        response,
-                        model_used: Some(model_ref.clone()),
-                        usage: durability.usage(),
-                        agent: Some(agent),
-                    });
-                }
-
-                Err(ExecutorError::NeedsCompaction { last_profile }) => {
-                    if let Some((status, interrupt, error)) =
-                        terminal_turn_state(&db, turn_id.as_deref())
-                    {
-                        stream_lifecycle.set_terminal(status, interrupt, error);
-                        stream_lifecycle.finish();
-                        schedule_browser_turn_finalize(source, &session_id);
-                        return Ok(ChatEngineResult {
-                            response: String::new(),
-                            model_used: Some(model_ref.clone()),
-                            usage: Default::default(),
-                            agent: None,
-                        });
-                    }
-
-                    if durability.had_tool_activity() {
-                        let msg = format!(
-                            "Context overflow on {}::{} after tool activity; refusing to replay the turn",
-                            model_ref.provider_id, model_ref.model_id
-                        );
-                        app_warn!("provider", "recovery_blocked", "{}", msg);
-                        last_reason = Some(failover::FailoverReason::ContextOverflow);
-                        last_error = Some(msg);
-                        break;
-                    }
-
-                    if compaction_attempts >= MAX_COMPACTION_RETRIES {
-                        app_warn!(
-                            "context",
-                            "compact",
-                            "Context overflow on {}::{} persists after compaction, moving to next model",
-                            model_ref.provider_id,
-                            model_ref.model_id
-                        );
-                        let msg = format!(
-                            "Context overflow on {}::{} after emergency compaction",
-                            model_ref.provider_id, model_ref.model_id
-                        );
-                        last_reason = Some(failover::classify_error(&msg));
-                        last_error = Some(msg.clone());
-                        compaction_failed.get_or_insert(msg);
-                        break;
-                    }
-                    compaction_attempts += 1;
-
-                    app_info!(
-                        "context",
-                        "compact",
-                        "Context overflow on {}::{}, attempting emergency compaction",
-                        model_ref.provider_id,
-                        model_ref.model_id
-                    );
-
-                    let mut progress_extra = serde_json::Map::new();
-                    progress_extra.insert(
-                        "attempt".to_string(),
-                        serde_json::json!(compaction_attempts),
-                    );
-                    progress_extra.insert(
-                        "max_attempts".to_string(),
-                        serde_json::json!(MAX_COMPACTION_RETRIES),
-                    );
-                    progress_extra.insert(
-                        "provider_id".to_string(),
-                        serde_json::json!(model_ref.provider_id),
-                    );
-                    progress_extra.insert(
-                        "model_id".to_string(),
-                        serde_json::json!(model_ref.model_id),
-                    );
-                    let _ = emit_context_compaction_progress(
-                        &db,
-                        &event_sink,
-                        &session_id,
-                        source,
-                        turn_id.as_deref(),
-                        "preparing",
-                        "emergency",
-                        Some(progress_extra),
-                    );
-
-                    // Build a temporary agent to run the compaction. Same
-                    // profile that just hit overflow so the cache prefix is
-                    // identical.
-                    let mut compact_agent = match build_agent_from_snapshot(
-                        model_ref,
-                        &providers,
-                        codex_token.clone(),
-                        &compact_config,
-                        last_profile.as_ref(),
-                        &session_id,
-                    )
-                    .await
-                    {
-                        Ok(a) => a,
-                        Err(e) => {
-                            // The "preparing"/emergency spinner was already emitted
-                            // above; emit a terminal "failed" so the GUI banner
-                            // resolves instead of spinning forever on this break.
-                            let _ = emit_context_compaction_progress(
-                                &db,
-                                &event_sink,
-                                &session_id,
-                                source,
-                                turn_id.as_deref(),
-                                "failed",
-                                "emergency",
-                                None,
-                            );
-                            let msg = format!(
-                                "Cannot build agent for emergency compaction on {}::{}: {}",
-                                model_ref.provider_id, model_ref.model_id, e
-                            );
-                            last_reason = Some(failover::classify_error(&msg));
-                            last_error = Some(msg);
-                            break;
-                        }
-                    };
-                    configure_agent(
-                        &mut compact_agent,
-                        &agent_id,
-                        &session_id,
-                        db.clone(),
-                        resolved_temperature,
-                        extra_system_context.as_deref(),
-                        &skill_allowed_tools,
-                        &denied_tools,
-                        tool_scope,
-                        subagent_depth,
-                        steer_run_id.clone(),
-                        plan_resolved.clone(),
-                        plan_context_locked,
-                        auto_approve_tools,
-                        follow_global_reasoning_effort,
-                        source,
-                        kb_origin,
-                        channel_kb_context.clone(),
-                    );
-                    restore_agent_context(&db, &session_id, &compact_agent);
-
-                    let mut history = compact_agent.get_conversation_history();
-                    // Incognito parity with the Tier-3 path (agent/context.rs): an
-                    // incognito session must NOT have its runtime ledger (job /
-                    // subagent ids) built or injected into history — that history is
-                    // both sent to the model and persisted via save_agent_context
-                    // below. Fail-closed: a missing/burned session row counts as
-                    // incognito. Gating lives in `emergency_runtime_ledger` (unit-tested).
-                    let emergency_ledger = crate::agent::runtime_ledger::emergency_runtime_ledger(
-                        &session_id,
-                        crate::session::is_session_incognito(Some(&session_id)),
-                    );
-                    let emergency_ctx = crate::context_compact::EmergencyCompactionContext {
-                        config: &compact_config,
-                        runtime_ledger: emergency_ledger.as_ref(),
-                    };
-                    let compact_result = compact_agent
-                        .context_engine()
-                        .emergency_compact(&mut history, &emergency_ctx);
-                    compact_agent.set_conversation_history(history);
-                    if let Some((status, interrupt, error)) =
-                        terminal_turn_state(&db, turn_id.as_deref())
-                    {
-                        stream_lifecycle.set_terminal(status, interrupt, error);
-                        stream_lifecycle.finish();
-                        schedule_browser_turn_finalize(source, &session_id);
-                        return Ok(ChatEngineResult {
-                            response: String::new(),
-                            model_used: Some(model_ref.clone()),
-                            usage: Default::default(),
-                            agent: None,
-                        });
-                    }
-                    let compact_history = compact_agent.get_conversation_history();
-                    if let Err(error) = durability
-                        .checkpoint_context(&compact_history, durability.context_revision())
-                        .await
-                    {
-                        let _ = emit_context_compaction_progress(
-                            &db,
-                            &event_sink,
-                            &session_id,
-                            source,
-                            turn_id.as_deref(),
-                            "failed",
-                            "emergency",
-                            None,
-                        );
-                        last_error =
-                            Some(format!("Emergency compaction context CAS failed: {error}"));
-                        break;
-                    }
-                    if let Err(error) = durability.adopt_attempt_base_context(&compact_history) {
-                        last_error =
-                            Some(format!("Emergency compaction retry base failed: {error}"));
-                        break;
-                    }
-
-                    let mut progress_extra = serde_json::Map::new();
-                    progress_extra.insert(
-                        "attempt".to_string(),
-                        serde_json::json!(compaction_attempts),
-                    );
-                    progress_extra.insert(
-                        "max_attempts".to_string(),
-                        serde_json::json!(MAX_COMPACTION_RETRIES),
-                    );
-                    let _ = emit_context_compaction_progress(
-                        &db,
-                        &event_sink,
-                        &session_id,
-                        source,
-                        turn_id.as_deref(),
-                        "finalizing",
-                        "emergency",
-                        Some(progress_extra),
-                    );
-
-                    // Manual snake_case shape — `CompactResult` itself is
-                    // `rename_all="camelCase"`, but the frontend / IM
-                    // formatter / persister all key off snake_case fields
-                    // (matching `agent/context.rs`'s pre-LLM compaction
-                    // emit). Direct `"data": compact_result` would silently
-                    // skip every consumer's tier filter.
-                    if let Ok(event_str) = serde_json::to_string(&serde_json::json!({
-                        "type": "context_compacted",
-                        "data": {
-                            "tier_applied": compact_result.tier_applied,
-                            "tokens_before": compact_result.tokens_before,
-                            "tokens_after": compact_result.tokens_after,
-                            "messages_affected": compact_result.messages_affected,
-                            "description": compact_result.description,
-                            "manifest": compact_result.manifest,
-                        },
-                    })) {
-                        // The coordinator journals this event and materializes
-                        // it exactly once with the final turn transaction.
-                        emit_stream_event(
-                            &db,
-                            &event_sink,
-                            &session_id,
-                            source,
-                            turn_id.as_deref(),
-                            &event_str,
-                        );
-                    }
-
-                    // Write the just-failed profile back to PROFILE_STICKY
-                    // so the next executor call's select_profile picks it
-                    // first (compaction reduces tokens but doesn't change
-                    // the cached prefix → same key avoids a cache miss).
-                    if let Some(ref p) = last_profile {
-                        failover::PROFILE_STICKY.set(&model_ref.provider_id, &session_id, &p.id);
-                    }
-                    continue;
-                }
-
-                Err(ExecutorError::Cancelled) => {
-                    last_reason = None;
-                    last_error = Some(CHAT_CANCELLED_BY_CALLER.to_string());
-                    last_was_no_profile = false;
-                    break;
-                }
-
-                Err(ExecutorError::SwitchModel {
-                    last_reason: r,
-                    last_error: err_str,
-                }) => {
-                    app_info!(
-                        "provider",
-                        "manual_model_switch",
-                        "Skipping remaining retries for {}::{} at user request",
-                        model_ref.provider_id,
-                        model_ref.model_id
-                    );
-                    last_reason = Some(r);
-                    last_error = Some(err_str);
-                    last_was_no_profile = false;
-                    manual_model_switch = true;
-                    break;
-                }
-
-                Err(ExecutorError::Exhausted {
-                    last_reason: r,
-                    last_error: err_str,
-                }) => {
-                    app_warn!(
-                        "provider",
-                        "failover",
-                        "Giving up on {}::{} (reason {:?}), moving to next model in chain",
-                        model_ref.provider_id,
-                        model_ref.model_id,
-                        r
-                    );
-
-                    // Codex Auth → emit codex_auth_expired so frontend can
-                    // prompt the user to re-authorize.
-                    let is_codex_auth =
-                        matches!(r, failover::FailoverReason::Auth) && prov.api_type.is_codex();
-                    if is_codex_auth {
-                        if let Ok(json_str) = serde_json::to_string(&serde_json::json!({
-                            "type": "codex_auth_expired",
-                            "error": &err_str,
-                        })) {
-                            emit_stream_event(
-                                &db,
-                                &event_sink,
-                                &session_id,
-                                source,
-                                turn_id.as_deref(),
-                                &json_str,
-                            );
-                        }
-                    }
-
-                    last_is_codex_auth = is_codex_auth;
-                    last_reason = Some(r);
-                    last_error = Some(err_str);
-                    last_was_no_profile = false;
-                    break;
-                }
-
-                Err(ExecutorError::NoProfileAvailable) => {
-                    app_warn!(
-                        "provider",
-                        "failover",
-                        "No auth profile available for {}::{}",
-                        model_ref.provider_id,
-                        model_ref.model_id
-                    );
-                    let msg = format!(
-                        "No auth profile available for {}::{}",
-                        model_ref.provider_id, model_ref.model_id
-                    );
-                    last_reason = Some(failover::classify_error(&msg));
-                    last_error = Some(msg);
-                    last_was_no_profile = true;
-                    break;
-                }
-            }
-        }
-
-        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-            break;
-        }
-
-        // Every model/profile retry rebuilds the Agent from the turn's stable
-        // base context. Once a tool ran, doing so would replay its external
-        // side effects instead of resuming after its result.
-        if durability.had_non_replayable_tool_activity() {
-            app_warn!(
-                "provider",
-                "recovery_blocked",
-                "Not switching models for session {} after tool activity",
-                session_id
-            );
-            break;
-        }
-
-        if last_reason.is_some_and(|reason| reason.is_terminal()) {
-            break;
-        }
-
-        model_index += 1;
-        // "Switch model" means leave the current model immediately. If there
-        // is no later configured model, do not reinterpret it as permission to
-        // restart the same chain from its first model.
-        if model_index >= model_chain.len() && manual_model_switch {
-            break;
-        }
-    }
-
-    // All non-success paths (cancel, exhausted, no-profile, compaction
-    // give-up) converge here.
-    let final_error = last_error
-        .clone()
-        .unwrap_or_else(|| "All models in the fallback chain failed.".to_string());
-    app_error!(
-        "provider",
-        "failover",
-        "All {} models exhausted for session {}: {}",
-        total_models,
-        session_id,
-        final_error
-    );
-
-    let reason = derive_termination_reason(
-        abort_on_cancel,
-        &cancel,
-        last_reason,
-        last_error.as_deref(),
-        last_is_codex_auth,
-        compaction_failed.as_deref(),
-        last_was_no_profile,
-    );
-
-    // The journal, rather than legacy placeholder rows, is the truth source
-    // for failed/aborted turns. Keep the last visible attempt and converge the
-    // partial assistant + context + turn status atomically.
-    let terminal_status = reason.to_chat_turn_status();
-    let terminal_interrupt = reason.to_chat_turn_interrupt_reason();
-    let durability_result: anyhow::Result<()> = async {
-        let durable_seq = durability.flush(FlushReason::Stop).await?;
-        if durability.is_persistent() {
-            durability.reconcile_spool_to_sqlite().await?;
-        }
-
-        let (attempt_no, commit_seq, visible_events, integrity_error, provider_kind) =
-            if durability.is_persistent() {
-                let run_id = durability.persistence_run_id().to_string();
-                let db_for_snapshot = db.clone();
-                let snapshot = db_for_snapshot
-                    .run(move |db| db.stream_run_snapshot(&run_id))
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("persistence run disappeared"))?;
-                let (attempt_no, commit_seq, events, integrity_error) =
-                    session::select_recoverable_attempt_prefix(&snapshot);
-                let attempt = snapshot
-                    .attempts
-                    .iter()
-                    .find(|attempt| attempt.attempt_no == attempt_no);
-                let provider_kind = attempt
-                    .and_then(|attempt| attempt.provider_shape.as_deref())
-                    .or(snapshot.run.provider_shape.as_deref())
-                    .and_then(finalize::ProviderApiKind::from_shape);
-                (
-                    attempt_no,
-                    commit_seq,
-                    events,
-                    integrity_error,
-                    provider_kind,
-                )
-            } else {
-                let snapshot = durability.snapshot();
-                (
-                    durability.current_attempt_no(),
-                    durable_seq,
-                    snapshot.events,
-                    None,
-                    durability
-                        .current_provider_shape()
-                        .as_deref()
-                        .and_then(finalize::ProviderApiKind::from_shape),
-                )
-            };
-        let trailing_text = session::trailing_text_from_journal_events(&visible_events);
-        let assistant = session::journal_events_have_assistant_output(&visible_events).then(|| {
-            let mut message = session::NewMessage::assistant(&trailing_text);
-            message.source = Some(source.as_str().to_string());
-            message
-        });
-        let (context_json, context_checkpoint_seq, context_revision, has_context_checkpoint) =
-            if durability.is_persistent() {
-                let run_id = durability.persistence_run_id().to_string();
-                db.clone()
-                    .run(move |db| {
-                        let (context, checkpoint_seq, revision) =
-                            db.recovery_context_for_prefix(&run_id, attempt_no, commit_seq)?;
-                        let has_checkpoint =
-                            db.stream_context_checkpoint_exists(&run_id, attempt_no, commit_seq)?;
-                        Ok::<_, anyhow::Error>((context, checkpoint_seq, revision, has_checkpoint))
-                    })
-                    .await?
-            } else {
-                let session_id_for_context = session_id.clone();
-                let (context, revision) = db
-                    .clone()
-                    .run(move |db| db.load_context_with_revision(&session_id_for_context))
-                    .await?;
-                (context, 0, revision, false)
-            };
-        let mut history: Vec<serde_json::Value> = context_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .unwrap_or_default();
-        if !has_context_checkpoint {
-            let user_message = message.trim();
-            if !user_message.is_empty() {
-                history.push(serde_json::json!({
-                    "role": "user",
-                    "content": user_message,
-                }));
-            }
-        }
-        finalize::rebuild::append_journal_suffix_to_history(
-            &mut history,
-            &visible_events,
-            context_checkpoint_seq,
-            provider_kind,
-        )?;
-        history.push(serde_json::json!({
-            "role": "assistant",
-            "content": finalize::copy::model_marker(&reason),
-        }));
-        let context_json = serde_json::to_string(&history)?;
-        let recovery_event = persist_final_error_event.then(|| {
-            let mut event = if terminal_status == session::ChatTurnStatus::Failed {
-                session::NewMessage::error_event(&finalize::copy::user_notice(&reason))
-            } else {
-                session::NewMessage::event(&finalize::copy::user_notice(&reason))
-            };
-            event.source = Some(source.as_str().to_string());
-            event
-        });
-        let commit = session::CommitInterruptedTurn {
-            run_id: durability
-                .is_persistent()
-                .then(|| durability.persistence_run_id().to_string()),
-            attempt_no,
-            session_id: session_id.clone(),
-            assistant,
-            context_json,
-            expected_context_revision: context_revision,
-            turn_id: turn_id.clone(),
-            final_seq: commit_seq,
-            status: terminal_status,
-            interrupt_reason: Some(terminal_interrupt.as_str().to_string()),
-            error: integrity_error.or_else(|| {
-                (terminal_status == session::ChatTurnStatus::Failed).then(|| final_error.clone())
-            }),
-            recovery_event,
-        };
-        let db_for_commit = db.clone();
-        db_for_commit
-            .run(move |db| db.commit_interrupted_turn(&commit))
-            .await?;
-        durability.mark_interrupted(terminal_status.as_str());
-        Ok(())
-    }
-    .await;
-
-    if let Err(error) = durability_result {
-        app_error!(
-            "chat",
-            "stream_durability",
-            "failed to converge terminal stream {}: {}",
-            durability.persistence_run_id(),
-            error
-        );
-        // Leave the DB run recoverable, but release the live coordinator so
-        // the UI is not reported as indefinitely active in this process.
-        durability.mark_interrupted("persistence_unavailable");
-    }
-    if let Some(state) = im_mirror.take() {
-        tokio::spawn(async move {
-            finalize_im_live_mirror(state, "").await;
-        });
-    }
-    stream_lifecycle.set_terminal(
-        terminal_status,
-        Some(terminal_interrupt),
-        (terminal_status == session::ChatTurnStatus::Failed).then(|| final_error.clone()),
-    );
-
-    if matches!(reason, TerminationReason::UserStop) && !abort_on_cancel {
-        stream_lifecycle.finish();
-        schedule_browser_turn_finalize(source, &session_id);
-        return Ok(ChatEngineResult {
-            response: String::new(),
-            model_used: None,
-            usage: Default::default(),
-            agent: None,
-        });
-    }
-
-    schedule_browser_turn_finalize(source, &session_id);
-    stream_lifecycle.finish();
-    let failure_kind = match &reason {
-        TerminationReason::UserStop | TerminationReason::RuntimeCancel => {
-            ChatEngineFailureKind::Cancelled
-        }
-        TerminationReason::ProviderFailed { .. } | TerminationReason::NoProfileAvailable => {
-            ChatEngineFailureKind::ProviderExhausted
-        }
-        TerminationReason::CompactionFailed { .. }
-        | TerminationReason::Other { .. }
-        | TerminationReason::Shutdown
-        | TerminationReason::Crash => ChatEngineFailureKind::Infrastructure,
-    };
-    Err(ChatEngineFailure::new(failure_kind, final_error))
 }
 
-fn build_durable_assistant_message(
-    durability: &super::durability::StreamCoordinator,
-    content: &str,
-    thinking: Option<String>,
-    duration_ms: u64,
-    source: stream_seq::ChatSource,
-) -> session::NewMessage {
-    let usage = durability.usage();
-    let mut message = session::NewMessage::assistant(content);
-    message.tool_duration_ms = Some(duration_ms.min(i64::MAX as u64) as i64);
-    if !durability.had_thinking() {
-        message.thinking = thinking;
-    }
-    message.tokens_in = usage.input_tokens;
-    message.tokens_out = usage.output_tokens;
-    message.tokens_in_last = usage.last_context_input_tokens.or(usage.last_input_tokens);
-    message.model = usage.model;
-    message.ttft_ms = usage.ttft_ms;
-    message.tokens_cache_creation = usage
-        .last_cache_creation_input_tokens
-        .or(usage.cache_creation_input_tokens);
-    message.tokens_cache_read = usage
-        .last_cache_read_input_tokens
-        .or(usage.cache_read_input_tokens);
-    message.source = Some(source.as_str().to_string());
-    message
-}
-
-// ── Termination reason derivation ────────────────────────────────────
-
-/// Map runtime convergence state to a [`TerminationReason`].
-///
-/// A set cancel flag is the positive signal for `UserStop`; user-facing
-/// desktop / HTTP / IM paths all preserve partial state and converge through
-/// the same interrupted finalizer. `last_reason == None` after a non-cancel
-/// path means we never even reached an executor call → `NoProfileAvailable`.
-/// Everything else is `ProviderFailed` carrying the classified reason.
-fn derive_termination_reason(
-    _abort_on_cancel: bool,
-    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
-    last_reason: Option<failover::FailoverReason>,
-    last_error: Option<&str>,
-    last_is_codex_auth: bool,
-    compaction_failed: Option<&str>,
-    last_was_no_profile: bool,
-) -> TerminationReason {
-    if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-        return TerminationReason::UserStop;
-    }
-    if let Some(detail) = compaction_failed {
-        return TerminationReason::CompactionFailed {
-            detail: detail.to_string(),
-        };
-    }
-    // Profile-availability failure is configuration-class, not API-class.
-    // The `Err(NoProfileAvailable)` branch fills `last_reason`/`last_error`
-    // for logging, but the unified taxonomy surfaces this distinctly.
-    if last_was_no_profile {
-        return TerminationReason::NoProfileAvailable;
-    }
-    match (last_reason, last_error) {
-        (Some(kind), Some(msg)) => TerminationReason::ProviderFailed {
-            last_kind: kind,
-            last_message: msg.to_string(),
-            is_codex_auth: last_is_codex_auth,
-        },
-        (Some(kind), None) => TerminationReason::ProviderFailed {
-            last_kind: kind,
-            last_message: String::new(),
-            is_codex_auth: last_is_codex_auth,
-        },
-        (None, Some(msg)) => TerminationReason::Other {
-            message: msg.to_string(),
-        },
-        (None, None) => TerminationReason::NoProfileAvailable,
-    }
-}
-
-/// Build [`PartialMeta`] from runtime convergence state.
-///
-/// The text / thinking / tool_use rebuild is reverse-engineered from
-/// the `messages` table by [`finalize::rebuild::collect_partial_from_messages`]
-/// — `persist_failed_partial_assistant` has already written the
-/// assistant row that links text/thinking blocks, and the tool rows
-/// persist independently. Runtime only needs to overlay metadata that
-/// the table doesn't carry (user_message text for the early-persist
-/// gap, provider shape from the last attempt, turn id, persisted
-/// assistant id).
-#[allow(dead_code)] // legacy placeholder finalize compatibility
-fn collect_partial_meta_from_runtime(
-    db: &std::sync::Arc<session::SessionDB>,
-    session_id: &str,
-    user_message: &str,
-    api_type: Option<crate::provider::ApiType>,
-    assistant_message_id: Option<i64>,
-    turn_id: Option<&str>,
-) -> PartialMeta {
-    let provider_kind = api_type.map(finalize::ProviderApiKind::from);
-    let mut meta = finalize::rebuild::collect_partial_from_messages(db, session_id, provider_kind);
-    meta.user_message = Some(user_message.to_string());
-    meta.turn_id = turn_id.map(str::to_owned);
-    if assistant_message_id.is_some() {
-        meta.assistant_message_id = assistant_message_id;
-    }
-    meta
-}
-
-/// Map the chat-engine turn source to a knowledge-base access source (design
-/// D10). IM (`Channel`) turns are denied KB access in Phase 1 even on a
-/// project-attached session; `ParentInjection` is treated conservatively.
-/// `Cron` is owner-internal (user-configured scheduled task): it maps to the
-/// `Cron` bucket, which is NOT IM-capped, so a cron run reaches `note_*` /
-/// `[[note]]` / `knowledge_recall` on its attached/project KBs the same way an
-/// owner turn does — incognito still zeroes it via the `effective_kb_access`
-/// short-circuit.
-fn kb_access_source(source: stream_seq::ChatSource) -> crate::knowledge::KbAccessSource {
+/// Map a transport/runtime source to the knowledge-access source used by the
+/// kernel policy. Manual compaction and the feature-owned turn runtime share
+/// this mapping so authorization semantics cannot drift.
+pub fn kb_access_source(source: stream_seq::ChatSource) -> crate::knowledge::KbAccessSource {
     use crate::knowledge::KbAccessSource;
     use stream_seq::ChatSource;
     match source {
@@ -2582,46 +969,64 @@ fn kb_access_source(source: stream_seq::ChatSource) -> crate::knowledge::KbAcces
         ChatSource::Http => KbAccessSource::Http,
         ChatSource::Channel => KbAccessSource::Im,
         ChatSource::Subagent => KbAccessSource::Subagent,
-        ChatSource::ParentInjection => KbAccessSource::Other,
+        ChatSource::ParentInjection | ChatSource::SessionTool => KbAccessSource::Other,
         ChatSource::Cron => KbAccessSource::Cron,
-        ChatSource::Acp => KbAccessSource::Other,
+        ChatSource::Eval | ChatSource::Acp => KbAccessSource::Other,
     }
 }
 
-/// Schedule turn-end browser cleanup, skipping `ParentInjection` turns.
-///
-/// Background-job / wakeup completions inject into the PARENT session and run a
-/// turn under that session_id. Running the turn-end finalize there would tear
-/// down the parent's live browser scope (close agent tabs, drop claim leases)
-/// mid-task while the user may still be working in that session. The parent's
-/// own foreground turns and session teardown handle cleanup, so injection turns
-/// must skip it. Other sources (`Desktop`/`Http`/`Channel`/`Subagent`/`Cron`)
-/// finalize their own session scope, which matches the documented turn-end
-/// release.
-fn schedule_browser_turn_finalize(source: stream_seq::ChatSource, session_id: &str) {
-    if matches!(source, stream_seq::ChatSource::ParentInjection) {
-        return;
+/// Convert a turn source into immutable tool-execution provenance.
+pub fn tool_turn_provenance(
+    source: stream_seq::ChatSource,
+) -> crate::tool_defs::ToolTurnProvenance {
+    if source.carries_foreground_user_intent() {
+        crate::tool_defs::ToolTurnProvenance::ForegroundUser
+    } else {
+        crate::tool_defs::ToolTurnProvenance::Autonomous
     }
-    crate::browser::schedule_extension_turn_finalize(session_id);
 }
 
-/// Apply common agent configuration. Extracted to avoid duplication between
-/// initial agent setup and profile-rotation rebuild.
+/// Run the shared chat execution engine with a typed terminal failure.
 ///
-/// `plan_resolved` is the full Plan-mode bundle (state + mode + allow_paths
-/// + extra_system_context). The `plan_locked` flag picks the right setter
-/// so the streaming loop's mid-turn probe knows whether it's free to re-sync.
-#[allow(clippy::too_many_arguments)]
-fn configure_agent(
+/// Handles: model chain traversal → agent building → config → history restoration
+/// → streaming execution → tool persistence → failover → context compaction
+/// → response saving → context persistence → memory extraction.
+#[cfg(test)]
+use crate::test_agent_runtime::streaming_loop;
+
+#[cfg(test)]
+#[path = "../../../ha-agent-runtime/src/engine.rs"]
+mod test_runtime_engine;
+
+#[cfg(test)]
+use test_runtime_engine::*;
+
+#[cfg(test)]
+pub(super) async fn execute_admitted_turn_for_test(
+    turn: crate::turn_kernel::AdmittedTurn,
+) -> Result<crate::turn_kernel::AgentTurnOutput, TurnFailure> {
+    let result = execute_admitted_params(turn.into_runtime_params()).await?;
+    Ok(crate::turn_kernel::AgentTurnOutput {
+        response: result.response,
+        model_used: result.model_used,
+        usage: result.usage,
+        terminal: result.terminal,
+    })
+}
+
+pub fn configure_agent(
     agent: &mut crate::agent::AssistantAgent,
     agent_id: &str,
     session_id: &str,
+    turn_id: Option<&str>,
     session_db: Arc<session::SessionDB>,
     temperature: Option<f64>,
-    extra_system_context: Option<&str>,
+    run_context: Option<&crate::prompt_context::RunInstructionContext>,
+    agent_binding_refs: &[crate::prompt_context::AgentBindingRef],
+    context_resource_refs: &[crate::prompt_context::ContextResourceRef],
     skill_allowed_tools: &[String],
     denied_tools: &[String],
-    tool_scope: Option<crate::tools::ToolScope>,
+    tool_scope: Option<crate::tool_defs::ToolScope>,
     subagent_depth: u32,
     steer_run_id: Option<String>,
     plan_resolved: crate::agent::PlanResolvedContext,
@@ -2630,18 +1035,27 @@ fn configure_agent(
     follow_global_reasoning_effort: bool,
     source: stream_seq::ChatSource,
     kb_origin: crate::knowledge::KbAccessSource,
+    turn_stop_admission: Option<(u64, u64, u64)>,
     channel_kb_context: Option<crate::knowledge::ChannelKbContext>,
 ) {
     agent.set_agent_id(agent_id);
     agent.set_session_db(session_db);
     agent.set_session_id(session_id);
+    agent.set_turn_id(turn_id.map(str::to_string));
     agent.set_chat_source(kb_access_source(source));
     agent.set_origin_chat_source(kb_origin);
+    agent.set_turn_provenance(tool_turn_provenance(source));
+    if let Some((lineage_epoch, global_stop_epoch, global_stop_receipt_count)) = turn_stop_admission
+    {
+        agent.set_turn_stop_admission(lineage_epoch, global_stop_epoch, global_stop_receipt_count);
+    }
     agent.set_channel_kb_context(channel_kb_context);
     agent.set_temperature(temperature);
-    if let Some(ctx) = extra_system_context {
-        agent.set_extra_system_context(ctx.to_string());
+    if let Some(ctx) = run_context {
+        agent.set_run_context(ctx.clone());
     }
+    agent.set_agent_binding_refs(agent_binding_refs.to_vec());
+    agent.set_context_resource_refs(context_resource_refs.to_vec());
     if !skill_allowed_tools.is_empty() {
         agent.set_skill_allowed_tools(skill_allowed_tools.to_vec());
     }
@@ -2673,8 +1087,18 @@ fn configure_agent(
 }
 
 #[cfg(test)]
+async fn run_chat_engine(params: ChatEngineParams) -> Result<ChatEngineResult, String> {
+    execute_admitted_params(params)
+        .await
+        .map_err(|failure| failure.to_string())
+}
+
+#[cfg(test)]
 mod stream_lifecycle_tests {
-    use std::sync::atomic::AtomicBool;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     use super::*;
     use crate::context_compact::CompactConfig;
@@ -2683,6 +1107,191 @@ mod stream_lifecycle_tests {
     use tempfile::TempDir;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn engine_defense_rejects_forged_typed_attachment_without_sidecar() {
+        let attachment = crate::agent::Attachment {
+            name: "forged.txt".into(),
+            mime_type: "text/plain".into(),
+            source: Some("mention".into()),
+            data: None,
+            file_path: Some("/tmp/forged.txt".into()),
+            upload_id: None,
+            quote_lines: None,
+            quote_revealable: None,
+            quote_project_root: None,
+            quote_worktree_root: None,
+            quote_role: None,
+        };
+        let error = validate_engine_typed_resource_boundary("plain", None, &[attachment])
+            .expect_err("engine must not trust a client-controlled attachment source marker");
+        assert!(error.contains("exactly match"));
+    }
+
+    #[test]
+    fn typed_resource_freeze_uses_project_working_dir_when_session_override_is_null() {
+        let data_root = tempfile::tempdir().expect("data root");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", data_root.path())], || {
+            let project_id = format!("typed-resource-{}", uuid::Uuid::new_v4());
+            let project_workspace = crate::paths::project_workspace_dir(&project_id)
+                .expect("resolve default project workspace");
+            std::fs::create_dir_all(&project_workspace).expect("create project workspace");
+            let dockerfile = project_workspace.join("Dockerfile");
+            std::fs::write(&dockerfile, b"FROM scratch\n").expect("write Dockerfile");
+
+            let db = SessionDB::open(&data_root.path().join("engine-project-session.db"))
+                .expect("open session db");
+            let session = db
+                .create_session_with_project("ha-main", Some(&project_id), None)
+                .expect("create project session");
+            assert_eq!(
+                session.working_dir, None,
+                "fixture must inherit from its project"
+            );
+
+            let attachment = crate::agent::Attachment {
+                name: "Dockerfile".into(),
+                mime_type: "text/plain".into(),
+                source: Some("mention".into()),
+                data: None,
+                file_path: Some(dockerfile.to_string_lossy().into_owned()),
+                upload_id: None,
+                quote_lines: None,
+                quote_revealable: None,
+                quote_project_root: None,
+                quote_worktree_root: None,
+                quote_role: None,
+            };
+            prepare_typed_resource_mentions_for_session(
+                &session,
+                &["Dockerfile".into()],
+                &[],
+                &[attachment],
+            )
+            .expect("project-inherited working dir should authorize the selected root file");
+        });
+    }
+
+    struct RecordingImMirror {
+        detached: Arc<AtomicBool>,
+        finalized: Arc<AtomicBool>,
+        aborted_bodies: Arc<Mutex<Vec<Option<String>>>>,
+    }
+
+    impl crate::channel_hooks::ImLiveMirror for RecordingImMirror {
+        fn finalize(
+            self: Box<Self>,
+            _response: String,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+            self.detached.store(true, Ordering::SeqCst);
+            let finalized = self.finalized.clone();
+            Box::pin(async move {
+                finalized.store(true, Ordering::SeqCst);
+            })
+        }
+
+        fn abort(
+            self: Box<Self>,
+            body: Option<String>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = crate::channel_hooks::ImLiveMirrorAbortStatus> + Send + 'static,
+            >,
+        > {
+            self.detached.store(true, Ordering::SeqCst);
+            let aborted_bodies = self.aborted_bodies.clone();
+            Box::pin(async move {
+                aborted_bodies
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(body);
+                crate::channel_hooks::ImLiveMirrorAbortStatus::Confirmed
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn abnormal_terminal_consumes_live_mirror_through_abort_once() {
+        let detached = Arc::new(AtomicBool::new(false));
+        let finalized = Arc::new(AtomicBool::new(false));
+        let aborted_bodies = Arc::new(Mutex::new(Vec::new()));
+        let mut mirror: Option<Box<dyn crate::channel_hooks::ImLiveMirror>> =
+            Some(Box::new(RecordingImMirror {
+                detached: detached.clone(),
+                finalized: finalized.clone(),
+                aborted_bodies: aborted_bodies.clone(),
+            }));
+        let reason = TerminationReason::NoProfileAvailable;
+
+        let task = abort_im_mirror_in_background(&mut mirror, "mirror-test", &reason)
+            .expect("attached mirror should spawn an abort task");
+        assert!(
+            mirror.is_none(),
+            "terminal owner must be consumed immediately"
+        );
+        assert!(
+            detached.load(Ordering::SeqCst),
+            "abort must detach before the spawned future is polled"
+        );
+        task.await.expect("abort task should complete");
+
+        assert!(!finalized.load(Ordering::SeqCst));
+        assert_eq!(
+            *aborted_bodies
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            vec![Some(finalize::copy::im_notice(&reason))]
+        );
+        assert!(abort_im_mirror_in_background(&mut mirror, "mirror-test", &reason).is_none());
+    }
+
+    #[tokio::test]
+    async fn completed_terminal_detaches_before_background_poll() {
+        let detached = Arc::new(AtomicBool::new(false));
+        let finalized = Arc::new(AtomicBool::new(false));
+        let mut mirror: Option<Box<dyn crate::channel_hooks::ImLiveMirror>> =
+            Some(Box::new(RecordingImMirror {
+                detached: detached.clone(),
+                finalized: finalized.clone(),
+                aborted_bodies: Arc::new(Mutex::new(Vec::new())),
+            }));
+
+        let task = finalize_im_mirror_in_background(&mut mirror, "done".to_string())
+            .expect("attached mirror should spawn a finalize task");
+        assert!(mirror.is_none());
+        assert!(
+            detached.load(Ordering::SeqCst),
+            "finalize must detach before the spawned future is polled"
+        );
+        task.await.expect("finalize task should complete");
+        assert!(finalized.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn external_terminal_reason_preserves_user_stop_and_provider_failure() {
+        assert!(matches!(
+            mirror_reason_from_terminal_state(
+                session::ChatTurnStatus::Interrupted,
+                Some(session::ChatTurnInterruptReason::UserStop),
+                None,
+            ),
+            TerminationReason::UserStop
+        ));
+
+        let provider = mirror_reason_from_terminal_state(
+            session::ChatTurnStatus::Failed,
+            Some(session::ChatTurnInterruptReason::ProviderFailed),
+            Some("429 rate limit"),
+        );
+        assert!(matches!(
+            provider,
+            TerminationReason::ProviderFailed {
+                last_kind: failover::FailoverReason::RateLimit,
+                is_codex_auth: false,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn finish_marks_stream_inactive_before_scope_drop() {
@@ -2796,11 +1405,184 @@ mod stream_lifecycle_tests {
         assert!(!has_resolvable_fallback(&chain, &[], 2));
     }
 
-    fn temp_db() -> (TempDir, Arc<SessionDB>) {
+    #[test]
+    fn slash_skill_binding_uses_collision_resolved_command_ownership() {
+        let fixture = |name: &str, aliases: &[&str]| {
+            serde_json::from_value::<crate::skills::SkillEntry>(serde_json::json!({
+                "name": name,
+                "aliases": aliases,
+                "description": "test",
+                "source": "test",
+                "file_path": "/tmp/SKILL.md",
+                "base_dir": "/tmp"
+            }))
+            .expect("skill fixture")
+        };
+        let entries = vec![
+            fixture("new", &["shared-alias"]),
+            fixture("other-skill", &["shared-alias"]),
+        ];
+
+        assert!(resolve_slash_skill_binding(&entries, "new", "new_skill").is_some());
+        assert!(
+            resolve_slash_skill_binding(&entries, "new", "new").is_none(),
+            "the built-in command owns the unsuffixed name"
+        );
+        assert!(
+            resolve_slash_skill_binding(&entries, "new", "shared_alias").is_some(),
+            "the first skill owns a shared alias"
+        );
+        assert!(
+            resolve_slash_skill_binding(&entries, "other-skill", "shared_alias").is_none(),
+            "a later skill cannot claim an alias dropped by collision resolution"
+        );
+        assert!(resolve_slash_skill_binding(&entries, "other-skill", "other_skill").is_some());
+
+        let mut blocked = fixture("collision-name", &[]);
+        blocked.requires.os = vec!["definitely-unsupported-os".to_string()];
+        let available = fixture("available", &["collision-name"]);
+        let surfaced = crate::skills::filter_catalog_eligible_skills(
+            vec![blocked, available],
+            true,
+            &std::collections::HashMap::new(),
+        );
+        assert!(
+            resolve_slash_skill_binding(&surfaced, "available", "collision_name").is_some(),
+            "hard-blocked skills cannot reserve a command hidden from list/help"
+        );
+    }
+
+    #[test]
+    fn explicit_slash_skill_requirement_drift_fails_before_provider_dispatch() {
+        let mut entry = serde_json::from_value::<crate::skills::SkillEntry>(serde_json::json!({
+            "name": "restricted-review",
+            "description": "test",
+            "source": "test",
+            "file_path": "/tmp/restricted-review/SKILL.md",
+            "base_dir": "/tmp/restricted-review",
+            "allowed_tools": ["read"],
+            "allowed_tools_declared": true
+        }))
+        .expect("skill fixture");
+        entry.requires.os = vec!["definitely-unsupported-os".to_string()];
+
+        let error = ensure_explicit_slash_skill_requirements(
+            &entry,
+            true,
+            &std::collections::HashMap::new(),
+        )
+        .expect_err("a requirement race must reject the explicit slash turn");
+
+        assert!(error.contains("no longer eligible"));
+    }
+
+    #[test]
+    fn explicit_slash_skill_read_failure_has_no_unrestricted_activation() {
+        let entry = serde_json::from_value::<crate::skills::SkillEntry>(serde_json::json!({
+            "name": "restricted-review",
+            "description": "test",
+            "source": "test",
+            "file_path": "/missing/restricted-review/SKILL.md",
+            "base_dir": "/missing/restricted-review",
+            "allowed_tools": ["read"],
+            "allowed_tools_declared": true
+        }))
+        .expect("skill fixture");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let read_error = std::fs::read_to_string(temp.path().join("missing-SKILL.md"))
+            .map_err(anyhow::Error::from);
+
+        let error =
+            require_explicit_slash_skill_materialization(&entry, Some(String::new()), read_error)
+                .err()
+                .expect("a missing SKILL.md must stop before provider dispatch");
+
+        assert!(error.contains("could not be materialized"));
+
+        let activation = require_explicit_slash_skill_materialization(
+            &entry,
+            Some(String::new()),
+            Ok("restricted body".to_string()),
+        )
+        .expect("successful materialization");
+        assert_eq!(
+            activation.tool_ceiling,
+            crate::skills::SkillToolCeiling::Restricted(vec!["read".to_string()]),
+            "the body and execution ceiling must leave materialization together"
+        );
+    }
+
+    #[test]
+    fn explicit_slash_skill_argument_mismatch_fails_before_provider_dispatch() {
+        let entry = serde_json::from_value::<crate::skills::SkillEntry>(serde_json::json!({
+            "name": "review",
+            "description": "test",
+            "source": "test",
+            "file_path": "/tmp/review/SKILL.md",
+            "base_dir": "/tmp/review"
+        }))
+        .expect("skill fixture");
+
+        let error = require_explicit_slash_skill_materialization(
+            &entry,
+            None,
+            Ok("must not be sent".to_string()),
+        )
+        .err()
+        .expect("invalid canonical args must stop the explicit slash turn");
+
+        assert!(error.contains("arguments no longer match"));
+    }
+
+    #[test]
+    fn explicit_at_skill_rejection_cannot_continue_as_unrestricted_turn() {
+        let requested = vec!["restricted-review".to_string()];
+        let rejection = crate::skills::MentionSkillActivation {
+            content: "# Skill activation rejected".to_string(),
+            resolved_names: Vec::new(),
+            rejected_names: requested.clone(),
+            tool_ceiling: crate::skills::SkillToolCeiling::Unspecified,
+        };
+
+        let error = require_explicit_mention_skill_activation(&requested, Some(rejection))
+            .expect_err("a rejected typed @skill must stop before provider dispatch");
+
+        assert!(error.contains("activation denied"));
+    }
+
+    #[test]
+    fn explicit_at_skill_unwired_resolver_fails_closed() {
+        let requested = vec!["restricted-review".to_string()];
+        let error = require_explicit_mention_skill_activation(&requested, None)
+            .expect_err("missing skill machinery must stop the typed turn");
+
+        assert!(error.contains("resolver is unavailable"));
+    }
+
+    #[test]
+    fn explicit_at_skill_content_and_ceiling_are_accepted_as_one_atomic_set() {
+        let requested = vec!["restricted-review".to_string()];
+        let activation = crate::skills::MentionSkillActivation {
+            content: "restricted body".to_string(),
+            resolved_names: requested.clone(),
+            rejected_names: Vec::new(),
+            tool_ceiling: crate::skills::SkillToolCeiling::Restricted(vec!["read".to_string()]),
+        };
+
+        let accepted = require_explicit_mention_skill_activation(&requested, Some(activation))
+            .expect("complete typed @skill set");
+        assert_eq!(
+            accepted.tool_ceiling,
+            crate::skills::SkillToolCeiling::Restricted(vec!["read".to_string()])
+        );
+    }
+
+    fn temp_db() -> (std::sync::MutexGuard<'static, ()>, TempDir, Arc<SessionDB>) {
+        let lock = crate::chat_engine::active_turn::test_lock();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sessions.db");
         let db = Arc::new(SessionDB::open_ephemeral_for_test(&path).unwrap());
-        (dir, db)
+        (lock, dir, db)
     }
 
     fn model_config(id: &str) -> ModelConfig {
@@ -2896,18 +1678,25 @@ mod stream_lifecycle_tests {
             session_id,
             agent_id: crate::agent_loader::DEFAULT_AGENT_ID.to_string(),
             turn_id: None,
+            pre_admitted_stream: None,
+            active_turn_guard: None,
+            ui_surface: None,
             message: "hello".to_string(),
+            incoming_turn: None,
             display_text: None,
             attachments: Vec::new(),
             session_db: db,
             model_chain,
             providers,
+            config_revision: [0; 32],
             codex_token: None,
             resolved_temperature: None,
             compact_config: CompactConfig::default(),
-            extra_system_context: None,
+            run_context: None,
             reasoning_effort: Some("none".to_string()),
             cancel: Arc::new(AtomicBool::new(false)),
+            completion_claim: None,
+            foreground_stop_admission: None,
             plan_context_override: Some(crate::agent::PlanResolvedContext::off()),
             skill_allowed_tools: Vec::new(),
             denied_tools: Vec::new(),
@@ -2920,7 +1709,6 @@ mod stream_lifecycle_tests {
             abort_on_cancel: false,
             persist_final_error_event: true,
             source: stream_seq::ChatSource::Desktop,
-            ui_surface: None,
             origin_source: None,
             channel_kb_context: None,
             event_sink: Arc::new(NoopEventSink),
@@ -2980,8 +1768,7 @@ mod stream_lifecycle_tests {
 
     #[test]
     fn stream_events_stop_after_cancel_or_terminal_turn() {
-        let _lock = crate::chat_engine::active_turn::test_lock();
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3042,7 +1829,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn user_stop_before_first_model_event_finalizes_without_empty_assistant() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3084,7 +1871,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn user_stop_after_text_delta_preserves_partial_and_marker() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3140,8 +1927,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn user_stop_preserves_the_batch_durable_before_cancel_was_observed() {
-        let _lock = crate::chat_engine::active_turn::test_lock();
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3198,7 +1984,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn final_failure_preserves_partial_assistant_before_error_event() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3222,7 +2008,7 @@ mod stream_lifecycle_tests {
             model_id: "m1".to_string(),
         };
 
-        let result = run_chat_engine_classified(params(
+        let result = execute_admitted_params(params(
             db.clone(),
             session.id.clone(),
             vec![model],
@@ -3231,10 +2017,7 @@ mod stream_lifecycle_tests {
         .await;
         assert!(matches!(
             result,
-            Err(ChatEngineFailure {
-                kind: ChatEngineFailureKind::ProviderExhausted,
-                ..
-            })
+            Err(error) if error.kind == TurnFailureKind::ProviderExhausted
         ));
 
         let messages = db.load_session_messages(&session.id).unwrap();
@@ -3290,7 +2073,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn final_failure_context_includes_completed_tool_args_and_result() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3382,7 +2165,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn final_failure_preserves_thinking_only_without_text_bubble() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3457,7 +2240,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn abort_on_cancel_preserves_durable_partial_without_changing_error_semantics() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3500,7 +2283,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn abort_on_cancel_after_tool_call_preserves_side_effect_barrier_record() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3564,7 +2347,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn fallback_success_discards_failed_model_partial() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3626,7 +2409,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn failure_before_first_context_checkpoint_keeps_user_prompt() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3665,7 +2448,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn fallback_success_discards_failed_model_tool_round() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();
@@ -3750,7 +2533,7 @@ mod stream_lifecycle_tests {
 
     #[tokio::test]
     async fn final_failure_preserves_previous_partial_when_last_attempt_is_empty() {
-        let (_dir, db) = temp_db();
+        let (_lock, _dir, db) = temp_db();
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .unwrap();

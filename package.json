@@ -1,7 +1,7 @@
 {
   "name": "hope-agent",
   "private": true,
-  "version": "0.29.1",
+  "version": "0.42.0",
   "license": "MIT",
   "author": "shiwenwen",
   "homepage": "https://github.com/zhukai9527/hope-agent",
@@ -35,8 +35,11 @@
     "format:check": "prettier --check 'src/**/*.{ts,tsx,js,jsx,json,css}'",
     "preview": "vite preview",
     "sync:version": "node scripts/sync-version.mjs",
+    "analyze:crate-deps": "node scripts/analyze-crate-deps.mjs",
+    "check:agent-kernel-boundaries": "node scripts/check-agent-kernel-boundaries.mjs",
     "prepare:browser-host": "node scripts/prepare-browser-host.mjs",
     "dev:browser-host": "node scripts/prepare-browser-host.mjs --dev",
+    "check:eval-internal": "cargo check -p ha-core -p ha-eval-runtime -p ha-improve --tests --features ha-core/eval-internal-tests,ha-eval-runtime/eval-internal-tests,ha-improve/eval-internal-tests --locked",
     "prepare:eval-sidecar": "node scripts/prepare-eval-sidecar.mjs",
     "dev:eval-sidecar": "node scripts/prepare-eval-sidecar.mjs --dev",
     "release:verify": "node scripts/verify-release-version.mjs",
@@ -86,7 +89,7 @@
     "@streamdown/math": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",
     "@tailwindcss/vite": "^4.2.4",
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-process": "^2.3.1",
@@ -106,6 +109,7 @@
     "katex": "^0.16.38",
     "lucide-react": "^1.7.0",
     "mp4-muxer": "^5.2.2",
+    "parse5": "^8.0.1",
     "pptxviewjs": "^1.1.9",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.4",
@@ -148,6 +152,7 @@
     "typescript-eslint": "^8.56.1",
     "unplugin-icons": "^23.0.1",
     "vite": "^8.0.10",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.5",
+    "yaml": "2.9.0"
   }
 }

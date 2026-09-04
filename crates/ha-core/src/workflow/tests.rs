@@ -304,7 +304,8 @@ fn phase2_openai_chat_sse(text: &str) -> String {
         }),
         json!({
             "choices": [{
-                "delta": {}
+                "delta": {},
+                "finish_reason": "stop"
             }],
             "usage": {
                 "prompt_tokens": 7,
@@ -359,7 +360,7 @@ fn insert_async_job_row(
         group_id: None,
         session_id: Some(session_id.to_string()),
         agent_id: Some("ha-main".to_string()),
-        tool_name: crate::tools::TOOL_EXEC.to_string(),
+        tool_name: crate::tool_defs::TOOL_EXEC.to_string(),
         tool_call_id: None,
         args_json: "{}".to_string(),
         status,
@@ -945,12 +946,12 @@ fn create_workflow_run_links_empty_managed_worktree_reverse_binding() {
         let conn = db.conn.lock().expect("lock session db");
         conn.execute(
             "INSERT INTO managed_worktrees (
-                id, session_id, child_session_id, workflow_run_id, purpose, state, label,
+                id, session_id, owner_session_id, child_session_id, workflow_run_id, purpose, state, label,
                 repo_root, source_working_dir, path, base_ref, base_branch, base_sha,
                 git_branch, dirty_snapshot_json, created_at, updated_at,
                 archived_at, restored_at, handed_off_at
              ) VALUES (
-                ?1, ?2, NULL, NULL, 'workflow', 'active', 'Workflow worktree',
+                ?1, ?2, ?2, NULL, NULL, 'workflow', 'active', 'Workflow worktree',
                 ?3, ?3, ?4, 'HEAD', NULL, NULL,
                 NULL, NULL, ?5, ?5,
                 NULL, NULL, NULL
@@ -3162,7 +3163,7 @@ export default async function main(workflow) {
         .expect("list validation jobs");
     let validation_job = jobs
         .iter()
-        .find(|job| job.tool_name == crate::tools::TOOL_EXEC)
+        .find(|job| job.tool_name == crate::tool_defs::TOOL_EXEC)
         .expect("validation exec job");
     assert_eq!(validation_job.status, JobStatus::Completed);
     assert!(

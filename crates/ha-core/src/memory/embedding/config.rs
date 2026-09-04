@@ -1,164 +1,12 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-// ── Embedding Config ────────────────────────────────────────────
-
-/// Embedding provider type.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum EmbeddingProviderType {
-    /// OpenAI /v1/embeddings compatible API (OpenAI, Jina, Cohere, SiliconFlow, etc.)
-    #[default]
-    OpenaiCompatible,
-    /// Google Gemini Embedding API (different format)
-    Google,
-}
-
-/// Embedding configuration, stored in AppConfig (config.json).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbeddingConfig {
-    /// Whether embedding (vector search) is enabled
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// Provider type
-    #[serde(default)]
-    pub provider_type: EmbeddingProviderType,
-
-    // ── API mode fields ──
-    /// API Base URL (e.g. "https://api.openai.com")
-    #[serde(default)]
-    pub api_base_url: Option<String>,
-
-    /// API Key
-    #[serde(default)]
-    pub api_key: Option<String>,
-
-    /// Model name (e.g. "text-embedding-3-small")
-    #[serde(default)]
-    pub api_model: Option<String>,
-
-    /// Output dimensions (some APIs support specifying this)
-    #[serde(default)]
-    pub api_dimensions: Option<u32>,
-}
-
-/// Reusable embedding model configuration managed from the model settings UI.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbeddingModelConfig {
-    #[serde(default)]
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub provider_type: EmbeddingProviderType,
-    #[serde(default)]
-    pub api_base_url: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<String>,
-    #[serde(default)]
-    pub api_model: Option<String>,
-    #[serde(default)]
-    pub api_dimensions: Option<u32>,
-    #[serde(default)]
-    pub source: Option<String>,
-}
-
-impl EmbeddingModelConfig {
-    pub fn normalize_for_save(mut self) -> Self {
-        if self.id.trim().is_empty() {
-            self.id = format!("emb_{}", uuid::Uuid::new_v4().simple());
-        }
-        self.name = self.name.trim().to_string();
-        self.api_base_url = self
-            .api_base_url
-            .map(|v| v.trim().trim_end_matches('/').to_string())
-            .filter(|v| !v.is_empty());
-        self.api_key = self
-            .api_key
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        self.api_model = self
-            .api_model
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        self.source = self
-            .source
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        if self.name.is_empty() {
-            self.name = self.api_model.clone().unwrap_or_else(|| self.id.clone());
-        }
-        self
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        if self.id.trim().is_empty() {
-            return Err(anyhow!("Embedding model config id is required"));
-        }
-        if self.name.trim().is_empty() {
-            return Err(anyhow!("Embedding model config name is required"));
-        }
-        if self.api_base_url.as_deref().unwrap_or("").trim().is_empty() {
-            return Err(anyhow!("Embedding API base URL is required"));
-        }
-        if self.api_model.as_deref().unwrap_or("").trim().is_empty() {
-            return Err(anyhow!("Embedding model name is required"));
-        }
-        Ok(())
-    }
-
-    pub fn to_runtime_config(&self, enabled: bool) -> EmbeddingConfig {
-        EmbeddingConfig {
-            enabled,
-            provider_type: self.provider_type.clone(),
-            api_base_url: self.api_base_url.clone(),
-            api_key: self.api_key.clone(),
-            api_model: self.api_model.clone(),
-            api_dimensions: self.api_dimensions,
-        }
-    }
-
-    pub fn signature(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(format!("{:?}", self.provider_type).to_ascii_lowercase());
-        hasher.update(b"\n");
-        hasher.update(
-            self.api_base_url
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .trim_end_matches('/')
-                .to_ascii_lowercase(),
-        );
-        hasher.update(b"\n");
-        hasher.update(self.api_model.as_deref().unwrap_or("").trim());
-        hasher.update(b"\n");
-        hasher.update(self.api_dimensions.unwrap_or_default().to_string());
-        let digest = hasher.finalize();
-        format!("{:x}", digest)
-    }
-}
-
-/// Active embedding selection: which model from the shared `embedding_models`
-/// library is active, plus its signature lifecycle. Used independently by both
-/// memory (`memory_embedding`) and knowledge (`knowledge_embedding`) — the model
-/// library is shared, the selection is per-subsystem. The selected model config
-/// is resolved into `EmbeddingConfig` only at runtime.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbeddingSelection {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub model_config_id: Option<String>,
-    #[serde(default)]
-    pub active_signature: Option<String>,
-    #[serde(default)]
-    pub last_reembedded_signature: Option<String>,
-}
+// 类型已下沉 ha-config-schema（`EmbeddingConfig` 随 `EmbeddingModelConfig` 的
+// inherent impl 一并下沉）；模板 / 状态投影与解析函数留在本文件。
+pub use ha_config_schema::memory::embedding::{
+    embedding_endpoint_family, EmbeddingConfig, EmbeddingEndpointFamily, EmbeddingModelConfig,
+    EmbeddingProviderType, EmbeddingPurpose, EmbeddingSelection,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -414,10 +262,10 @@ pub fn resolve_memory_embedding_config(
     )))
 }
 
-/// Active signature for an embedding selection: prefer the persisted
-/// `active_signature` (hot path — index/search call this per note / per query),
-/// falling back to recomputing from the model config. `None` when the selection
-/// is disabled or unresolved. Shared single source of truth for memory
+/// Active document signature for an embedding selection. Always recompute from
+/// the live model config so a signature/provider-semantics upgrade immediately
+/// makes old vectors ineligible; a persisted v1 signature must never reinterpret
+/// them as v2. `None` when disabled or unresolved. Shared single source of truth for memory
 /// (`active_embedding_signature`) and knowledge
 /// (`knowledge_active_embedding_signature`) — pass the respective selection.
 pub fn active_signature_for(
@@ -426,9 +274,6 @@ pub fn active_signature_for(
 ) -> Option<String> {
     if !selection.enabled {
         return None;
-    }
-    if let Some(sig) = selection.active_signature.as_ref() {
-        return Some(sig.clone());
     }
     resolve_memory_embedding_config(selection, models)
         .ok()

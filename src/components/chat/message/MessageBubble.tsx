@@ -16,6 +16,7 @@ import {
   Info,
   Network,
   Timer,
+  ArrowUpRight,
   AlarmClock,
   PlayCircle,
   ChevronDown,
@@ -53,8 +54,11 @@ import ModelRecoveryBanner from "@/components/chat/ModelRecoveryBanner"
 import ContextCompactedBanner from "@/components/chat/ContextCompactedBanner"
 import RoundLimitReachedBanner from "@/components/chat/RoundLimitReachedBanner"
 import MessageUrlPreviews from "./MessageUrlPreviews"
+import SessionMessageLink from "./SessionMessageLink"
+import { requestCronTaskFocus } from "@/components/cron/cronNavigation"
 import { AssistantContentBlocks } from "./MessageContent"
 import { PlanCommentBubble } from "./PlanCommentBubble"
+import { fallbackEventFromPayload } from "../fallbackEvent"
 import type {
   ChatDisplayMode,
   ContentRenderMode,
@@ -110,6 +114,7 @@ import {
   isMemoryCandidateRole,
   shouldRenderMemoryTracePanel,
 } from "./memoryTraceFormat"
+import { buildCollapsedTextPreviewWithTypedMentions } from "../mentions/typedMentions"
 
 const USER_MESSAGE_COLLAPSE_CHARS = 900
 const USER_MESSAGE_COLLAPSE_LINES = 12
@@ -120,25 +125,16 @@ function shouldCollapseUserMessage(content: string): boolean {
   return content.split(/\r\n|\r|\n/).length > USER_MESSAGE_COLLAPSE_LINES
 }
 
-function collapsedUserMessagePreview(content: string): string {
-  const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-  const lineLimited = normalized.split("\n").slice(0, USER_MESSAGE_COLLAPSE_LINES).join("\n")
-  const charLimited =
-    lineLimited.length > USER_MESSAGE_COLLAPSE_CHARS
-      ? lineLimited.slice(0, USER_MESSAGE_COLLAPSE_CHARS)
-      : lineLimited
-  const trimmed = charLimited.trimEnd()
-  return trimmed ? `${trimmed}...` : "..."
-}
-
 function UserMessageContent({
   content,
+  typedMentions,
   renderMode,
   fadeToClassName,
   forceExpanded = false,
   onForceExpandedDismiss,
 }: {
   content: string
+  typedMentions?: Message["typedMentions"]
   renderMode: ContentRenderMode
   fadeToClassName: string
   forceExpanded?: boolean
@@ -147,15 +143,24 @@ function UserMessageContent({
   const { t } = useTranslation()
   const [expandedState, setExpandedState] = useState(() => ({ content, expanded: false }))
   const collapsible = useMemo(() => shouldCollapseUserMessage(content), [content])
-  const preview = useMemo(() => collapsedUserMessagePreview(content), [content])
+  const preview = useMemo(
+    () =>
+      buildCollapsedTextPreviewWithTypedMentions(
+        content,
+        typedMentions ?? [],
+        USER_MESSAGE_COLLAPSE_LINES,
+        USER_MESSAGE_COLLAPSE_CHARS,
+      ),
+    [content, typedMentions],
+  )
   const expanded =
     forceExpanded || (expandedState.content === content ? expandedState.expanded : false)
 
   const rendered =
     renderMode === "markdown" ? (
-      <MarkdownRenderer content={content} />
+      <MarkdownRenderer content={content} typedMentions={typedMentions} />
     ) : (
-      <PlainTextRenderer content={content} />
+      <PlainTextRenderer content={content} typedMentions={typedMentions} />
     )
   const handleToggle = () => {
     if (expanded) onForceExpandedDismiss?.()
@@ -167,7 +172,11 @@ function UserMessageContent({
   return (
     <div>
       <div className="relative">
-        {expanded ? rendered : <PlainTextRenderer content={preview} />}
+        {expanded ? (
+          rendered
+        ) : (
+          <PlainTextRenderer content={preview.text} typedMentions={preview.mentions} />
+        )}
         {!expanded && (
           <div
             className={cn(
@@ -238,12 +247,15 @@ export interface MessageBubbleProps {
   editHasFileMutations?: boolean
   onEditAndResend?: (message: Message, content: string) => Promise<void>
   onOpenMemorySettings?: () => void
+  onConfigureVisionBridge?: () => void
   onOpenKnowledge?: (target?: KnowledgeFocusTarget) => void
   displayMode?: ChatDisplayMode
   footerFiles?: MessageFileAttachment[]
   hideOwnFooterFiles?: boolean
   goalCompletionReportOverride?: GoalCompletionReport | null
   suppressGoalCompletionFooter?: boolean
+  /** 折叠详情里的中间步骤：底部操作条属于整轮回复，一轮只留最终回复那一条。 */
+  hideActionBar?: boolean
   forceExpandUserContent?: boolean
   onForceExpandedUserContentDismiss?: () => void
 }
@@ -389,35 +401,48 @@ function getAsyncResultTone(status: string): {
   }
 }
 
-function CronTriggerBubble({ msg, t }: { msg: Message; t: (key: string) => string }) {
-  const [expanded, setExpanded] = useState(false)
+function CronTriggerBubble({ msg, t }: { msg: Message; t: TFunction }) {
+  const [expanded, setExpanded] = useState(true)
   return (
-    <div className="flex flex-col items-center gap-1 max-w-[80%]">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/8 border border-amber-500/20 text-xs text-amber-400/80 hover:bg-amber-500/15 transition-colors cursor-pointer"
-      >
-        <Timer className="w-3 h-3 shrink-0 text-amber-500" />
-        <span className="font-medium text-amber-500">
-          {msg.cronJobName || t("chat.cronTrigger")}
-        </span>
-        <span className="text-amber-400/50">·</span>
-        <span>{t("chat.cronTaskStarted")}</span>
-        <svg
-          className={cn(
-            "w-3 h-3 shrink-0 text-amber-500/60 transition-transform duration-200",
-            expanded && "rotate-180",
-          )}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+    <div className="flex max-w-[80%] flex-col items-center gap-1">
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/8 border border-amber-500/20 text-xs text-amber-400/80 hover:bg-amber-500/15 transition-colors cursor-pointer"
         >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
+          <Timer className="w-3 h-3 shrink-0 text-amber-500" />
+          <span className="font-medium text-amber-500">
+            {msg.cronJobName || t("chat.cronTrigger")}
+          </span>
+          <span className="text-amber-400/50">·</span>
+          <span>{t("chat.cronTaskStarted")}</span>
+          <svg
+            className={cn(
+              "w-3 h-3 shrink-0 text-amber-500/60 transition-transform duration-200",
+              expanded && "rotate-180",
+            )}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        {msg.cronJobId && (
+          <IconTip label={t("chat.scheduledOrigin", { name: msg.cronJobName || "" })}>
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/8 text-amber-500 transition-colors hover:bg-amber-500/15"
+              onClick={() => requestCronTaskFocus(msg.cronJobId!)}
+            >
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </button>
+          </IconTip>
+        )}
+      </div>
       <AnimatedCollapse open={expanded}>
         <div className="w-full px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/15 text-xs text-foreground/80 whitespace-pre-wrap break-words animate-in fade-in-0 slide-in-from-top-1 duration-150">
           {msg.content}
@@ -1446,12 +1471,14 @@ function MessageBubbleInner({
   editHasFileMutations = false,
   onEditAndResend,
   onOpenMemorySettings,
+  onConfigureVisionBridge,
   onOpenKnowledge,
   displayMode = "bubble",
   footerFiles,
   hideOwnFooterFiles = false,
   goalCompletionReportOverride,
   suppressGoalCompletionFooter = false,
+  hideActionBar = false,
   forceExpandUserContent = false,
   onForceExpandedUserContentDismiss,
 }: MessageBubbleProps) {
@@ -1766,11 +1793,23 @@ function MessageBubbleInner({
     }
     if (eventPayload?.type === "vision_auto_disabled") {
       return (
-        <div className="max-w-[80%] px-3 py-1.5 rounded-lg text-xs text-muted-foreground bg-muted/50 border border-border/50 text-center">
-          {t("chat.visionAutoDisabled", {
-            provider: String(eventPayload.provider_name || t("chat.unknownProvider")),
-            model: String(eventPayload.model_id || ""),
-          })}
+        <div className="flex max-w-[80%] items-center gap-2 rounded-lg border border-border/50 bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+          <span>
+            {t("chat.visionAutoDisabled", {
+              provider: String(eventPayload.provider_name || t("chat.unknownProvider")),
+              model: String(eventPayload.model_id || ""),
+            })}
+          </span>
+          {onConfigureVisionBridge && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 shrink-0 px-2 text-xs text-primary hover:bg-muted"
+              onClick={onConfigureVisionBridge}
+            >
+              {t("chat.visionBridgeConfigureAction")}
+            </Button>
+          )}
         </div>
       )
     }
@@ -1788,6 +1827,9 @@ function MessageBubbleInner({
     if (eventPayload?.type === "profile_rotation") {
       return <ProfileRotationBanner event={eventPayload as ProfileRotationEvent} />
     }
+    if (eventPayload?.type === "model_fallback") {
+      return <FallbackBanner event={fallbackEventFromPayload(eventPayload)} />
+    }
     if (eventPayload?.type === "model_retry" || eventPayload?.type === "model_chain_retry") {
       return (
         <ModelRecoveryBanner
@@ -1804,6 +1846,8 @@ function MessageBubbleInner({
       return (
         <ContextCompactedBanner
           event={data as ContextCompactedEvent & ContextCompactionProgressEvent}
+          compacting={compacting}
+          onRetry={onCompactContext}
         />
       )
     }
@@ -2120,34 +2164,37 @@ function MessageBubbleInner({
               )}
             </div>
           )}
-          <div
-            className={cn(
-              "ml-7 mt-0.5 flex h-6 items-center gap-0.5",
-              (!hasToolbarActions || !(isHovered || isCopied || detailsIndex === index)) &&
-                "invisible",
-            )}
-          >
-            {msg.content && (
-              <IconTip label={t("chat.copy")}>
-                <button
-                  type="button"
-                  onClick={() => onCopy(msg.content, index)}
-                  className={toolbarButtonClass}
-                >
-                  {isCopied ? (
-                    <Check className="h-3.5 w-3.5 text-green-500" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              </IconTip>
-            )}
-            {editButton}
-            {addQuickPromptButton}
-            {forkButton}
-            {renderToggleButton}
-            {detailsButton}
-          </div>
+          {!hideActionBar && (
+            <div
+              data-testid="message-action-bar"
+              className={cn(
+                "ml-7 mt-0.5 flex h-6 items-center gap-0.5",
+                (!hasToolbarActions || !(isHovered || isCopied || detailsIndex === index)) &&
+                  "invisible",
+              )}
+            >
+              {msg.content && (
+                <IconTip label={t("chat.copy")}>
+                  <button
+                    type="button"
+                    onClick={() => onCopy(msg.content, index)}
+                    className={toolbarButtonClass}
+                  >
+                    {isCopied ? (
+                      <Check className="h-3.5 w-3.5 text-green-500" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </IconTip>
+              )}
+              {editButton}
+              {addQuickPromptButton}
+              {forkButton}
+              {renderToggleButton}
+              {detailsButton}
+            </div>
+          )}
         </div>
       </div>
     )
@@ -2192,6 +2239,11 @@ function MessageBubbleInner({
             {msg.channelInbound.senderName && (
               <span className="text-blue-400">· {msg.channelInbound.senderName}</span>
             )}
+          </div>
+        )}
+        {msg.role === "user" && msg.sessionMessageSource && (
+          <div className="mb-1 flex min-w-0 justify-end">
+            <SessionMessageLink direction="received" source={msg.sessionMessageSource} />
           </div>
         )}
         {msg.role === "assistant" && msg.fallbackEvent && (
@@ -2247,6 +2299,7 @@ function MessageBubbleInner({
               <UserAttachments attachments={msg.attachments} sessionId={sessionId} />
               <UserMessageContent
                 content={msg.content}
+                typedMentions={msg.typedMentions}
                 renderMode={contentRenderMode}
                 fadeToClassName={userMessageFadeToClassName}
                 forceExpanded={forceExpandUserContent}
@@ -2293,35 +2346,38 @@ function MessageBubbleInner({
          * the same gap to the row's bottom. Without the placeholder height
          * the gap to bottom jumps from 16px to 42px the moment the first
          * token arrives. */}
-        <div
-          className={cn(
-            "flex items-center gap-0.5 mt-0.5 h-6",
-            isUserAligned ? "justify-end" : "justify-start",
-            (!hasToolbarActions || !(isHovered || isCopied || detailsIndex === index)) &&
-              "invisible",
-          )}
-        >
-          {msg.content && (
-            <IconTip label={t("chat.copy")}>
-              <button
-                type="button"
-                onClick={() => onCopy(msg.content, index)}
-                className={toolbarButtonClass}
-              >
-                {isCopied ? (
-                  <Check className="h-3.5 w-3.5 text-green-500" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </IconTip>
-          )}
-          {editButton}
-          {addQuickPromptButton}
-          {forkButton}
-          {renderToggleButton}
-          {detailsButton}
-        </div>
+        {!hideActionBar && (
+          <div
+            data-testid="message-action-bar"
+            className={cn(
+              "flex items-center gap-0.5 mt-0.5 h-6",
+              isUserAligned ? "justify-end" : "justify-start",
+              (!hasToolbarActions || !(isHovered || isCopied || detailsIndex === index)) &&
+                "invisible",
+            )}
+          >
+            {msg.content && (
+              <IconTip label={t("chat.copy")}>
+                <button
+                  type="button"
+                  onClick={() => onCopy(msg.content, index)}
+                  className={toolbarButtonClass}
+                >
+                  {isCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-500" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </IconTip>
+            )}
+            {editButton}
+            {addQuickPromptButton}
+            {forkButton}
+            {renderToggleButton}
+            {detailsButton}
+          </div>
+        )}
       </div>
     </div>
   )

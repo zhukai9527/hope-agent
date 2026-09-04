@@ -19,6 +19,11 @@ struct ServerArgs {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    // 特征 crate 装配：必须先于任何 `init_runtime` 路径（GUI / server / acp /
+    // mcp 各分支）——init 尾部冻结工具注册表，之后再挂 `app_update` 会 panic。
+    // 单一来源在 `ha_server::wire_features()`；新增特征 crate 只需改那一处。
+    ha_server::wire_features();
+
     // Dangerous mode: --dangerously-skip-all-approvals (top-level, process-scoped,
     // NOT persisted). Skips every tool-level approval gate for THIS launch only.
     // Applied before subcommand dispatch so GUI, server, and ACP modes all see it.
@@ -73,6 +78,14 @@ fn main() {
         return;
     }
 
+    // Read-only host toolchain report. This stays ahead of GUI/runtime
+    // initialization so support diagnosis cannot mutate app state or start
+    // background services.
+    if args.get(1).map(String::as_str) == Some("doctor") {
+        run_toolchain_doctor(&args[2..]);
+        return;
+    }
+
     // Knowledge MCP subcommand: `hope-agent knowledge-mcp` — exposes the
     // Knowledge Space Agent Access API as a small stdio MCP server.
     if args.len() >= 2 && args[1] == "knowledge-mcp" {
@@ -85,6 +98,14 @@ fn main() {
     // enables the write tools.
     if args.len() >= 2 && args[1] == "mcp" {
         run_mcp(&args[2..]);
+        return;
+    }
+
+    // Pet package CLI: `hope-agent pet ...` — uses the same preview / commit
+    // pipeline as Settings and HTTP; activation calls the already-running
+    // desktop API instead of starting another desktop runtime.
+    if args.len() >= 2 && args[1] == "pet" {
+        run_pet_cli(&args[2..]);
         return;
     }
 
@@ -117,6 +138,56 @@ fn main() {
     } else {
         // Guardian disabled by user — run app directly
         run_child();
+    }
+}
+
+fn run_toolchain_doctor(args: &[String]) {
+    let json = match args {
+        [] => false,
+        [arg] if arg == "--json" => true,
+        [arg] if arg == "--help" || arg == "-h" => {
+            println!("Hope Agent Toolchain Doctor (read-only)");
+            println!();
+            println!("Usage: hope-agent doctor [--json]");
+            return;
+        }
+        _ => {
+            eprintln!("Usage: hope-agent doctor [--json]");
+            std::process::exit(2);
+        }
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("toolchain doctor could not start: {error}");
+            std::process::exit(1);
+        }
+    };
+    let report = runtime.block_on(ha_core::toolchain_doctor::diagnose_toolchain());
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(value) => println!("{value}"),
+            Err(error) => {
+                eprintln!("toolchain doctor could not serialize its report: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    println!("Hope Agent Toolchain Doctor (read-only)");
+    println!(
+        "supported={} detected={} degraded={} blocked={}",
+        report.summary.supported,
+        report.summary.detected,
+        report.summary.degraded,
+        report.summary.blocked
+    );
+    for check in report.checks {
+        let version = check.detected_version.as_deref().unwrap_or("not-detected");
+        println!("{:?}\t{}\t{}", check.status, check.id, version);
     }
 }
 
@@ -161,7 +232,7 @@ fn run_knowledge_mcp(args: &[String]) {
     ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
     ha_core::init_runtime("knowledge-mcp");
 
-    if let Err(e) = ha_core::knowledge::agent_mcp::run_stdio(options) {
+    if let Err(e) = ha_knowledge::knowledge::agent_mcp::run_stdio(options) {
         eprintln!("[knowledge-mcp] Server error: {}", e);
         std::process::exit(1);
     }
@@ -169,8 +240,8 @@ fn run_knowledge_mcp(args: &[String]) {
 
 fn parse_knowledge_mcp_args(
     args: &[String],
-) -> Option<ha_core::knowledge::agent_mcp::KnowledgeMcpOptions> {
-    let mut options = ha_core::knowledge::agent_mcp::KnowledgeMcpOptions::default();
+) -> Option<ha_knowledge::knowledge::agent_mcp::KnowledgeMcpOptions> {
+    let mut options = ha_knowledge::knowledge::agent_mcp::KnowledgeMcpOptions::default();
     for arg in args {
         match arg.as_str() {
             "--allow-proposals" => options.allow_proposals = true,
@@ -216,8 +287,9 @@ fn run_mcp(args: &[String]) {
     ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
     ha_core::init_runtime("mcp");
 
-    let providers: Vec<Box<dyn ha_core::mcp_server::ToolProvider>> =
-        vec![Box::new(ha_core::design::mcp_provider::DesignToolProvider)];
+    let providers: Vec<Box<dyn ha_core::mcp_server::ToolProvider>> = vec![Box::new(
+        ha_design::design::mcp_provider::DesignToolProvider,
+    )];
     if let Err(e) = ha_core::mcp_server::run_stdio(options, providers) {
         eprintln!("[mcp] Server error: {}", e);
         std::process::exit(1);
@@ -257,6 +329,27 @@ fn print_mcp_help() {
     );
     println!("  --version       Print version and exit");
     println!("  --help, -h      Print help and exit");
+}
+
+// ── Pet Package CLI ─────────────────────────────────────────────────
+
+fn run_pet_cli(args: &[String]) {
+    if let Err(error) = ha_core::paths::ensure_dirs() {
+        eprintln!("[pet] Failed to initialize data directories: {error}");
+        std::process::exit(1);
+    }
+    ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|error| {
+            eprintln!("[pet] Failed to initialize async runtime: {error}");
+            std::process::exit(1);
+        });
+    if let Err(error) = runtime.block_on(ha_pet::cli::run(args)) {
+        eprintln!("[pet] {error:#}");
+        std::process::exit(1);
+    }
 }
 
 // ── Guardian Mode ──────────────────────────────────────────────────
@@ -397,7 +490,8 @@ fn run_acp_server(args: &[String]) {
         .expect("init_runtime contract")
         .clone();
 
-    // Side-channel tokio runtime for the minimal background-task set:
+    // Process-lifetime tokio runtime for ACP turns and the minimal
+    // background-task set:
     //   - IM channel approval / ask_user listeners (idempotent if no bus
     //     subscriber)
     //   - one-shot ask_user purge + async_jobs replay
@@ -408,10 +502,10 @@ fn run_acp_server(args: &[String]) {
     // for the rationale.
     //
     // The ACP main loop itself stays on this thread (synchronous stdin
-    // reader; each `session/prompt` builds its own current-thread runtime
-    // internally). Sharing one runtime is awkward because of nested
-    // `block_on`s, so we keep them strictly separate: bg_rt drops when
-    // `run` returns and cancels the listeners cleanly.
+    // reader), while prompt futures block on this runtime's Handle. Any
+    // post-turn work spawned by TurnKernel therefore remains driven after the
+    // synchronous prompt response returns. The runtime drops only when the
+    // stdio server exits and then cancels its listeners cleanly.
     let bg_rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(2)
@@ -438,7 +532,7 @@ fn run_acp_server(args: &[String]) {
     });
 
     // Run the ACP server (blocks on stdin)
-    let result = app_lib::acp::server::start(session_db, agent_id, verbose);
+    let result = app_lib::acp::server::start(session_db, agent_id, verbose, bg_rt.handle().clone());
 
     // Tear bg_rt down before exit so its tasks see cancellation.
     drop(bg_rt);
@@ -806,6 +900,7 @@ fn run_server(args: &[String]) {
             .expect("init_runtime contract")
             .clone(),
         chat_cancels: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        pet_activate: None,
     });
 
     let config = ha_server::ServerConfig {

@@ -3,7 +3,7 @@ use serde_json::json;
 use super::types::CodexModel;
 use crate::provider::ThinkingStyle;
 
-pub(super) const CODEX_API_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+pub const CODEX_API_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 #[allow(dead_code)]
 pub(super) const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
 
@@ -85,14 +85,15 @@ pub fn build_api_url(base_url: &str, path: &str) -> String {
 
 #[allow(dead_code)]
 pub(super) const ANTHROPIC_MODEL: &str = "claude-sonnet-4-6";
-pub(super) const ANTHROPIC_API_VERSION: &str = "2023-06-01";
-pub(super) const MAX_RETRIES: u32 = 3;
-pub(super) const BASE_DELAY_MS: u64 = 1000;
+pub const ANTHROPIC_API_VERSION: &str = "2023-06-01";
+pub const MAX_RETRIES: u32 = 3;
+pub const BASE_DELAY_MS: u64 = 1000;
 pub(super) const DEFAULT_MAX_TOOL_ROUNDS: u32 = 0;
 
 /// Get the configured max tool rounds from the current agent.
 /// Returns 0 for unlimited.
-pub(super) fn get_max_tool_rounds(agent_id: &str) -> u32 {
+#[doc(hidden)]
+pub fn get_max_tool_rounds(agent_id: &str) -> u32 {
     crate::agent_loader::load_agent(agent_id)
         .map(|def| def.config.capabilities.max_tool_rounds)
         .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS)
@@ -190,8 +191,8 @@ pub async fn live_reasoning_effort(fallback: Option<&str>) -> Option<String> {
     fallback.map(|s| s.to_string())
 }
 
-pub const VALID_REASONING_EFFORTS: [&str; 6] =
-    ["none", "minimal", "low", "medium", "high", "xhigh"];
+pub const VALID_REASONING_EFFORTS: [&str; 7] =
+    ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 pub fn is_valid_reasoning_effort(effort: &str) -> bool {
     VALID_REASONING_EFFORTS.contains(&effort)
@@ -205,27 +206,67 @@ pub fn clamp_reasoning_effort(model: &str, effort: &str) -> Option<String> {
     if !is_valid_reasoning_effort(effort) {
         return Some("medium".to_string());
     }
+    let model = model.to_ascii_lowercase();
+    if model.contains("kimi-k3") || model.contains("kimi_k3") {
+        return match effort {
+            "minimal" | "low" | "medium" => Some("low".to_string()),
+            "high" => Some("high".to_string()),
+            "xhigh" | "max" => Some("max".to_string()),
+            _ => None,
+        };
+    }
+    if model.contains("gpt-5.6") {
+        return match effort {
+            "minimal" => Some("low".to_string()),
+            "low" | "medium" | "high" | "xhigh" | "max" => Some(effort.to_string()),
+            _ => None,
+        };
+    }
+    if is_claude_5_model(&model) {
+        return match effort {
+            "minimal" => Some("low".to_string()),
+            "xhigh" => Some("max".to_string()),
+            "low" | "medium" | "high" | "max" => Some(effort.to_string()),
+            _ => None,
+        };
+    }
     if model.contains("5.1-codex-mini") {
         return match effort {
             "minimal" | "low" => Some("medium".to_string()),
-            "xhigh" => Some("high".to_string()),
+            "xhigh" | "max" => Some("high".to_string()),
             _ => Some(effort.to_string()),
         };
     }
     if model.contains("5.1") {
         return match effort {
             "minimal" => Some("low".to_string()),
-            "xhigh" => Some("high".to_string()),
+            "xhigh" | "max" => Some("high".to_string()),
             _ => Some(effort.to_string()),
         };
     }
-    Some(effort.to_string())
+    Some(match effort {
+        "max" => "xhigh".to_string(),
+        _ => effort.to_string(),
+    })
+}
+
+#[doc(hidden)]
+pub fn is_claude_5_model(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    [
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-sonnet-5",
+        "claude-opus-5",
+    ]
+    .iter()
+    .any(|prefix| model.starts_with(prefix))
 }
 
 /// Map reasoning effort to Anthropic/ZAI thinking parameter.
 /// Anthropic/ZAI uses `thinking: { type: "enabled", budget_tokens: N }` format.
 /// Returns None if thinking should be disabled.
-pub(super) fn map_think_anthropic_style(
+pub fn map_think_anthropic_style(
     effort: Option<&str>,
     max_tokens: u32,
 ) -> Option<serde_json::Value> {
@@ -238,7 +279,7 @@ pub(super) fn map_think_anthropic_style(
         "low" => 1024,
         "medium" => 4096,
         "high" => 8192,
-        "xhigh" => 16384,
+        "xhigh" | "max" => 16384,
         _ => return None,
     };
     // Anthropic requires budget_tokens < max_tokens specified in request
@@ -250,13 +291,14 @@ pub(super) fn map_think_anthropic_style(
 }
 
 /// Map reasoning effort to OpenAI `reasoning_effort` parameter.
-/// Chat Completions supports "low", "medium", "high" (no xhigh).
+/// Conservative compatibility baseline; the adapter refines verified
+/// first-party endpoint/model pairs that support additional effort levels.
 /// Returns None if thinking should be disabled.
 fn map_think_openai_style(effort: Option<&str>) -> Option<String> {
     let effort = effort?;
     match effort {
         "none" => None,
-        "xhigh" => Some("high".to_string()), // Downgrade xhigh to high for Chat Completions
+        "xhigh" | "max" => Some("high".to_string()),
         "minimal" | "low" | "medium" | "high" => Some(effort.to_string()),
         _ => None,
     }
@@ -268,13 +310,13 @@ fn map_think_qwen_style(effort: Option<&str>) -> Option<bool> {
     let effort = effort?;
     match effort {
         "none" => Some(false),
-        "low" | "medium" | "high" | "xhigh" => Some(true),
+        "low" | "medium" | "high" | "xhigh" | "max" => Some(true),
         _ => None,
     }
 }
 
 /// Apply thinking parameters to an OpenAI Chat Completions body based on ThinkingStyle.
-pub(super) fn apply_thinking_to_chat_body(
+pub fn apply_thinking_to_chat_body(
     body: &mut serde_json::Value,
     thinking_style: &ThinkingStyle,
     reasoning_effort: Option<&str>,
@@ -314,6 +356,32 @@ pub(crate) struct SystemPromptBuild {
     pub static_memory_refs: Vec<super::active_memory::UsedMemoryRef>,
     pub static_memory_manifest: crate::memory::context_manifest::StaticMemoryContextManifest,
     pub core_memory_snapshot: Option<crate::memory::core_repository::CoreMemorySnapshot>,
+    pub legacy_memory_selection: Option<super::types::LegacyMemorySelectionSnapshot>,
+}
+
+fn route_legacy_memory_entries(
+    entries: Vec<crate::memory::MemoryEntry>,
+    dynamic_selection: bool,
+    budget: usize,
+) -> (
+    Vec<crate::memory::MemoryEntry>,
+    Option<super::types::LegacyMemorySelectionSnapshot>,
+) {
+    if !dynamic_selection {
+        return (entries, None);
+    }
+
+    let (full_fallback, full_fallback_refs) =
+        super::format_legacy_dynamic_memory(&entries, budget, "injected");
+    (
+        Vec::new(),
+        Some(super::types::LegacyMemorySelectionSnapshot {
+            candidates: std::sync::Arc::new(entries),
+            full_fallback: (!full_fallback.is_empty()).then(|| std::sync::Arc::new(full_fallback)),
+            full_fallback_refs: std::sync::Arc::new(full_fallback_refs),
+            budget,
+        }),
+    )
 }
 
 fn core_memory_ref(
@@ -396,7 +464,7 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
     session_db: Option<&crate::session::SessionDB>,
     existing_core_snapshot: Option<&crate::memory::core_repository::CoreMemorySnapshot>,
 ) -> SystemPromptBuild {
-    let (session_meta, active_goal) = resolve_prompt_session_state(session_id, session_db);
+    let session_meta = resolve_prompt_session_meta(session_id, session_db);
     let incognito = session_meta
         .as_ref()
         .map(|session| session.incognito)
@@ -508,24 +576,35 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
             None
         };
 
-        let memory_entries: Vec<crate::memory::MemoryEntry> = if long_term_memory_enabled
-            && definition.config.memory.enabled
-            && !incognito
-            && legacy_static_memory
-        {
-            crate::get_memory_backend()
-                .and_then(|b| {
-                    b.load_prompt_candidates_with_project(
-                        agent_id,
-                        project.as_ref().map(|p| p.id.as_str()),
-                        definition.config.memory.shared,
-                    )
-                    .ok()
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let loaded_legacy_memory_entries: Vec<crate::memory::MemoryEntry> =
+            if long_term_memory_enabled
+                && definition.config.memory.enabled
+                && !incognito
+                && legacy_static_memory
+            {
+                crate::get_memory_backend()
+                    .and_then(|b| {
+                        b.load_prompt_candidates_with_project(
+                            agent_id,
+                            project.as_ref().map(|p| p.id.as_str()),
+                            definition.config.memory.shared,
+                        )
+                        .ok()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+        // A full V1 rollback still keeps query-dependent selection out of the
+        // stable system prefix. Freeze the complete scoped candidate set and
+        // its budgeted fallback alongside the prompt instead. The dynamic
+        // selector publishes that fallback before any optional/fallible work
+        // and replaces it only after a valid selection is ready.
+        let (memory_entries, legacy_memory_selection) = route_legacy_memory_entries(
+            loaded_legacy_memory_entries,
+            app_cfg.memory.legacy_selection_replacer_enabled(),
+            definition.config.memory.prompt_budget,
+        );
 
         // Resolve the effective memory budget (agent override wins over global).
         let memory_budget = crate::agent_config::effective_memory_budget(
@@ -825,7 +904,9 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
                 rendered_project_core.as_deref(),
                 profile_snapshot.as_deref(),
                 rendered_legacy_static_block.as_deref(),
-                memory_entries.len(),
+                legacy_memory_selection
+                    .as_ref()
+                    .map_or(memory_entries.len(), |snapshot| snapshot.candidates.len()),
                 context_pack
                     .as_ref()
                     .map_or(0, |pack| pack.source_digest.len()),
@@ -863,14 +944,15 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
             permission_mode,
             execution_mode,
             workflow_mode,
-            active_goal.as_ref(),
-            session_meta.as_ref().map(|meta| meta.sandbox_mode),
+            None,
+            None,
         );
         return SystemPromptBuild {
             prompt,
             static_memory_refs,
             static_memory_manifest,
             core_memory_snapshot,
+            legacy_memory_selection,
         };
     }
     // Fallback: legacy prompt
@@ -880,9 +962,11 @@ pub(crate) fn build_system_prompt_bundle_with_session_db(
         static_memory_manifest:
             crate::memory::context_manifest::StaticMemoryContextManifest::default(),
         core_memory_snapshot: None,
+        legacy_memory_selection: None,
     }
 }
 
+#[cfg(test)]
 fn resolve_prompt_session_state(
     session_id: Option<&str>,
     session_db: Option<&crate::session::SessionDB>,
@@ -890,21 +974,7 @@ fn resolve_prompt_session_state(
     Option<crate::session::SessionMeta>,
     Option<crate::goal::GoalSnapshot>,
 ) {
-    let session_meta = session_id.and_then(|sid| {
-        session_db.and_then(|db| match db.get_session(sid) {
-            Ok(meta) => meta,
-            Err(error) => {
-                crate::app_warn!(
-                    "session",
-                    "prompt_session_meta",
-                    "bound prompt meta lookup for {} failed: {}",
-                    sid,
-                    error
-                );
-                None
-            }
-        })
-    });
+    let session_meta = resolve_prompt_session_meta(session_id, session_db);
     let incognito = session_meta
         .as_ref()
         .map(|session| session.incognito)
@@ -921,9 +991,84 @@ fn resolve_prompt_session_state(
     (session_meta, active_goal)
 }
 
+fn resolve_prompt_session_meta(
+    session_id: Option<&str>,
+    session_db: Option<&crate::session::SessionDB>,
+) -> Option<crate::session::SessionMeta> {
+    session_id.and_then(|sid| {
+        session_db.and_then(|db| match db.get_session(sid) {
+            Ok(meta) => meta,
+            Err(error) => {
+                crate::app_warn!(
+                    "session",
+                    "prompt_session_meta",
+                    "bound prompt meta lookup for {} failed: {}",
+                    sid,
+                    error
+                );
+                None
+            }
+        })
+    })
+}
+
 #[cfg(test)]
 mod build_api_url_tests {
-    use super::{build_api_url, is_complete_endpoint_url, resolve_prompt_session_state};
+    use super::{
+        build_api_url, clamp_reasoning_effort, is_complete_endpoint_url,
+        resolve_prompt_session_state, route_legacy_memory_entries,
+    };
+
+    fn memory_entry(id: i64, content: &str) -> crate::memory::MemoryEntry {
+        crate::memory::MemoryEntry {
+            id,
+            memory_type: crate::memory::MemoryType::User,
+            scope: crate::memory::MemoryScope::Global,
+            content: content.to_string(),
+            tags: Vec::new(),
+            source: "user".to_string(),
+            source_session_id: None,
+            pinned: false,
+            created_at: "2026-08-10T00:00:00Z".to_string(),
+            updated_at: "2026-08-10T00:00:00Z".to_string(),
+            relevance_score: None,
+            retrieval_evidence: None,
+            attachment_path: None,
+            attachment_mime: None,
+        }
+    }
+
+    #[test]
+    fn v1_selection_routes_full_fallback_to_dynamic_snapshot_without_static_duplicates() {
+        let entries = vec![
+            memory_entry(1, "prefers concise release notes"),
+            memory_entry(2, "project uses deterministic migrations"),
+        ];
+
+        let (static_entries, snapshot) = route_legacy_memory_entries(entries, true, 5_000);
+        let snapshot = snapshot.expect("V1 rollback snapshot");
+        let fallback = snapshot.full_fallback.expect("full fallback");
+
+        assert!(static_entries.is_empty());
+        assert_eq!(snapshot.candidates.len(), 2);
+        assert!(fallback.contains("prefers concise release notes"));
+        assert!(fallback.contains("project uses deterministic migrations"));
+        assert_eq!(snapshot.full_fallback_refs.len(), 2);
+        assert!(snapshot
+            .full_fallback_refs
+            .iter()
+            .all(|reference| reference.origin == "legacy_memory" && reference.role == "injected"));
+    }
+
+    #[test]
+    fn static_legacy_mode_keeps_rows_out_of_dynamic_snapshot() {
+        let entries = vec![memory_entry(1, "stable legacy memory")];
+
+        let (static_entries, snapshot) = route_legacy_memory_entries(entries, false, 5_000);
+
+        assert_eq!(static_entries.len(), 1);
+        assert!(snapshot.is_none());
+    }
 
     #[test]
     fn prompt_session_state_reads_bound_database_goal() {
@@ -1036,5 +1181,28 @@ mod build_api_url_tests {
         ));
         assert!(is_complete_endpoint_url("https://gateway/v1/messages"));
         assert!(!is_complete_endpoint_url("https://gateway/v1"));
+    }
+
+    #[test]
+    fn reasoning_effort_is_clamped_per_model_without_mutating_preference() {
+        let cases = [
+            ("gpt-5.6-sol", "minimal", Some("low")),
+            ("gpt-5.6-sol", "max", Some("max")),
+            ("kimi-k3", "medium", Some("low")),
+            ("kimi-k3", "xhigh", Some("max")),
+            ("claude-opus-5", "xhigh", Some("max")),
+            ("claude-sonnet-4-6", "max", Some("xhigh")),
+            ("gpt-5.1-codex-mini", "max", Some("high")),
+            ("legacy-compatible", "max", Some("xhigh")),
+            ("gpt-5.6-terra", "none", None),
+        ];
+
+        for (model, requested, expected) in cases {
+            assert_eq!(
+                clamp_reasoning_effort(model, requested).as_deref(),
+                expected,
+                "model={model}, requested={requested}"
+            );
+        }
     }
 }

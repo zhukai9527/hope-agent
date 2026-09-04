@@ -18,30 +18,27 @@ mod window_state;
 // This makes `crate::agent`, `crate::session`, etc. resolve to ha-core's modules,
 // eliminating the need for duplicate local copies.
 
-pub use ha_core::acp;
-pub use ha_core::acp_control;
+pub use ha_acp::acp;
+pub use ha_acp::acp_control;
+pub use ha_acp::acp_control::get_acp_manager;
+pub use ha_browser::browser_state;
+pub use ha_browser::browser_ui;
 pub use ha_core::agent;
 pub use ha_core::agent_config;
 pub use ha_core::agent_loader;
-pub use ha_core::artifacts;
 pub use ha_core::backup;
-pub use ha_core::browser_state;
-pub use ha_core::browser_ui;
-pub use ha_core::canvas_db;
+// 台账 + 契约在 kernel，机器在 ha-channel（阶段 5 第五刀）。命令层同时用到
+// 两侧，故 `crate::channel` 保留指向 kernel，机器面显式走 `ha_channel::`。
 pub use ha_core::channel;
 pub use ha_core::chat_engine;
 pub use ha_core::context_compact;
 pub use ha_core::crash_journal;
 pub use ha_core::cron;
-pub use ha_core::dashboard;
 pub use ha_core::dev_tools;
-pub use ha_core::docker;
 pub use ha_core::failover;
 pub use ha_core::file_extract;
 pub use ha_core::guardian;
-pub use ha_core::local_embedding;
 pub use ha_core::logging;
-pub use ha_core::mac_control;
 pub use ha_core::memory;
 pub use ha_core::memory_extract;
 pub use ha_core::oauth;
@@ -56,16 +53,24 @@ pub use ha_core::sandbox;
 pub use ha_core::self_diagnosis;
 pub use ha_core::service_install;
 pub use ha_core::session;
-pub use ha_core::skills;
+// ha-skills 的 `skills` 门面已把 kernel 留存的契约 / 台账 / 纯谓词原名再导出，
+// 故这里指向特征 crate 才是拆分前的完整符号集（只指 ha_core 会少掉机器层）。
 pub use ha_core::slash_commands;
 pub use ha_core::subagent;
 pub use ha_core::system_prompt;
 pub use ha_core::tools;
 pub use ha_core::url_preview;
 pub use ha_core::user_config;
-pub use ha_core::weather;
 #[cfg(target_os = "macos")]
 pub use ha_core::weather_location_macos;
+pub use ha_dash::dashboard;
+pub use ha_design::artifacts;
+pub use ha_design::canvas_db;
+pub use ha_local_llm::local_embedding;
+pub use ha_mac as mac_control;
+pub use ha_skills::skills;
+pub use ha_vcs::docker;
+pub use ha_weather as weather;
 
 // Re-export ha-core utility functions (truncate_utf8, default_true, etc.)
 pub use ha_core::{default_true, sql_opt_u64, sql_u64, truncate_utf8};
@@ -74,12 +79,12 @@ pub use ha_core::{default_true, sql_opt_u64, sql_u64, truncate_utf8};
 pub use ha_core::event_bus;
 pub use ha_core::init_app_state;
 pub use ha_core::{
-    get_acp_manager, get_channel_db, get_channel_registry, get_cron_db, get_event_bus, get_logger,
+    get_channel_db, get_channel_registry, get_cron_db, get_event_bus, get_logger,
     get_memory_backend, get_session_db, get_subagent_cancels, set_event_bus,
 };
 pub use ha_core::{
-    AppState, ACP_MANAGER, APP_LOGGER, CHANNEL_DB, CHANNEL_REGISTRY, CRON_DB, EVENT_BUS,
-    MEMORY_BACKEND, SESSION_DB, SUBAGENT_CANCELS,
+    AppState, APP_LOGGER, CHANNEL_DB, CHANNEL_REGISTRY, CRON_DB, EVENT_BUS, MEMORY_BACKEND,
+    SESSION_DB, SUBAGENT_CANCELS,
 };
 
 // ── Local re-exports ─────────────────────────────────────────────
@@ -88,6 +93,12 @@ pub(crate) use shortcuts::toggle_quickchat_window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 特征 crate 装配（幂等）。桌面路径已在 main.rs 顶部 wire 过，这里兜底
+    // mobile entry point（`app_lib::run()` 不经 main.rs）——漏 wire 的症状是
+    // `app_update` 有 schema 无 handler + registry_freeze warn。单一来源在
+    // `ha_server::wire_features()`；新增特征 crate 只需改那一处。
+    ha_server::wire_features();
+
     // macOS desktop-updater EXDEV guard. tauri-plugin-updater stages the new
     // `.app` under the temp dir then renames it over the installed bundle; when
     // the app runs from a different volume than the temp dir that rename fails
@@ -213,6 +224,7 @@ pub fn run() {
             commands::pet::get_pet_config_cmd,
             commands::pet::save_pet_config_cmd,
             commands::pet::pet_set_enabled_cmd,
+            commands::pet::pet_activate_cmd,
             commands::pet::pet_sync_window_cmd,
             commands::pet::pet_list_cmd,
             commands::pet::pet_asset_path_cmd,
@@ -220,6 +232,7 @@ pub fn run() {
             commands::pet::pet_candidate_thumbnail_cmd,
             commands::pet::pet_preview_thumbnail_cmd,
             commands::pet::pet_create_preview_cmd,
+            commands::pet::pet_upgrade_v2_cmd,
             commands::pet::pet_import_preview_cmd,
             commands::pet::pet_import_preview_cancel_cmd,
             commands::pet::pet_import_commit_cmd,
@@ -239,6 +252,7 @@ pub fn run() {
             commands::chat::chat,
             commands::chat::control_model_recovery,
             commands::chat::stop_chat,
+            commands::chat::continue_chat,
             commands::runtime_tasks::cancel_runtime_task,
             // Interactive terminal
             commands::terminal::terminal_create,
@@ -261,6 +275,7 @@ pub fn run() {
             commands::chat::get_system_prompt,
             // Tools info
             commands::chat::list_builtin_tools,
+            commands::chat::list_capability_mentions,
             // Built-in user manual (Help Center)
             commands::manual::get_manual_bundle,
             commands::manual::search_manual,
@@ -342,6 +357,7 @@ pub fn run() {
             commands::misc::write_export_file,
             commands::misc::set_dock_badge_cmd,
             commands::misc::set_tray_unread_cmd,
+            commands::toolchain_doctor::get_toolchain_doctor_report,
             // Filesystem listing & search (chat-input @ mention popper, working-dir picker)
             commands::filesystem::fs_list_dir,
             commands::filesystem::fs_create_dir,
@@ -588,6 +604,7 @@ pub fn run() {
             commands::memory::get_external_memory_providers_config,
             commands::memory::get_external_memory_providers_preflight,
             commands::memory::run_external_memory_provider_sync,
+            commands::memory::test_external_memory_provider_connection,
             commands::memory::get_external_memory_provider_credential_status,
             commands::memory::save_external_memory_provider_credentials,
             commands::memory::clear_external_memory_provider_credentials,
@@ -739,6 +756,8 @@ pub fn run() {
             // Session management
             commands::session::create_session_cmd,
             commands::session::fork_session_cmd,
+            commands::session::create_side_chat_cmd,
+            commands::session::list_side_chats_cmd,
             commands::session::list_sessions_cmd,
             commands::session::list_archived_sessions_cmd,
             commands::session::load_session_messages_latest_cmd,
@@ -959,8 +978,11 @@ pub fn run() {
             // Cron management
             commands::cron::cron_list_jobs,
             commands::cron::cron_get_job,
+            commands::cron::cron_get_job_snapshot,
+            commands::cron::cron_preflight,
             commands::cron::cron_create_job,
             commands::cron::cron_update_job,
+            commands::cron::cron_cancel_run,
             commands::cron::cron_delete_job,
             commands::cron::cron_toggle_job,
             commands::cron::cron_run_now,
@@ -970,6 +992,12 @@ pub fn run() {
             commands::cron::cron_run_timeline,
             commands::cron::cron_unread_total,
             commands::cron::cron_mark_all_read,
+            commands::cron::cron_workspace_resources,
+            commands::cron::cron_workspace_resource_for_run,
+            commands::cron::cron_workspace_takeover,
+            commands::cron::cron_workspace_return,
+            commands::cron::cron_workspace_discard_run,
+            commands::cron::cron_workspace_discard_task,
             // Sub-agent management
             commands::subagent::list_subagent_runs,
             commands::subagent::get_subagent_run,
@@ -1055,6 +1083,22 @@ pub fn run() {
             commands::design::create_design_share_cmd,
             commands::design::get_design_share_cmd,
             commands::design::revoke_design_share_cmd,
+            commands::design::run_design_visual_regression_cmd,
+            commands::design::accept_design_visual_baseline_cmd,
+            commands::design::get_design_scenarios_cmd,
+            commands::design::save_design_scenarios_cmd,
+            commands::design::get_design_components_manifest_cmd,
+            commands::design::save_design_components_draft_cmd,
+            commands::design::publish_design_components_manifest_cmd,
+            commands::design::scan_design_components_cmd,
+            commands::design::preview_figma_roundtrip_cmd,
+            commands::design::commit_figma_roundtrip_cmd,
+            commands::design::list_figma_roundtrip_reconciliations_cmd,
+            commands::design::resolve_figma_roundtrip_reconciliation_cmd,
+            commands::design::list_figma_roundtrip_links_cmd,
+            commands::design::create_design_review_space_cmd,
+            commands::design::list_design_review_spaces_cmd,
+            commands::design::revoke_design_review_space_cmd,
             commands::design::save_cf_deploy_config_cmd,
             commands::design::get_cf_deploy_config_cmd,
             commands::design::deploy_design_artifact_cmd,

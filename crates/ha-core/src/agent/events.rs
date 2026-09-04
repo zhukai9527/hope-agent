@@ -10,7 +10,7 @@ pub(super) fn emit_event(on_delta: &(impl Fn(&str) + Send + ?Sized), event: &ser
     }
 }
 
-pub(super) fn emit_text_delta(on_delta: &(impl Fn(&str) + Send), text: &str) {
+pub fn emit_text_delta(on_delta: &(impl Fn(&str) + Send + ?Sized), text: &str) {
     emit_event(
         on_delta,
         &json!({
@@ -20,7 +20,8 @@ pub(super) fn emit_text_delta(on_delta: &(impl Fn(&str) + Send), text: &str) {
     );
 }
 
-pub(super) fn emit_tool_call(
+#[doc(hidden)]
+pub fn emit_tool_call(
     on_delta: &(impl Fn(&str) + Send),
     call_id: &str,
     name: &str,
@@ -44,7 +45,8 @@ pub(super) fn emit_tool_call(
 /// replaces its `arguments` so the UI shows what actually ran, not the
 /// pre-rewrite arguments the `tool_call` event delivered moments earlier.
 /// Skipped entirely when no rewrite happened (the common case).
-pub(super) fn emit_tool_call_args_rewritten(
+#[doc(hidden)]
+pub fn emit_tool_call_args_rewritten(
     on_delta: &(impl Fn(&str) + Send + ?Sized),
     call_id: &str,
     arguments: &str,
@@ -64,12 +66,13 @@ pub(super) fn emit_tool_call_args_rewritten(
 /// Carries filename, MIME, size, kind, `local_path`, and optional caption
 /// so all downstream consumers (Tauri FileCard, HTTP download route, IM
 /// dispatcher) share one shape.
-pub(crate) const MEDIA_ITEMS_PREFIX: &str = "__MEDIA_ITEMS__";
+// pub：ha-browser 的 browser 工具结果媒体标记复用（与 mac/canvas 同一结果格式契约）。
+pub const MEDIA_ITEMS_PREFIX: &str = "__MEDIA_ITEMS__";
 
 /// Extract structured media items from a tool result string.
 /// Returns (clean_result, media_items).
 /// If the result starts with `__MEDIA_ITEMS__[...]`, the JSON array is parsed and removed.
-pub(crate) fn extract_media_items(result: &str) -> (String, Vec<MediaItem>) {
+pub fn extract_media_items(result: &str) -> (String, Vec<MediaItem>) {
     if let Some(rest) = result.strip_prefix(MEDIA_ITEMS_PREFIX) {
         if let Some((json_line, text)) = rest.split_once('\n') {
             if let Ok(items) = serde_json::from_str::<Vec<MediaItem>>(json_line) {
@@ -80,7 +83,8 @@ pub(crate) fn extract_media_items(result: &str) -> (String, Vec<MediaItem>) {
     (result.to_string(), Vec::new())
 }
 
-pub(super) fn emit_tool_result(
+#[doc(hidden)]
+pub fn emit_tool_result(
     on_delta: &(impl Fn(&str) + Send),
     call_id: &str,
     name: &str,
@@ -273,7 +277,135 @@ pub(super) fn build_responses_tool_result(result: &str) -> (String, Vec<serde_js
     (combined_text, image_items)
 }
 
-pub(super) fn expand_anthropic_image_markers_for_api(history: &[Value]) -> Vec<Value> {
+/// Marker expansion used only for token accounting. It mirrors Anthropic's
+/// content-block shape without loading marker payload bytes from disk (or
+/// cloning them into the request), so repeated Tier-1 candidate evaluations
+/// remain bounded and side-effect free.
+fn build_anthropic_tool_result_content_for_token_count(result: &str) -> Value {
+    let Some(parsed) = crate::tools::image_markers::parse_image_markers(result) else {
+        return json!(result);
+    };
+
+    let mut content = Vec::new();
+    if !parsed.leading_text.is_empty() {
+        content.push(json!({ "type": "text", "text": parsed.leading_text }));
+    }
+    for marker in &parsed.markers {
+        let text = if marker.text.is_empty() {
+            "Image captured."
+        } else {
+            marker.text.as_str()
+        };
+        content.push(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": marker.mime,
+                "data": ""
+            }
+        }));
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    json!(content)
+}
+
+/// Marker expansion used only for token accounting. The placeholder data URI
+/// intentionally carries no payload; the accounting service recognizes the
+/// native `image_url` item and applies its bounded media estimate.
+fn build_openai_chat_tool_result_content_for_token_count(
+    result: &str,
+    model_supports_vision: bool,
+) -> Value {
+    let Some(parsed) = crate::tools::image_markers::parse_image_markers(result) else {
+        return json!(result);
+    };
+
+    if !model_supports_vision {
+        let mut text_parts = Vec::new();
+        if !parsed.leading_text.is_empty() {
+            text_parts.push(parsed.leading_text);
+        }
+        for marker in &parsed.markers {
+            text_parts.push(if marker.text.is_empty() {
+                "Image captured.".to_string()
+            } else {
+                marker.text.clone()
+            });
+        }
+        return json!(text_parts.join("\n"));
+    }
+
+    let mut content = Vec::new();
+    if !parsed.leading_text.is_empty() {
+        content.push(json!({ "type": "text", "text": parsed.leading_text }));
+    }
+    for marker in &parsed.markers {
+        let text = if marker.text.is_empty() {
+            "Image captured."
+        } else {
+            marker.text.as_str()
+        };
+        content.push(json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{};base64,", marker.mime) }
+        }));
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    json!(content)
+}
+
+/// Responses/Codex accounting projection for one tool output. It preserves
+/// the exact output text and user/input item topology while omitting media
+/// bytes that the accounting service must never tokenize as text.
+fn build_responses_tool_result_for_token_count(result: &str) -> (String, Vec<Value>) {
+    let Some(parsed) = crate::tools::image_markers::parse_image_markers(result) else {
+        return (result.to_string(), Vec::new());
+    };
+
+    let mut text_parts = Vec::new();
+    if !parsed.leading_text.is_empty() {
+        text_parts.push(parsed.leading_text.clone());
+    }
+    for marker in &parsed.markers {
+        text_parts.push(if marker.text.is_empty() {
+            "Image captured.".to_string()
+        } else {
+            marker.text.clone()
+        });
+    }
+
+    let total = parsed.markers.len();
+    let image_items = parsed
+        .markers
+        .iter()
+        .enumerate()
+        .map(|(index, marker)| {
+            let label = if marker.text.is_empty() {
+                "Image captured."
+            } else {
+                marker.text.as_str()
+            };
+            let tag = if total > 1 {
+                format!("[Tool visual output {}/{}] {}", index + 1, total, label)
+            } else {
+                format!("[Tool visual output] {label}")
+            };
+            json!({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_image",
+                        "image_url": format!("data:{};base64,", marker.mime)
+                    },
+                    { "type": "input_text", "text": tag }
+                ]
+            })
+        })
+        .collect();
+    (text_parts.join("\n"), image_items)
+}
+
+pub fn expand_anthropic_image_markers_for_api(history: &[Value]) -> Vec<Value> {
     history
         .iter()
         .map(|item| {
@@ -294,7 +426,29 @@ pub(super) fn expand_anthropic_image_markers_for_api(history: &[Value]) -> Vec<V
         .collect()
 }
 
-pub(super) fn expand_openai_chat_image_markers_for_api(
+pub fn project_anthropic_image_markers_for_token_count(history: &[Value]) -> Vec<Value> {
+    history
+        .iter()
+        .map(|item| {
+            let mut message = item.clone();
+            if message.get("role").and_then(Value::as_str) == Some("user") {
+                if let Some(Value::Array(blocks)) = message.get_mut("content") {
+                    for block in blocks {
+                        if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                            if let Some(result) = block.get("content").and_then(Value::as_str) {
+                                block["content"] =
+                                    build_anthropic_tool_result_content_for_token_count(result);
+                            }
+                        }
+                    }
+                }
+            }
+            message
+        })
+        .collect()
+}
+
+pub fn expand_openai_chat_image_markers_for_api(
     history: &[Value],
     model_supports_vision: bool,
 ) -> Vec<Value> {
@@ -327,6 +481,37 @@ pub(super) fn expand_openai_chat_image_markers_for_api(
                 _ => {}
             }
             msg
+        })
+        .collect()
+}
+
+pub fn project_openai_chat_image_markers_for_token_count(
+    history: &[Value],
+    model_supports_vision: bool,
+) -> Vec<Value> {
+    history
+        .iter()
+        .map(|item| {
+            let mut message = item.clone();
+            match message.get("role").and_then(Value::as_str) {
+                Some("tool") => {
+                    if let Some(result) = message.get("content").and_then(Value::as_str) {
+                        message["content"] = build_openai_chat_tool_result_content_for_token_count(
+                            result,
+                            model_supports_vision,
+                        );
+                    }
+                }
+                Some("user") if !model_supports_vision => {
+                    if let Some(Value::Array(parts)) = message.get("content") {
+                        if parts.iter().any(is_openai_image_part) {
+                            message["content"] = fold_openai_user_content_without_images(parts);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            message
         })
         .collect()
 }
@@ -367,7 +552,7 @@ fn fold_openai_user_content_without_images(parts: &[Value]) -> Value {
 /// True if the OpenAI Chat history carries any image content the model would
 /// need vision for — user-uploaded `image_url` parts or tool image markers.
 /// Drives the one-shot "model can't see images" notice.
-pub(super) fn openai_chat_history_has_images(history: &[Value]) -> bool {
+pub fn openai_chat_history_has_images(history: &[Value]) -> bool {
     history
         .iter()
         .any(|msg| match msg.get("role").and_then(|r| r.as_str()) {
@@ -386,7 +571,7 @@ pub(super) fn openai_chat_history_has_images(history: &[Value]) -> bool {
         })
 }
 
-pub(super) fn expand_responses_image_markers_for_api(history: &[Value]) -> Vec<Value> {
+pub fn expand_responses_image_markers_for_api(history: &[Value]) -> Vec<Value> {
     let mut expanded = Vec::with_capacity(history.len());
     for item in history {
         if item.get("type").and_then(|t| t.as_str()) == Some("function_call_output") {
@@ -410,7 +595,26 @@ pub(super) fn expand_responses_image_markers_for_api(history: &[Value]) -> Vec<V
     expanded
 }
 
-pub(super) fn emit_thinking_delta(on_delta: &(impl Fn(&str) + Send), text: &str) {
+pub fn project_responses_image_markers_for_token_count(history: &[Value]) -> Vec<Value> {
+    let mut projected = Vec::with_capacity(history.len());
+    for item in history {
+        if item.get("type").and_then(Value::as_str) == Some("function_call_output") {
+            if let Some(result) = item.get("output").and_then(Value::as_str) {
+                let (text_output, image_items) =
+                    build_responses_tool_result_for_token_count(result);
+                let mut output_item = item.clone();
+                output_item["output"] = json!(text_output);
+                projected.push(output_item);
+                projected.extend(image_items);
+                continue;
+            }
+        }
+        projected.push(item.clone());
+    }
+    projected
+}
+
+pub fn emit_thinking_delta(on_delta: &(impl Fn(&str) + Send + ?Sized), text: &str) {
     emit_event(
         on_delta,
         &json!({
@@ -433,13 +637,15 @@ pub(super) fn build_max_rounds_notice(max_rounds: u32) -> String {
 
 /// Emit the max-rounds notice as a text_delta AND return it so the caller can
 /// append it to `collected_text` for persistence.
-pub(super) fn emit_max_rounds_notice(on_delta: &(impl Fn(&str) + Send), max_rounds: u32) -> String {
+#[doc(hidden)]
+pub fn emit_max_rounds_notice(on_delta: &(impl Fn(&str) + Send), max_rounds: u32) -> String {
     let notice = build_max_rounds_notice(max_rounds);
     emit_text_delta(on_delta, &notice);
     notice
 }
 
-pub(super) fn emit_round_limit_event(on_delta: &(impl Fn(&str) + Send), max_rounds: u32) {
+#[doc(hidden)]
+pub fn emit_round_limit_event(on_delta: &(impl Fn(&str) + Send), max_rounds: u32) {
     emit_event(
         on_delta,
         &json!({
@@ -449,7 +655,8 @@ pub(super) fn emit_round_limit_event(on_delta: &(impl Fn(&str) + Send), max_roun
     );
 }
 
-pub(super) fn emit_usage(
+#[doc(hidden)]
+pub fn emit_usage(
     on_delta: &(impl Fn(&str) + Send),
     usage: &ChatUsage,
     model: &str,
@@ -458,19 +665,28 @@ pub(super) fn emit_usage(
 ) {
     let mut event = json!({
         "type": "usage",
-        "input_tokens": usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "cache_creation_input_tokens": usage.cache_creation_input_tokens,
-        "cache_read_input_tokens": usage.cache_read_input_tokens,
-        "context_input_tokens": usage.context_input_tokens,
-        "fresh_input_tokens": usage.fresh_input_tokens,
-        "last_input_tokens": usage.last_input_tokens,
-        "last_context_input_tokens": usage.last_context_input_tokens,
-        "last_fresh_input_tokens": usage.last_fresh_input_tokens,
-        "last_cache_creation_input_tokens": usage.last_cache_creation_input_tokens,
-        "last_cache_read_input_tokens": usage.last_cache_read_input_tokens,
+        "input_coverage": usage.input_coverage,
+        "output_coverage": usage.output_coverage,
         "model": model,
     });
+    if usage.input_coverage.is_present() {
+        event["input_tokens"] = json!(usage.input_tokens);
+        event["cache_creation_input_tokens"] = json!(usage.cache_creation_input_tokens);
+        event["cache_read_input_tokens"] = json!(usage.cache_read_input_tokens);
+        event["context_input_tokens"] = json!(usage.context_input_tokens);
+        event["fresh_input_tokens"] = json!(usage.fresh_input_tokens);
+        event["last_input_tokens"] = json!(usage.last_input_tokens);
+        event["last_context_input_tokens"] = json!(usage.last_context_input_tokens);
+        event["last_fresh_input_tokens"] = json!(usage.last_fresh_input_tokens);
+        event["last_cache_creation_input_tokens"] = json!(usage.last_cache_creation_input_tokens);
+        event["last_cache_read_input_tokens"] = json!(usage.last_cache_read_input_tokens);
+    }
+    if usage.output_coverage.is_present() {
+        event["output_tokens"] = json!(usage.output_tokens);
+    }
+    if !usage.token_accounting_observations.is_empty() {
+        event["token_accounting_observations"] = json!(usage.token_accounting_observations);
+    }
     if let Some(ttft) = ttft_ms {
         event["ttft_ms"] = json!(ttft);
     }
@@ -488,20 +704,24 @@ pub(super) fn emit_usage(
             "agent",
             "agent::usage",
             &format!(
-                "LLM usage: model={}, in={}, out={}",
-                model, usage.input_tokens, usage.output_tokens
+                "LLM usage: model={}, input={}, output={}",
+                model,
+                if usage.input_coverage.is_present() { "present" } else { "missing" },
+                if usage.output_coverage.is_present() { "present" } else { "missing" },
             ),
             Some(
                 serde_json::json!({
                     "model": model,
-                    "input_tokens": usage.input_tokens,
-                    "context_input_tokens": usage.context_input_tokens,
-                    "fresh_input_tokens": usage.fresh_input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "cache_creation": usage.cache_creation_input_tokens,
-                    "cache_read": usage.cache_read_input_tokens,
-                    "last_cache_creation": usage.last_cache_creation_input_tokens,
-                    "last_cache_read": usage.last_cache_read_input_tokens,
+                    "input_coverage": usage.input_coverage,
+                    "output_coverage": usage.output_coverage,
+                    "input_tokens": usage.input_coverage.is_present().then_some(usage.input_tokens),
+                    "context_input_tokens": usage.input_coverage.is_present().then_some(usage.context_input_tokens),
+                    "fresh_input_tokens": usage.input_coverage.is_present().then_some(usage.fresh_input_tokens),
+                    "output_tokens": usage.output_coverage.is_present().then_some(usage.output_tokens),
+                    "cache_creation": usage.input_coverage.is_present().then_some(usage.cache_creation_input_tokens),
+                    "cache_read": usage.input_coverage.is_present().then_some(usage.cache_read_input_tokens),
+                    "last_cache_creation": usage.input_coverage.is_present().then_some(usage.last_cache_creation_input_tokens),
+                    "last_cache_read": usage.input_coverage.is_present().then_some(usage.last_cache_read_input_tokens),
                 })
                 .to_string(),
             ),
@@ -518,7 +738,7 @@ mod tests {
         expand_openai_chat_image_markers_for_api, expand_responses_image_markers_for_api,
         openai_chat_history_has_images,
     };
-    use crate::tools::browser::IMAGE_BASE64_PREFIX;
+    use crate::tool_defs::IMAGE_BASE64_PREFIX;
     use serde_json::json;
 
     #[test]

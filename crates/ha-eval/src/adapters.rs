@@ -1,8 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
-use ha_core::coding_eval::{self, CodingEvalFixture, GoldTaskPackRunInput};
-use ha_core::domain_eval::{self, RunDomainEvalFixtureInput};
+use ha_core::domain_eval::RunDomainEvalFixtureInput;
 use ha_core::memory::{claims, dreaming, SqliteMemoryBackend};
 use ha_core::session::SessionDB;
+use ha_eval_runtime::coding_eval::{self, CodingEvalFixture, GoldTaskPackRunInput};
 use ha_eval_spec::{
     read_json, resolve_contained, CaseResult, EvalAdapter, EvalCheck, EvalStatus, PlannedCase,
     PlannedSuite,
@@ -25,12 +25,49 @@ pub async fn run_case(
     let mut outcome = match suite.adapter {
         EvalAdapter::CodingFixturePatch => run_coding_fixture(root, suite, case).await?,
         EvalAdapter::CodingGoldFixturePatch => run_coding_gold(temp.path(), suite, case).await?,
+        EvalAdapter::ContextCompactionContract => run_context_compaction(suite, case)?,
         EvalAdapter::DomainTraceFixture => run_domain(temp.path(), suite, case).await?,
         EvalAdapter::DreamingGolden => run_dreaming(root, temp.path(), suite, case)?,
+        EvalAdapter::KnowledgeRetrievalEvidence => {
+            run_knowledge_retrieval(root, temp.path(), suite, case)?
+        }
         EvalAdapter::MemoryRetrievalScale => run_memory_retrieval(suite, case)?,
     };
     outcome.attempt = attempt;
     Ok(outcome)
+}
+
+pub(crate) fn run_context_compaction(
+    suite: &PlannedSuite,
+    case: &PlannedCase,
+) -> Result<CaseResult> {
+    let report = ha_core::context_compact::eval::run_context_compaction_eval(&case.id)?;
+    let checks = report
+        .checks
+        .into_iter()
+        .map(|check| EvalCheck {
+            name: check.name,
+            status: if check.passed {
+                EvalStatus::Passed
+            } else {
+                EvalStatus::Failed
+            },
+            detail: check.detail,
+            metric: check.metric,
+            advisory: false,
+        })
+        .collect();
+    Ok(base_result(
+        suite,
+        case,
+        if report.passed {
+            EvalStatus::Passed
+        } else {
+            EvalStatus::Failed
+        },
+        checks,
+        None,
+    ))
 }
 
 async fn run_coding_fixture(
@@ -137,7 +174,7 @@ async fn run_coding_gold(
 async fn run_domain(temp: &Path, suite: &PlannedSuite, case: &PlannedCase) -> Result<CaseResult> {
     let _ = temp;
     let db = runtime_eval_db()?;
-    let fixture = domain_eval::deterministic_domain_eval_fixture(
+    let fixture = ha_improve::domain_eval::deterministic_domain_eval_fixture(
         db.as_ref(),
         &case.id,
         &format!("release-eval:{}", case.id),
@@ -149,7 +186,8 @@ async fn run_domain(temp: &Path, suite: &PlannedSuite, case: &PlannedCase) -> Re
         bail!("domain deterministic fixture unexpectedly contains agent/provider configuration");
     }
     let report =
-        SessionDB::run_domain_eval_fixture(db, RunDomainEvalFixtureInput { fixture }).await?;
+        ha_improve::domain_eval::run_domain_eval_fixture(db, RunDomainEvalFixtureInput { fixture })
+            .await?;
     let mut checks = report
         .checks
         .iter()
@@ -353,6 +391,47 @@ fn run_memory_retrieval(suite: &PlannedSuite, case: &PlannedCase) -> Result<Case
     ))
 }
 
+fn run_knowledge_retrieval(
+    root: &Path,
+    temp: &Path,
+    suite: &PlannedSuite,
+    case: &PlannedCase,
+) -> Result<CaseResult> {
+    let path = case_asset(root, suite, case)?;
+    let value: Value = read_json(&path)?;
+    reject_model_configuration(&value, "$")?;
+    let fixture: ha_knowledge::knowledge::eval::KnowledgeRetrievalFixture =
+        serde_json::from_value(value)?;
+    let db = ha_knowledge::knowledge::IndexDb::open(&temp.join("knowledge-index.db"))?;
+    let report = ha_knowledge::knowledge::eval::evaluate(&db, &fixture)?;
+    let checks = report
+        .outcomes
+        .iter()
+        .map(|outcome| EvalCheck {
+            name: outcome.name.clone(),
+            status: if outcome.passed {
+                EvalStatus::Passed
+            } else {
+                EvalStatus::Failed
+            },
+            detail: outcome.detail.clone(),
+            metric: None,
+            advisory: false,
+        })
+        .collect::<Vec<_>>();
+    Ok(base_result(
+        suite,
+        case,
+        if report.passed() {
+            EvalStatus::Passed
+        } else {
+            EvalStatus::Failed
+        },
+        checks,
+        None,
+    ))
+}
+
 fn case_asset(root: &Path, suite: &PlannedSuite, case: &PlannedCase) -> Result<std::path::PathBuf> {
     let relative = case
         .path
@@ -381,6 +460,9 @@ fn base_result(
 }
 
 fn runtime_eval_db() -> Result<Arc<SessionDB>> {
+    // 特征 crate 装配先于 init_runtime（冻结工具注册表前挂 app_update），
+    // 与 src-tauri / hope-agent-server 两个壳共用单一来源 wire_features()。
+    ha_server::wire_features();
     ha_core::init_runtime("eval");
     ha_core::get_session_db()
         .cloned()

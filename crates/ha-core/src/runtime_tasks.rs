@@ -29,9 +29,26 @@ impl RuntimeTaskKind {
 pub struct CancelRuntimeTaskResult {
     pub kind: RuntimeTaskKind,
     pub id: String,
+    /// Whether the canonical runtime accepted a cancellation request. This is
+    /// deliberately separate from `final_status`: an accepted best-effort
+    /// request does not prove that the target reached a terminal state.
     pub accepted: bool,
+    pub disposition: RuntimeCancelDisposition,
+    /// Latest observed target status. Refusals use the stable value `refused`
+    /// and carry their machine-readable reason separately.
     pub status: String,
+    pub reason: Option<String>,
+    /// Present only when this call confirmed a terminal target state.
+    pub final_status: Option<String>,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeCancelDisposition {
+    Requested,
+    AlreadyTerminal,
+    Refused,
 }
 
 /// Exact runtime identities captured while a stopped session is still gated.
@@ -40,6 +57,7 @@ pub struct CancelRuntimeTaskResult {
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeTaskSnapshot {
     tasks: Vec<(RuntimeTaskKind, String)>,
+    pause_subagents: bool,
 }
 
 fn extend_snapshot_source(
@@ -63,18 +81,59 @@ fn extend_snapshot_source(
 }
 
 impl CancelRuntimeTaskResult {
-    fn new(
+    pub(crate) fn requested(
         kind: RuntimeTaskKind,
         id: &str,
-        accepted: bool,
+        status: impl Into<String>,
+        terminal: bool,
+        message: impl Into<String>,
+    ) -> Self {
+        let status = status.into();
+        Self {
+            kind,
+            id: id.to_string(),
+            accepted: true,
+            disposition: RuntimeCancelDisposition::Requested,
+            final_status: terminal.then(|| status.clone()),
+            status,
+            reason: None,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn already_terminal(
+        kind: RuntimeTaskKind,
+        id: &str,
+        status: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let status = status.into();
+        Self {
+            kind,
+            id: id.to_string(),
+            accepted: false,
+            disposition: RuntimeCancelDisposition::AlreadyTerminal,
+            final_status: Some(status.clone()),
+            status,
+            reason: None,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn refused(
+        kind: RuntimeTaskKind,
+        id: &str,
         status: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
         Self {
             kind,
             id: id.to_string(),
-            accepted,
-            status: status.into(),
+            accepted: false,
+            disposition: RuntimeCancelDisposition::Refused,
+            status: "refused".to_string(),
+            reason: Some(status.into()),
+            final_status: None,
             message: message.into(),
         }
     }
@@ -118,16 +177,45 @@ pub async fn cancel_runtime_tasks_for_session(
 pub async fn snapshot_runtime_tasks_for_session(
     session_id: Option<&str>,
 ) -> anyhow::Result<RuntimeTaskSnapshot> {
+    snapshot_runtime_tasks_for_session_inner(session_id, false).await
+}
+
+/// Stop-specific snapshot: non-subagent resources retain their existing hard
+/// cancellation behavior, while child attempts settle as resumable
+/// `interrupted/session_paused` continuations.
+pub async fn snapshot_runtime_tasks_for_session_stop(
+    session_id: &str,
+) -> anyhow::Result<RuntimeTaskSnapshot> {
+    snapshot_runtime_tasks_for_session_inner(Some(session_id), true).await
+}
+
+/// Global Stop variant. It retains the all-session snapshot semantics while
+/// classifying every discovered child attempt as resumably session-paused.
+pub async fn snapshot_runtime_tasks_for_global_stop() -> anyhow::Result<RuntimeTaskSnapshot> {
+    snapshot_runtime_tasks_for_session_inner(None, true).await
+}
+
+async fn snapshot_runtime_tasks_for_session_inner(
+    session_id: Option<&str>,
+    pause_subagents: bool,
+) -> anyhow::Result<RuntimeTaskSnapshot> {
     let owned_session_id = session_id.map(str::to_string);
     let async_job_session_id = owned_session_id.clone();
     let async_jobs = crate::blocking::run_blocking(move || {
+        let owned_session_ids = async_job_session_id.as_deref().map(|root| {
+            crate::get_session_db()
+                .and_then(|db| db.list_session_autonomy_tree_ids(root).ok())
+                .unwrap_or_else(|| vec![root.to_string()])
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>()
+        });
         if let Some(db) = crate::async_jobs::get_async_jobs_db() {
             db.list_running().map(|jobs| {
                 jobs.into_iter()
                     .filter(|job| {
-                        async_job_session_id
-                            .as_deref()
-                            .map(|sid| job.session_id.as_deref() == Some(sid))
+                        owned_session_ids
+                            .as_ref()
+                            .map(|ids| job.session_id.as_ref().is_some_and(|sid| ids.contains(sid)))
                             .unwrap_or(true)
                     })
                     .map(|job| (RuntimeTaskKind::AsyncJob, job.job_id))
@@ -157,11 +245,30 @@ pub async fn snapshot_runtime_tasks_for_session(
 
     let process_session_id = owned_session_id.clone();
     let processes = async move {
+        let owned_session_ids = if let Some(root) = process_session_id.clone() {
+            let fallback = root.clone();
+            crate::blocking::run_blocking(move || {
+                crate::get_session_db()
+                    .and_then(|db| db.list_session_autonomy_tree_ids(&root).ok())
+                    .unwrap_or_else(|| vec![fallback])
+            })
+            .await
+        } else {
+            Vec::new()
+        };
         let registry = crate::process_registry::get_registry().lock().await;
+        let ids = if owned_session_ids.is_empty() {
+            registry.list_running_ids_for_parent_session(process_session_id.as_deref())
+        } else {
+            owned_session_ids
+                .iter()
+                .flat_map(|session_id| {
+                    registry.list_running_ids_for_parent_session(Some(session_id))
+                })
+                .collect()
+        };
         anyhow::Ok(
-            registry
-                .list_running_ids_for_parent_session(process_session_id.as_deref())
-                .into_iter()
+            ids.into_iter()
                 .map(|id| (RuntimeTaskKind::Process, id))
                 .collect(),
         )
@@ -174,21 +281,31 @@ pub async fn snapshot_runtime_tasks_for_session(
         timeout_snapshot_source(
             "async_jobs",
             owned_session_id.clone(),
+            pause_subagents,
             tokio::spawn(async_jobs)
         ),
         timeout_snapshot_source(
             "subagents",
             owned_session_id.clone(),
+            pause_subagents,
             tokio::spawn(subagents)
         ),
-        timeout_snapshot_source("processes", owned_session_id, tokio::spawn(processes)),
+        timeout_snapshot_source(
+            "processes",
+            owned_session_id,
+            pause_subagents,
+            tokio::spawn(processes)
+        ),
     );
     let mut tasks = Vec::new();
     for discovered in [async_jobs, subagents, processes] {
         tasks.extend(discovered);
     }
 
-    Ok(RuntimeTaskSnapshot { tasks })
+    Ok(RuntimeTaskSnapshot {
+        tasks,
+        pause_subagents,
+    })
 }
 
 enum DeferredSnapshotGate {
@@ -219,14 +336,23 @@ impl Drop for DeferredSnapshotGate {
 async fn timeout_snapshot_source(
     source: &'static str,
     session_id: Option<String>,
+    pause_subagents: bool,
     handle: tokio::task::JoinHandle<anyhow::Result<Vec<(RuntimeTaskKind, String)>>>,
 ) -> Vec<(RuntimeTaskKind, String)> {
-    timeout_snapshot_source_with(source, session_id, handle, RUNTIME_SNAPSHOT_SOURCE_TIMEOUT).await
+    timeout_snapshot_source_with(
+        source,
+        session_id,
+        pause_subagents,
+        handle,
+        RUNTIME_SNAPSHOT_SOURCE_TIMEOUT,
+    )
+    .await
 }
 
 async fn timeout_snapshot_source_with(
     source: &'static str,
     session_id: Option<String>,
+    pause_subagents: bool,
     mut handle: tokio::task::JoinHandle<anyhow::Result<Vec<(RuntimeTaskKind, String)>>>,
     timeout: std::time::Duration,
 ) -> Vec<(RuntimeTaskKind, String)> {
@@ -248,7 +374,10 @@ async fn timeout_snapshot_source_with(
             tokio::spawn(async move {
                 let discovered = snapshot_source_join_result(source, handle.await);
                 if !discovered.is_empty() {
-                    let snapshot = RuntimeTaskSnapshot { tasks: discovered };
+                    let snapshot = RuntimeTaskSnapshot {
+                        tasks: discovered,
+                        pause_subagents,
+                    };
                     if tokio::time::timeout(
                         DEFERRED_SNAPSHOT_CANCEL_TIMEOUT,
                         cancel_runtime_task_snapshot(snapshot),
@@ -299,12 +428,62 @@ fn snapshot_source_join_result(
 pub async fn cancel_runtime_task_snapshot(
     snapshot: RuntimeTaskSnapshot,
 ) -> anyhow::Result<Vec<CancelRuntimeTaskResult>> {
+    let pause_subagents = snapshot.pause_subagents;
     Ok(
-        cancel_runtime_task_snapshot_with(snapshot, |kind, id| async move {
-            cancel_runtime_task(kind, &id).await
+        cancel_runtime_task_snapshot_with(snapshot, move |kind, id| async move {
+            if pause_subagents && kind == RuntimeTaskKind::Subagent {
+                let id_for_pause = id.clone();
+                crate::blocking::run_blocking(move || pause_subagent(&id_for_pause)).await
+            } else {
+                cancel_runtime_task(kind, &id).await
+            }
         })
         .await,
     )
+}
+
+fn pause_subagent(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
+    let kind = RuntimeTaskKind::Subagent;
+    let Some(db) = crate::get_session_db() else {
+        return Ok(CancelRuntimeTaskResult::refused(
+            kind,
+            id,
+            "unavailable",
+            "Session database is unavailable",
+        ));
+    };
+    let Some(run) = db.get_subagent_run(id)? else {
+        return Ok(CancelRuntimeTaskResult::already_terminal(
+            kind,
+            id,
+            "missing",
+            "Sub-agent run no longer exists",
+        ));
+    };
+    if run.status.is_terminal() {
+        return Ok(CancelRuntimeTaskResult::already_terminal(
+            kind,
+            id,
+            run.status.as_str(),
+            "Sub-agent run is already terminal",
+        ));
+    }
+    if crate::subagent::request_pause_run(id) {
+        Ok(CancelRuntimeTaskResult::requested(
+            kind,
+            id,
+            "interrupted",
+            false,
+            "Sub-agent pause requested; thread remains resumable",
+        ))
+    } else {
+        Ok(CancelRuntimeTaskResult::refused(
+            kind,
+            id,
+            "not_active",
+            "Sub-agent run could not be paused",
+        ))
+    }
 }
 
 async fn cancel_runtime_task_snapshot_with<F, Fut>(
@@ -343,10 +522,9 @@ where
                     id,
                     message
                 );
-                CancelRuntimeTaskResult::new(
+                CancelRuntimeTaskResult::refused(
                     kind,
                     &id,
-                    false,
                     "error",
                     format!("Runtime task cancellation failed: {message}"),
                 )
@@ -361,10 +539,9 @@ where
                     id,
                     message
                 );
-                CancelRuntimeTaskResult::new(
+                CancelRuntimeTaskResult::refused(
                     kind,
                     &id,
-                    false,
                     "error",
                     format!("Runtime task cancellation task failed: {message}"),
                 )
@@ -374,47 +551,46 @@ where
 }
 
 fn cancel_async_job(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
-    let Some(db) = crate::async_jobs::get_async_jobs_db() else {
-        return Ok(CancelRuntimeTaskResult::new(
+    let outcome = crate::async_jobs::JobManager::cancel_with_outcome(id)?;
+    match outcome.disposition {
+        crate::async_jobs::JobCancelDisposition::Requested => {
+            let (status, terminal) = outcome
+                .job
+                .as_ref()
+                .map(|job| (job.status.as_str(), job.status.is_terminal()))
+                .unwrap_or(("cancelling", false));
+            Ok(CancelRuntimeTaskResult::requested(
+                RuntimeTaskKind::AsyncJob,
+                id,
+                status,
+                terminal,
+                if terminal {
+                    "Async job cancellation was requested and a terminal state is now observed"
+                } else {
+                    "Async job cancellation requested; terminal state is pending"
+                },
+            ))
+        }
+        crate::async_jobs::JobCancelDisposition::AlreadyTerminal => {
+            let job = outcome
+                .job
+                .expect("already-terminal cancellation outcome carries its snapshot");
+            Ok(CancelRuntimeTaskResult::already_terminal(
+                RuntimeTaskKind::AsyncJob,
+                id,
+                job.status.as_str(),
+                "Async job is already in a terminal state",
+            ))
+        }
+        crate::async_jobs::JobCancelDisposition::Refused => Ok(CancelRuntimeTaskResult::refused(
             RuntimeTaskKind::AsyncJob,
             id,
-            false,
-            "not_found",
-            "Async jobs DB unavailable",
-        ));
-    };
-    let Some(before) = db.load(id)? else {
-        return Ok(CancelRuntimeTaskResult::new(
-            RuntimeTaskKind::AsyncJob,
-            id,
-            false,
-            "not_found",
-            "Async job not found",
-        ));
-    };
-    if before.status.is_terminal() {
-        return Ok(CancelRuntimeTaskResult::new(
-            RuntimeTaskKind::AsyncJob,
-            id,
-            false,
-            before.status.as_str(),
-            "Async job is already in a terminal state",
-        ));
-    }
-    match crate::async_jobs::JobManager::cancel(id)? {
-        Some(job) => Ok(CancelRuntimeTaskResult::new(
-            RuntimeTaskKind::AsyncJob,
-            id,
-            true,
-            job.status.as_str(),
-            "Async job cancellation requested",
-        )),
-        None => Ok(CancelRuntimeTaskResult::new(
-            RuntimeTaskKind::AsyncJob,
-            id,
-            false,
-            "not_found",
-            "Async job not found",
+            outcome.reason.unwrap_or("not_found"),
+            if outcome.reason == Some("jobs_db_unavailable") {
+                "Async jobs DB unavailable"
+            } else {
+                "Async job not found"
+            },
         )),
     }
 }
@@ -422,19 +598,17 @@ fn cancel_async_job(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
 fn cancel_subagent(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
     let db = crate::get_session_db().ok_or_else(|| anyhow::anyhow!("Session DB unavailable"))?;
     let Some(run) = db.get_subagent_run(id)? else {
-        return Ok(CancelRuntimeTaskResult::new(
+        return Ok(CancelRuntimeTaskResult::refused(
             RuntimeTaskKind::Subagent,
             id,
-            false,
             "not_found",
             "Sub-agent run not found",
         ));
     };
     if run.status.is_terminal() {
-        return Ok(CancelRuntimeTaskResult::new(
+        return Ok(CancelRuntimeTaskResult::already_terminal(
             RuntimeTaskKind::Subagent,
             id,
-            false,
             run.status.as_str(),
             "Sub-agent is already in a terminal state",
         ));
@@ -443,84 +617,150 @@ fn cancel_subagent(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
     // This is the only cancellation entry that atomically claims parked runs,
     // reuses the running token, and synchronizes the background projection.
     let accepted = crate::subagent::request_cancel_run(id);
-    Ok(CancelRuntimeTaskResult::new(
+    let observed = db.get_subagent_run(id)?.unwrap_or(run);
+    if accepted {
+        return Ok(CancelRuntimeTaskResult::requested(
+            RuntimeTaskKind::Subagent,
+            id,
+            observed.status.as_str(),
+            observed.status.is_terminal(),
+            if observed.status.is_terminal() {
+                "Sub-agent cancellation completed"
+            } else {
+                "Sub-agent cancellation requested; terminal state is pending"
+            },
+        ));
+    }
+    if observed.status.is_terminal() {
+        return Ok(CancelRuntimeTaskResult::already_terminal(
+            RuntimeTaskKind::Subagent,
+            id,
+            observed.status.as_str(),
+            "Sub-agent reached a terminal state before cancellation was accepted",
+        ));
+    }
+    Ok(CancelRuntimeTaskResult::refused(
         RuntimeTaskKind::Subagent,
         id,
-        accepted,
-        if accepted {
-            "killed"
-        } else {
-            run.status.as_str()
-        },
-        if accepted {
-            "Sub-agent cancellation requested"
-        } else {
-            "Sub-agent is no longer active"
-        },
+        observed.status.as_str(),
+        "Sub-agent cancellation was not accepted",
     ))
 }
 
 async fn cancel_process(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
-    use crate::process_registry::{get_registry, ProcessStatus};
+    use crate::process_registry::get_registry;
 
-    crate::process_notification::mark_observed(id);
     let session = {
         let registry = get_registry().lock().await;
         registry.get_session(id).cloned()
     };
+    let pid = match process_cancel_preflight(id, session.as_ref()) {
+        ProcessCancelPreflight::Terminate(pid) => pid,
+        ProcessCancelPreflight::Return(result) => {
+            if result.disposition == RuntimeCancelDisposition::AlreadyTerminal {
+                crate::process_notification::mark_observed(id);
+            }
+            return Ok(result);
+        }
+    };
+
+    crate::blocking::run_blocking(move || crate::platform::terminate_process_tree(pid)).await;
+
+    // `terminate_process_tree` is deliberately a void best-effort platform
+    // primitive. It cannot prove signal delivery or process exit, so this
+    // caller must never stamp a synthetic terminal row. The exec/PTY/sandbox
+    // waiter owns `mark_exited`; re-read only what that authoritative producer
+    // has observed so far.
+    let observed = {
+        let registry = get_registry().lock().await;
+        registry.get_session(id).cloned()
+    };
+    if observed.as_ref().is_some_and(|session| session.exited) {
+        crate::process_notification::mark_observed(id);
+    }
+    Ok(process_cancel_result_after_request(id, observed.as_ref()))
+}
+
+enum ProcessCancelPreflight {
+    Terminate(u32),
+    Return(CancelRuntimeTaskResult),
+}
+
+fn process_cancel_preflight(
+    id: &str,
+    session: Option<&crate::process_registry::ProcessSession>,
+) -> ProcessCancelPreflight {
     let Some(session) = session else {
-        return Ok(CancelRuntimeTaskResult::new(
+        return ProcessCancelPreflight::Return(CancelRuntimeTaskResult::refused(
             RuntimeTaskKind::Process,
             id,
-            false,
             "not_found",
             "Process session not found",
         ));
     };
     if session.exited {
-        return Ok(CancelRuntimeTaskResult::new(
+        return ProcessCancelPreflight::Return(CancelRuntimeTaskResult::already_terminal(
             RuntimeTaskKind::Process,
             id,
-            false,
             session.status.to_string(),
             "Process session has already exited",
         ));
     }
-    if let Some(pid) = session.pid {
-        crate::blocking::run_blocking(move || crate::platform::terminate_process_tree(pid)).await;
-    }
-    let mut registry = get_registry().lock().await;
-    registry.mark_exited(id, None, Some("SIGKILL".to_string()), ProcessStatus::Failed);
-    Ok(CancelRuntimeTaskResult::new(
+    let Some(pid) = session.pid else {
+        return ProcessCancelPreflight::Return(CancelRuntimeTaskResult::refused(
+            RuntimeTaskKind::Process,
+            id,
+            "termination_unavailable",
+            "Process termination could not be requested because no process id is available",
+        ));
+    };
+    ProcessCancelPreflight::Terminate(pid)
+}
+
+fn process_cancel_result_after_request(
+    id: &str,
+    observed: Option<&crate::process_registry::ProcessSession>,
+) -> CancelRuntimeTaskResult {
+    let Some(observed) = observed else {
+        return CancelRuntimeTaskResult::requested(
+            RuntimeTaskKind::Process,
+            id,
+            "termination_requested",
+            false,
+            "Process termination was requested, but the registry row disappeared before a terminal state could be confirmed",
+        );
+    };
+    CancelRuntimeTaskResult::requested(
         RuntimeTaskKind::Process,
         id,
-        true,
-        "killed",
-        "Process session terminated",
-    ))
+        observed.status.to_string(),
+        observed.exited,
+        if observed.exited {
+            "Process termination was requested; the registry now records a terminal state"
+        } else {
+            "Process termination was requested; terminal state is pending"
+        },
+    )
 }
 
 fn cancel_cron(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
-    match crate::cron::cancel_running_job(id)? {
-        Some(cancelled) => Ok(CancelRuntimeTaskResult::new(
+    match crate::cron_hooks::cancel_running_job(id)? {
+        Some(true) => Ok(CancelRuntimeTaskResult::requested(
             RuntimeTaskKind::Cron,
             id,
-            cancelled,
-            if cancelled {
-                "cancelling"
-            } else {
-                "not_running"
-            },
-            if cancelled {
-                "Cron run cancellation requested"
-            } else {
-                "Cron job is not currently running"
-            },
-        )),
-        None => Ok(CancelRuntimeTaskResult::new(
-            RuntimeTaskKind::Cron,
-            id,
+            "cancelling",
             false,
+            "Cron run cancellation requested; terminal state is pending",
+        )),
+        Some(false) => Ok(CancelRuntimeTaskResult::refused(
+            RuntimeTaskKind::Cron,
+            id,
+            "not_running",
+            "Cron job is not currently running",
+        )),
+        None => Ok(CancelRuntimeTaskResult::refused(
+            RuntimeTaskKind::Cron,
+            id,
             "not_found",
             "Cron job not found",
         )),
@@ -531,6 +771,107 @@ fn cancel_cron(id: &str) -> anyhow::Result<CancelRuntimeTaskResult> {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    fn completed_process_session() -> crate::process_registry::ProcessSession {
+        crate::process_registry::ProcessSession {
+            id: "proc-race".to_string(),
+            parent_session_id: Some("owner-session".to_string()),
+            command: "true".to_string(),
+            pid: Some(42),
+            cwd: ".".to_string(),
+            started_at: 1,
+            exited: true,
+            exit_code: Some(0),
+            exit_signal: None,
+            status: crate::process_registry::ProcessStatus::Completed,
+            backgrounded: true,
+            aggregated_output: String::new(),
+            tail: String::new(),
+            truncated: false,
+            max_output_chars: 1024,
+            pending_stdout: String::new(),
+            pending_stderr: String::new(),
+        }
+    }
+
+    #[test]
+    fn cancel_result_wire_separates_request_from_confirmed_terminal_state() {
+        let requested = CancelRuntimeTaskResult::requested(
+            RuntimeTaskKind::AsyncJob,
+            "job-1",
+            "cancelling",
+            false,
+            "pending",
+        );
+        let requested = serde_json::to_value(requested).expect("serialize requested result");
+        assert_eq!(requested["disposition"], "requested");
+        assert_eq!(requested["accepted"], true);
+        assert!(requested["finalStatus"].is_null());
+        assert!(requested.get("final_status").is_none());
+
+        let terminal = CancelRuntimeTaskResult::already_terminal(
+            RuntimeTaskKind::AsyncJob,
+            "job-1",
+            "completed",
+            "already done",
+        );
+        let terminal = serde_json::to_value(terminal).expect("serialize terminal result");
+        assert_eq!(terminal["disposition"], "already_terminal");
+        assert_eq!(terminal["finalStatus"], "completed");
+    }
+
+    #[test]
+    fn process_cancel_race_preserves_natural_completion_truth() {
+        // Simulates the waiter winning while terminate_process_tree runs outside
+        // the registry lock. The cancellation request was made, but the latest
+        // authoritative terminal state is Completed, not a fabricated Failed.
+        let completed = completed_process_session();
+        let result = process_cancel_result_after_request("proc-race", Some(&completed));
+        assert_eq!(result.disposition, RuntimeCancelDisposition::Requested);
+        assert!(result.accepted);
+        assert_eq!(result.status, "completed");
+        assert_eq!(result.final_status.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn process_cancel_without_pid_is_refused_without_claiming_a_request() {
+        let mut running = completed_process_session();
+        running.exited = false;
+        running.exit_code = None;
+        running.status = crate::process_registry::ProcessStatus::Running;
+        running.pid = None;
+
+        let ProcessCancelPreflight::Return(result) =
+            process_cancel_preflight("proc-race", Some(&running))
+        else {
+            panic!("pid-less process must not enter the terminate path");
+        };
+        assert_eq!(result.disposition, RuntimeCancelDisposition::Refused);
+        assert!(!result.accepted);
+        assert_eq!(result.reason.as_deref(), Some("termination_unavailable"));
+        assert!(result.final_status.is_none());
+    }
+
+    #[test]
+    fn process_cancel_request_stays_pending_until_waiter_records_exit() {
+        let mut running = completed_process_session();
+        running.exited = false;
+        running.exit_code = None;
+        running.status = crate::process_registry::ProcessStatus::Running;
+
+        let ProcessCancelPreflight::Terminate(pid) =
+            process_cancel_preflight("proc-race", Some(&running))
+        else {
+            panic!("running process with a pid must enter the terminate path");
+        };
+        assert_eq!(pid, 42);
+
+        let result = process_cancel_result_after_request("proc-race", Some(&running));
+        assert_eq!(result.disposition, RuntimeCancelDisposition::Requested);
+        assert!(result.accepted);
+        assert_eq!(result.status, "running");
+        assert!(result.final_status.is_none());
+    }
 
     #[test]
     fn snapshot_collection_continues_after_source_failure() {
@@ -559,6 +900,7 @@ mod tests {
                 (RuntimeTaskKind::AsyncJob, "fails".to_string()),
                 (RuntimeTaskKind::Process, "continues".to_string()),
             ],
+            pause_subagents: false,
         };
         let calls = Arc::new(Mutex::new(Vec::new()));
         let calls_for_cancel = calls.clone();
@@ -569,11 +911,11 @@ mod tests {
                 if id == "fails" {
                     anyhow::bail!("transient cancellation failure");
                 }
-                Ok(CancelRuntimeTaskResult::new(
+                Ok(CancelRuntimeTaskResult::requested(
                     kind,
                     &id,
-                    true,
                     "killed",
+                    true,
                     "cancelled",
                 ))
             }
@@ -584,7 +926,8 @@ mod tests {
         calls.sort();
         assert_eq!(calls, ["continues", "fails"]);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].status, "error");
+        assert_eq!(results[0].status, "refused");
+        assert_eq!(results[0].reason.as_deref(), Some("error"));
         assert!(!results[0].accepted);
         assert_eq!(results[1].status, "killed");
         assert!(results[1].accepted);
@@ -597,6 +940,7 @@ mod tests {
                 (RuntimeTaskKind::AsyncJob, "slow".to_string()),
                 (RuntimeTaskKind::Process, "later".to_string()),
             ],
+            pause_subagents: false,
         };
         let slow_release = Arc::new(tokio::sync::Notify::new());
         let later_started = Arc::new(tokio::sync::Notify::new());
@@ -614,11 +958,11 @@ mod tests {
                     } else {
                         later_started.notify_one();
                     }
-                    Ok(CancelRuntimeTaskResult::new(
+                    Ok(CancelRuntimeTaskResult::requested(
                         kind,
                         &id,
-                        true,
                         "cancelled",
+                        true,
                         "cancelled",
                     ))
                 }
@@ -650,6 +994,7 @@ mod tests {
         let immediate = timeout_snapshot_source_with(
             "test_source",
             Some(session_id.clone()),
+            false,
             handle,
             std::time::Duration::from_millis(10),
         )

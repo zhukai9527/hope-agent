@@ -25,7 +25,7 @@ fn lifecycle_lock() -> &'static Mutex<()> {
 /// The closure must not call another lifecycle operation. Cron uses this to
 /// publish its durable `running_at` claim before deletion performs its active
 /// work scan, closing the claim-to-executor admission gap.
-pub(crate) fn with_lifecycle_gate<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+pub fn with_lifecycle_gate<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
     let _guard = lifecycle_lock()
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
@@ -1104,6 +1104,7 @@ fn payload_references_agent(payload: &CronPayload, id: &str) -> bool {
         CronPayload::AgentTurn { agent_id, .. } | CronPayload::SessionLoop { agent_id, .. } => {
             agent_id.as_deref() == Some(id)
         }
+        CronPayload::SessionTurn { .. } => false,
     }
 }
 
@@ -1112,15 +1113,15 @@ fn cron_job_resolves_to_agent(job: &CronJob, id: &str) -> Result<bool> {
         CronPayload::AgentTurn { agent_id, .. } | CronPayload::SessionLoop { agent_id, .. } => {
             agent_id.as_deref()
         }
+        // The ordinary session owns this binding; task lifecycle must not
+        // rewrite or delete a SessionTurn based on today's live agent.
+        CronPayload::SessionTurn { .. } => return Ok(false),
     };
     let project = match (job.project_id.as_deref(), crate::get_project_db()) {
         (Some(project_id), Some(db)) => db.get(project_id)?,
         _ => None,
     };
-    Ok(
-        crate::cron::executor::resolve_agent_id_for_execution(explicit_agent_id, project.as_ref())
-            == id,
-    )
+    Ok(crate::cron::resolve_agent_id_for_execution(explicit_agent_id, project.as_ref()) == id)
 }
 
 fn table_exists(conn: &Connection, table: &str) -> bool {

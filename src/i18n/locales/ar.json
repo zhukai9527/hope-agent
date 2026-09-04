@@ -190,14 +190,6 @@
     "labelPlaceholder": "التسمية (مثال: مفتاح منظمة A)",
     "title": "ملفات تدوير مفاتيح API"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "مطلوب إجابة",
-      "detail": "{{count}} أسئلة تنتظر في المحادثة",
-      "detail_one": "سؤال واحد ينتظر في المحادثة",
-      "openAction": "أجب الآن"
-    }
-  },
   "canvas": {
     "close": "إغلاق",
     "export": "تصدير",
@@ -318,6 +310,16 @@
     "removeConfig": "إزالة",
     "running": "يعمل",
     "selectChannel": "اختر قناة",
+    "nativeReply": "ردود أصلية متدفقة",
+    "nativeReplyHint": "استخدام تدفق الرد الأصلي للمنصة. عند إيقافه، يعود فورًا إلى الرسائل العادية.",
+    "imsgProtocolV1": "بروتوكول imsg موثوق",
+    "imsgProtocolV1Hint": "يتفاوض على البروتوكول v1 ويستعيد تجاوز watch ويراقب إعادة تشغيل العملية الفرعية. أوقفه لاستخدام RPC القديم.",
+    "googleChatStandardMarkdown": "Markdown قياسي",
+    "googleChatStandardMarkdownHint": "استخدام Markdown القياسي في Google Chat للرسائل النصية الجديدة. أوقفه لاستخدام صيغة Chat القديمة.",
+    "discordChannelObfuscation": "اختبار إخفاء القنوات الخاصة",
+    "discordChannelObfuscationHint": "إشراك هذا الحساب في سلوك Gateway المؤقت من Discord. لا تُختار القنوات المخفية ولا تتم معالجتها مطلقًا.",
+    "discordFileRequests": "طلبات ملفات Discord الأصلية",
+    "discordFileRequestsHint": "يسمح للأسئلة المنظمة بفتح نافذة رفع ملف واحد. يعيد الخادم التحقق من النوع والحجم وربط المحادثة.",
     "showThinking": "عرض التفكير في رسائل IM",
     "showThinkingHint": "عند التفعيل، يُعرض استدلال النموذج ككتلة مقتبسة قبل ردّ كل جولة. القيمة الافتراضية: متوقّف.",
     "signalAccount": "رقم الهاتف",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark (دولي)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "تم إرسال رسالة إلى «{{title}}»",
+      "receivedFrom": "أُرسلت من المحادثة «{{title}}»",
+      "untitled": "محادثة بلا عنوان",
+      "details": "عرض تفاصيل الرسالة"
+    },
     "addWorkingDirectory": "إضافة دليل العمل",
     "askAnything": "أخبرني بفكرتك، @ للملفات/الملاحظات/المهارات، # للإدخال السريع، / للأوامر السريعة...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "المتابعة في جلسة جديدة",
       "continuedFrom": "متابعة من",
       "created": "تمت المتابعة في جلسة جديدة",
+      "createdButNotOpened": "تم إنشاء التفرع `{{id}}` ولكن تعذر فتحه. حدده من قائمة الجلسات للمتابعة.",
       "failed": "تعذرت المتابعة في جلسة جديدة",
       "sourceFallback": "الجلسة الأصلية"
+    },
+    "sideChat": {
+      "label": "محادثة جانبية",
+      "untitled": "محادثة جانبية {{index}}",
+      "new": "محادثة جانبية جديدة",
+      "close": "إغلاق لوحة المحادثة الجانبية",
+      "nonBlocking": "اطرح أسئلة مستقلة دون مقاطعة المحادثة الرئيسية",
+      "askSelection": "اسأل في محادثة جانبية",
+      "createFailed": "تعذر إنشاء المحادثة الجانبية"
     },
     "browserPanel": {
       "backendBadgeTooltip": "خلفية المتصفح: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "جارٍ ضغط السياق السابق",
     "contextCompactedMsgs": "{{count}} رسالة أقدم",
     "contextCompactionFailedTitle": "تم إيقاف ضغط السياق مؤقتًا",
+    "contextCompactionRetry": "إعادة محاولة الضغط",
     "contextCompaction": {
       "preparing": "جارٍ ضغط السياق السابق",
       "summarizing": "جارٍ إنشاء ملخص الجلسة",
@@ -553,6 +572,7 @@
       "noMatches": "لا توجد إدخالات سريعة مطابقة"
     },
     "cronTaskStarted": "تم تشغيل مهمة مجدولة",
+    "scheduledOrigin": "مهمة مجدولة: {{name}}",
     "cronTrigger": "مهمة مجدولة",
     "loopTriggered": "تم تشغيل خطوة تكرار واحدة",
     "loopTrigger": "حلقة",
@@ -651,6 +671,7 @@
     "markAllRead": "تحديد الكل كمقروء",
     "markAsRead": "تحديد كمقروء",
     "pinSession": "تثبيت",
+    "pinnedSessions": "المثبتة",
     "unpinSession": "إلغاء التثبيت",
     "minutesAgo": "منذ {{count}} دقيقة",
     "modelsCount": "{{count}} نماذج",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "بيئة معزولة",
       "off": {
-        "desc": "اختيار المضيف أو WSL أو بيئة معزولة تلقائيًا.",
-        "label": "تلقائي"
+        "desc": "تشغيل على المضيف. سلوك الموافقة لم يتغير.",
+        "label": "البيئة المعزولة معطلة"
       },
       "setupTitle": "هيّئ Docker لتمكين البيئة المعزولة",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "فشل المصادقة",
     "reasonBilling": "الفواتير / تم تجاوز الحصة",
     "reasonContextOverflow": "تجاوز السياق",
+    "reasonDispatchUnknown": "نتيجة الإرسال غير معروفة — لم تتم إعادة المحاولة تلقائيًا",
     "reasonModelNotFound": "النموذج غير موجود",
     "reasonOverloaded": "الخدمة محملة بشكل زائد",
     "reasonRateLimit": "تم تجاوز حد الطلبات",
@@ -899,6 +921,7 @@
     "statusThinking": "التفكير",
     "statusUpdated": "آخر تحديث",
     "stopReply": "إيقاف الرد",
+    "continuePausedWork": "متابعة العمل المتوقف مؤقتًا",
     "stopGenerationDone": "تم إيقاف التوليد",
     "subagentFrom": "مفوّض من {{agent}}",
     "subagentResultCompleted": "اكتملت",
@@ -923,6 +946,7 @@
     "thinking": "جارٍ التفكير...",
     "thinkingAutoDisabled": "{{provider}} / {{model}} لا يدعم وضع التفكير الحالي. تم تعطيل التفكير تلقائيًا وتمت إعادة محاولة الطلب.",
     "visionAutoDisabled": "{{provider}} / {{model}} لا يدعم إدخال الصور. تم تجاهل الصورة ومتابعة الرد.",
+    "visionBridgeConfigureAction": "إعداد جسر الرؤية",
     "toolCalling": "جارٍ استدعاء الأدوات...",
     "totalTokens": "الإجمالي",
     "unknownProvider": "مزود غير معروف",
@@ -983,6 +1007,9 @@
       "failed": "تعذّر تصدير المحادثة.",
       "untitled": "بدون عنوان"
     },
+    "capabilityMention": {
+      "heading": "المكونات الإضافية والموصلات"
+    },
     "skillMention": {
       "heading": "المهارات",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "ملحق كروم مطلوب"
     },
     "conversationEmpty": "لا توجد رسائل في هذه المحادثة",
-    "pendingCancelForceInsert": "إلغاء إدراج هذه الجولة",
+    "pendingCancelForceInsert": "التغيير إلى الإرسال بعد الرد",
     "pendingSaving": "جارٍ الحفظ",
     "pendingSavingTip": "جارٍ حفظ الرسالة والمرفقات في قائمة انتظار قابلة للاستعادة.",
     "pendingInserting": "جارٍ الإدراج",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "إرسال الآن",
     "pendingFallbackAfterReply": "أرسل بعد الرد",
     "pendingFallbackAfterReplyTip": "لم تتم مواجهة نقطة اكتمال الأداة وسيتم إرسالها بعد انتهاء الرد الحالي.",
-    "pendingForceInsertTip": "سوف ينتظر حتى اكتمال تنفيذ الأداة ثم يقوم بإدراجها في النموذج دون مقاطعة الأداة الحالية.",
+    "pendingForceInsertTip": "سيتم إدراج الرسالة للنموذج بعد اكتمال جميع الأدوات قيد التشغيل في هذه الدفعة، من دون مقاطعتها؛ وإذا لم تصل هذه الجولة إلى حد أدوات آخر فستُرسل بعد انتهاء الرد.",
+    "pendingInsert": "إدراج",
     "pendingInserted": "تم إدراجها",
     "pendingInsertedTip": "وقد تم إدراجه في النموذج بعد اكتمال هذه الجولة من الأدوات.",
-    "pendingQueuedShort": "الطابور",
+    "pendingHeldAfterStop": "تم إيقاف الإرسال مؤقتًا",
+    "pendingHeldAfterStopTip": "تم إيقاف الرد الحالي، لذا لن تُرسل هذه الرسالة تلقائيًا.",
+    "pendingMoreActions": "مزيد من إجراءات الرسالة",
+    "pendingQueuedShort": "الإرسال بعد الرد",
     "pendingQueuedTip": "تمت إضافته إلى قائمة انتظار الانتظار وسيتم إرساله بعد انتهاء الرد الحالي.",
     "pendingQueueTitle": "ليتم إرسالها",
-    "pendingWaitingToolBoundary": "انتظر حتى نقطة اكتمال الأداة",
-    "pendingWaitingToolBoundaryTip": "انتظر حتى يكتمل استدعاء الأداة الأخير؛ إذا لم تعد الأداة تسمى هذه الجولة، فسيتم إرسالها بعد اكتمال الرد.",
+    "pendingWaitingToolBoundary": "بانتظار الإدراج",
+    "pendingWaitingToolBoundaryTip": "بانتظار اكتمال جميع الأدوات قيد التشغيل في هذه الدفعة قبل الإدراج؛ وإذا لم تصل هذه الجولة إلى حد أدوات آخر فستُرسل الرسالة بعد انتهاء الرد.",
     "processNotification": "انتهت العملية",
     "rightPanel": {
       "collapse": "طي اللوحة اليمنى",
       "expand": "قم بتوسيع اللوحة اليمنى",
       "switch": "تبديل اللوحة اليمنى",
       "dock": "شريط اللوحات الجانبية",
-      "openPanel": "فتح {{panel}}",
-      "switchToPanel": "التبديل إلى {{panel}}",
-      "collapsePanel": "طي {{panel}}",
-      "expandPanel": "توسيع {{panel}}",
+      "resize": "تغيير عرض مساحة العمل",
       "workflowActiveCount": "{{count}} من مهام سير العمل النشطة",
       "workflowAttentionCount": "{{count}} من مهام سير العمل تحتاج إلى الانتباه",
       "backgroundRunningCount": "{{count}} من المهام في الخلفية قيد التشغيل",
-      "subagentRunningCount": "{{count}} وكيل فرعي قيد التشغيل"
+      "subagentRunningCount": "{{count}} وكيل فرعي قيد التشغيل",
+      "openPanel": "فتح {{panel}}",
+      "switchToPanel": "التبديل إلى {{panel}}",
+      "collapsePanel": "طي {{panel}}",
+      "expandPanel": "توسيع {{panel}}"
     },
     "visionBridgeEngaged": "لا يمكن للنموذج الأساسي رؤية الصور، لذا قام {{model}} بوصفها نيابةً عنه.",
     "visionBridgeUnavailable": "تعذّر على نموذج الرؤية وصف الصورة، لذا تم تجاهلها.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "إضافة هدف",
     "agent": "Agent",
     "archivedProject": "(مؤرشف)",
+    "workspaceModePersistent": "شجرة عمل دائمة",
+    "workspaceCleanup": "بعد كل تشغيل",
+    "workspaceCleanupOption": {
+      "retain": "الاحتفاظ",
+      "discardIfClean": "الحذف عند عدم وجود تغييرات",
+      "always": "الحذف دائمًا"
+    },
+    "workspaceCleanupHint": {
+      "retain": "يحتفظ كل تشغيل بشجرة العمل الخاصة به حتى تؤرشفها أو تتخلص منها.",
+      "discardIfClean": "تُحذف شجرة العمل فقط عندما لا يترك التشغيل أي تغييرات ولا التزامات جديدة — لن يُحذف شيء قد تحتاجه.",
+      "always": "تُحذف شجرة العمل بعد كل تشغيل، بما في ذلك التغييرات غير الملتزم بها. استخدمها فقط عندما تصل النتيجة الفعلية عبر التسليم."
+    },
+    "workspaceModeHint": "يستخدم المشروع دليله؛ وينشئ الوضع الجديد شجرة لكل تشغيل؛ ويعيد الوضع الدائم استخدام شجرة لكل مهمة. ينطبق الفرع الأساسي على أشجار العمل.",
+    "workspaceActionBlocked": "غير متاح: {{reason}}",
+    "workspaceActionReturn": "إرجاع",
+    "workspaceActionResume": "إرجاع واستئناف",
+    "workspaceActionDone": "اكتمل {{action}}",
     "atGrace": "السماح (ث)",
     "atGraceHint": "نافذة التنفيذ المتأخر: تُنفَّذ المهمة لمرة واحدة التي حان وقتها أثناء إغلاق التطبيق إذا لم يتجاوز التأخير هذا العدد من الثواني؛ وبعد ذلك تُعَلَّم كفائتة (0 = صارم، بدون تنفيذ متأخر).",
     "atMinute": "عند الدقيقة",
     "atTime": "في",
     "autoAgent": "تلقائي (المشروع/الافتراضي)",
+    "cancelRunFailed": "تعذر إيقاف هذا التشغيل",
     "completed": "مكتملة",
     "conversationEmpty": "لا توجد رسائل في هذه المحادثة",
     "conversationsSelectHint": "اختر تشغيلاً لعرضه",
@@ -1463,7 +1513,7 @@
     "cronHelp": "التنسيق: ث د س يوم شهر يوم_الأسبوع (مثال 0 0 9 * * 1-5 = أيام العمل 9 صباحاً)",
     "dateTime": "التاريخ والوقت",
     "daySuffix": "",
-    "deleteConfirmDesc": "سيؤدي هذا إلى حذف المهمة المجدولة وسجل تشغيلها نهائيًا.",
+    "deleteConfirmDesc": "سيؤدي الحذف إلى إيقاف الجدولة المستقبلية فقط. سيُحتفظ بسجل التشغيل والمحادثات وأشجار العمل.",
     "deleteConfirmTitle": "حذف \"{{name}}\"؟",
     "deleteFailed": "تعذر حذف \"{{name}}\"",
     "deleteSuccess": "تم حذف \"{{name}}\"",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "كل شهر في",
     "failures": "الإخفاقات",
     "filterAll": "الكل",
+    "filterAttention": "يحتاج إلى معالجة",
+    "schedulerPrimary": "المجدول: العملية الأساسية",
+    "schedulerSecondary": "المجدول: عملية ثانوية (لا يمكنها تنفيذ المهام)",
+    "schedulerRunning": "قيد التشغيل {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "تم التعطيل تلقائيًا بعد {{failures}}/{{max}} إخفاقات متتالية",
+      "runFailed": "فشل آخر تشغيل",
+      "missed": "فاتها التشغيل المجدول",
+      "deliveryStale": "أحد أهداف التسليم لم يعد صالحًا",
+      "failing": "{{failures}}/{{max}} إخفاقات متتالية"
+    },
     "freq_custom": "مخصص",
     "freq_daily": "يومياً",
     "freq_hourly": "كل ساعة",
@@ -1521,6 +1582,19 @@
     "name": "اسم المهمة",
     "namePlaceholder": "مثال: ملخص يومي",
     "newJob": "مهمة جديدة",
+    "conversationTarget": "مكان التشغيل",
+    "conversationTargetNew": "محادثة جديدة في كل تشغيل",
+    "conversationTargetExisting": "محادثة موجودة",
+    "sessionTargetPlaceholder": "اختر محادثة",
+    "sessionTargetSearchPlaceholder": "ابحث في المحادثات",
+    "sessionTargetEmpty": "لا توجد محادثات مطابقة",
+    "errorSessionTargetRequired": "اختر المحادثة التي ستُنفَّذ فيها المهمة",
+    "copyAsNewTask": "نسخ كمهمة جديدة",
+    "deletedTaskHint": "تم حذف هذه المهمة: يُحتفظ بالسجل ولن تُجدول تشغيلات جديدة.",
+    "runAgain": "تشغيل مرة أخرى",
+    "createWithModel": "الإنشاء باستخدام النموذج",
+    "manualSetup": "الإعداد يدويًا",
+    "createWithModelPrompt": "ساعدني في إنشاء مهمة مجدولة. أريدها أن تنفذ ... تلقائيًا عندما ...",
     "nextRun": "التشغيل التالي",
     "noConversations": "لا يوجد سجل تشغيل بعد",
     "noConversationsYet": "لا توجد محادثات مسجلة بعد لهذا الحساب (اطلب من البوت استقبال رسالة أولًا)",
@@ -1536,8 +1610,13 @@
     "paused": "متوقفة مؤقتاً",
     "prefixDeliveryWithName": "إضافة اسم المهمة كبادئة",
     "prefixDeliveryWithNameDesc": "أضف البادئة [Cron] {name} إلى عمليات التسليم الناجحة حتى يمكن تمييز المهام المتعددة المرسلة إلى المحادثة نفسها.",
+    "preflightTitle": "فحص ما قبل التشغيل",
+    "preflightDescription": "راجع الجدول وبيئة التنفيذ الفعلية قبل المتابعة.",
+    "preflightIssue": "يلزم التحقق: {{code}}",
     "project": "المشروع",
+    "reloadLatest": "تحميل أحدث إصدار",
     "removeTarget": "إزالة الهدف",
+    "revisionConflict": "تم تغيير هذه المهمة في مكان آخر. تم الاحتفاظ بمسودتك؛ حمّل أحدث إصدار فقط عندما تكون مستعدًا لاستبدالها.",
     "resume": "استئناف",
     "runHistory": "سجل التشغيل",
     "runNow": "التشغيل الآن",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "قيد التشغيل",
     "runStatusSuccess": "نجاح",
     "schedule": "الجدولة",
+    "scheduleSession": "جدولة هذه المحادثة",
+    "sessionTurnTarget": "المحادثة المستهدفة",
+    "sessionTurnLiveHint": "تُقرأ إعدادات الوكيل والمشروع ومساحات المعرفة ومجلد العمل ووضع الأذونات والعزل مباشرةً من هذه المحادثة عند كل تشغيل.",
     "scheduleAt": "مرة واحدة",
     "scheduleCron": "مجدولة",
     "scheduleEvery": "متكررة",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "تشغيل بلا حدود",
+      "unlimitedModeWarning": "يعطّل حدود التقييم الخاصة بالتكلفة والوقت والرموز والاستدعاءات والوكلاء والتزامن. قد يستمر التشغيل إلى أجل غير مسمى ويتسبب في رسوم Provider غير منضبطة؛ وتظل حماية الأذونات والأمان والعزل والإلغاء والتنظيف فعّالة.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "معاينة",
-    "resizePanel": "تغيير حجم لوحة المعاينة"
+    "resizePanel": "تغيير حجم لوحة المعاينة",
+    "pathBreadcrumb": "مسار الملف",
+    "revealFolder": "إظهار المجلد في لوحة الملفات",
+    "copyPath": "نسخ المسار الكامل"
   },
   "fileBrowser": {
     "panelTitle": "الملفات",
+    "primaryFolder": "رئيسي",
+    "defaultProjectFolder": "مجلد المشروع الافتراضي",
     "jumpToFile": "عرض في متصفح الملفات",
     "copied": "تم النسخ",
     "copyFailed": "فشل النسخ",
@@ -2733,7 +2850,10 @@
     "zoomOut": "تصغير",
     "zoomIn": "تكبير",
     "fitWidth": "ملاءمة العرض",
-    "officeNoContent": "تعذّر استخراج المحتوى من هذا الملف."
+    "officeNoContent": "تعذّر استخراج المحتوى من هذا الملف.",
+    "openInNewTab": "فتح في علامة تبويب جديدة",
+    "collapseTree": "إخفاء قائمة الملفات",
+    "expandTree": "إظهار قائمة الملفات"
   },
   "diffPanel": {
     "fileTooLarge": "الملف كبير جدًا، يتم عرض أول 256 كيلوبايت فقط",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "عالي",
     "low": "منخفض",
+    "max": "الحد الأقصى",
     "medium": "متوسط",
     "minimal": "الحد الأدنى",
     "none": "إيقاف",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "تمت المعالجة"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "إغلاق {{count}} من الوكلاء",
+          "close_other": "إغلاق {{count}} من الوكلاء",
+          "closeAll": "إغلاق جميع الوكلاء",
+          "message_one": "إرسال رسالة إلى {{count}} من الوكلاء",
+          "message_other": "إرسال رسالة إلى {{count}} من الوكلاء",
+          "observe_one": "فحص {{count}} من الوكلاء",
+          "observe_other": "فحص {{count}} من الوكلاء",
+          "resume_one": "استئناف {{count}} من الوكلاء",
+          "resume_other": "استئناف {{count}} من الوكلاء"
+        },
+        "cron": {
+          "pause_one": "إيقاف {{count}} من الجداول مؤقتًا",
+          "pause_other": "إيقاف {{count}} من الجداول مؤقتًا",
+          "resume_one": "استئناف {{count}} من الجداول",
+          "resume_other": "استئناف {{count}} من الجداول"
+        },
+        "job": {
+          "cancel_one": "إلغاء {{count}} من المهام",
+          "cancel_other": "إلغاء {{count}} من المهام"
+        },
+        "process": {
+          "close_one": "إغلاق {{count}} من العمليات",
+          "close_other": "إغلاق {{count}} من العمليات"
+        },
+        "team": {
+          "pause_one": "إيقاف {{count}} من الفرق مؤقتًا",
+          "pause_other": "إيقاف {{count}} من الفرق مؤقتًا",
+          "resume_one": "استئناف {{count}} من الفرق",
+          "resume_other": "استئناف {{count}} من الفرق"
+        },
+        "workflow": {
+          "cancel_one": "إلغاء {{count}} من مسارات العمل",
+          "cancel_other": "إلغاء {{count}} من مسارات العمل",
+          "pause_one": "إيقاف {{count}} من مسارات العمل مؤقتًا",
+          "pause_other": "إيقاف {{count}} من مسارات العمل مؤقتًا",
+          "resume_one": "استئناف {{count}} من مسارات العمل",
+          "resume_other": "استئناف {{count}} من مسارات العمل"
+        }
+      },
+      "aggregate": {
+        "failed_one": "فشل {{count}}",
+        "failed_other": "فشل {{count}}",
+        "pending_one": "{{count}} قيد الانتظار",
+        "pending_other": "{{count}} قيد الانتظار",
+        "refused_one": "رُفض {{count}}",
+        "refused_other": "رُفض {{count}}",
+        "requested_one": "تم طلب {{count}}",
+        "requested_other": "تم طلب {{count}}",
+        "resumed_one": "تم استئناف {{count}}",
+        "resumed_other": "تم استئناف {{count}}",
+        "terminal_one": "انتهى {{count}}",
+        "terminal_other": "انتهى {{count}}"
+      },
+      "allTargets": "جميع الوكلاء",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} منتهية مسبقًا",
+        "alreadyTerminal_other": "{{count}} منتهية مسبقًا",
+        "refused_one": "تم رفض {{count}}",
+        "refused_other": "تم رفض {{count}}"
+      },
+      "failureDetails": "إخفاقات الاستئناف",
+      "state": {
+        "accepted": "تم الطلب · {{action}}",
+        "alreadyTerminal_one": "كانت {{count}} من الأهداف منتهية مسبقًا",
+        "alreadyTerminal_other": "كانت {{count}} من الأهداف منتهية مسبقًا",
+        "completed": "اكتمل · {{action}}",
+        "failed": "فشل · {{action}}",
+        "noAgentsToClose": "لا يوجد وكلاء بحاجة إلى الإغلاق",
+        "noResumeNeeded": "اكتمل الفريق بالفعل · لا حاجة إلى الاستئناف",
+        "partial": "اكتمل جزئيًا · {{action}}",
+        "refused": "رُفض · {{action}}",
+        "running": "قيد التنفيذ · {{action}}"
+      }
     },
     "skill": {
       "completed": "المهارة المحملة: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "اكتمل {{name}}",
           "failed": "فشل {{name}}",
           "running": "تشغيل {{name}}"
+        },
+        "sessions_create": {
+          "completed": "تم إنشاء {{name}}",
+          "failed": "فشل إنشاء {{name}}",
+          "running": "جارٍ إنشاء {{name}}"
         },
         "sessions_list": {
           "completed": "اكتمل {{name}}",
@@ -3587,13 +3790,16 @@
     "popOutActive": "مفتوح في نافذة منفصلة",
     "question": {
       "answered": "تمت الإجابة",
+      "customAnswer": "إدخال إضافي",
       "customPlaceholder": "أدخل إجابة مخصصة...",
       "customRequired": "أدخل إجابة مخصصة أو اختر خيارًا آخر.",
       "default": "افتراضي",
       "multiSelect": "متعدد",
+      "options": "الخيارات الأصلية",
       "pending": "في انتظار إجابتك…",
       "preview": "معاينة",
       "recommended": "موصى به",
+      "response": "إجابتك",
       "retry": "إعادة المحاولة",
       "submit": "إرسال الإجابات",
       "timedOut": "انتهت المهلة",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "إلغاء الأرشفة",
     "unassigned": "غير مُعيّن",
     "uploadLogo": "رفع الشعار",
+    "linkedDirs": {
+      "add": "إضافة مجلد",
+      "defaultPrimary": "مجلد المشروع الافتراضي (يُنشأ تلقائيًا)",
+      "empty": "لا توجد مجلدات إضافية مرتبطة",
+      "folderActions": "إجراءات المجلد",
+      "hint": "أرفق المجلدات التي يحتاجها المشروع. تستخدم المحادثات الجديدة والمسارات النسبية وGit وتعليمات المشروع المجلد الرئيسي.",
+      "invalid": "المجلد المرتبط غير صالح",
+      "label": "مجلدات المصدر",
+      "makePrimary": "تعيين كمجلد رئيسي",
+      "primary": "رئيسي",
+      "remove": "إزالة {{path}}",
+      "removeFolder": "إزالة المجلد"
+    },
     "workingDir": {
       "clear": "مسح",
       "hint": "تستخدم الجلسات في هذا المشروع هذا الدليل افتراضيًا؛ يتجاوز إعداد الجلسة هذا الإعداد.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "المعرف",
     "acpBackends": "خلفيات ACP",
     "acpBinary": "البرنامج الثنائي",
+    "acpDistribution": "واصف التوزيع",
+    "acpDistributionPackage": "الحزمة أو المنتج",
+    "acpDistributionRequired": "هذه الخلفية القديمة محظورة حتى يتم تعريف توزيع تشغيلها صراحةً.",
+    "acpDistributionVersion": "الإصدار المثبّت",
+    "acpLaunchArgs": "وسائط التشغيل",
+    "acpProtocol": "البروتوكول",
+    "acpTrustDistribution": "تعريف التوزيع",
     "acpControl": "خطة التحكم ACP",
     "acpControlDesc": "إدارة agents ACP الخارجية (Claude Code، Codex CLI، Gemini CLI، إلخ.)",
     "acpEnabled": "تفعيل خطة التحكم ACP",
@@ -4194,6 +4420,7 @@
         "send_attachment": "إرسال مرفق ملف إلى قنوات IM",
         "session_status": "الاستعلام عن الحالة الحالية لجلسة",
         "sessions_history": "قراءة سجل الرسائل من جلسات أخرى",
+        "sessions_create": "إنشاء جلسة محادثة عادية جديدة",
         "sessions_list": "عرض بيانات التعريف لكل الجلسات",
         "sessions_send": "إرسال رسالة إلى جلسة أخرى لتحفيز العمل",
         "update_settings": "تعديل إعدادات AppConfig",
@@ -4213,6 +4440,7 @@
         "send_attachment": "إرسال مرفق",
         "session_status": "حالة الجلسة",
         "sessions_history": "سجل الجلسة",
+        "sessions_create": "إنشاء جلسة",
         "sessions_list": "قائمة الجلسات",
         "sessions_send": "إرسال عبر الجلسات",
         "update_settings": "تحديث الإعدادات",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "إدارة تكاملات Telegram و WeChat و Feishu و Discord و Slack وقنوات IM الأخرى",
     "charLimitExceeded": "تجاوز الحد، سيتم اقتطاع المحتوى الزائد",
     "chat": "المحادثة",
+    "chatEnterToSend": "الإرسال بالضغط على Enter",
+    "chatEnterToSendDesc": "عند التفعيل، يرسل Enter وتضيف Shift+Enter سطراً جديداً. عند التعطيل، يضيف Enter سطراً جديداً ويرسل Ctrl+Enter.",
     "chatAutoExpandThinking": "توسيع عملية التفكير تلقائياً",
     "chatAutoExpandThinkingDesc": "توسيع كتل التفكير في فقاعات الدردشة تلقائياً. عند الإيقاف، انقر للتوسيع يدوياً.",
     "chatAutoCollapseCompletedTurns": "طي الأدوار المكتملة",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "الحد الأقصى لحصة نافذة السياق التي يمكن أن تشغلها نتيجة أداة واحدة (10%–60%). زِد للحفاظ على قراءات الملفات الكبيرة وعمليات جلب الويب",
     "contextCompactMicrocompact": "الضغط الدقيق",
     "contextCompactMicrocompactEnabled": "تفعيل الضغط الدقيق",
-    "contextCompactMicrocompactEnabledDesc": "مسح بدون تكلفة لنتائج الأدوات المؤقتة القديمة (ls/grep/find إلخ)، يعمل قبل طبقات الضغط الأخرى",
+    "contextCompactMicrocompactEnabledDesc": "يمسح نتائج الأدوات المؤقتة القديمة (ls/grep/find وغيرها) دون استدعاء إضافي للنموذج، ويعمل قبل طبقات الضغط الأخرى",
     "contextCompactMicrocompactTools": "قائمة أدوات الضغط الدقيق",
     "contextCompactMicrocompactToolsDesc": "سيتم مسح النتائج القديمة للأدوات المحددة تلقائياً",
     "contextCompactMinPrunableChars": "الحد الأدنى الإجمالي القابل للاقتطاع",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "يحمي آخر N جولات رسائل ويمددها إلى بداية دور المستخدم المالك",
     "contextCompactPruning": "اقتطاع نتائج الأدوات",
     "contextCompactReactiveMicrocompact": "Microcompact التفاعلي",
-    "contextCompactReactiveMicrocompactDesc": "بين جولات حلقة الأدوات، عندما يتجاوز الاستخدام العتبة، تُمسح نتائج tool_results المؤقتة (ls/grep/find/…). المستوى 0 — بلا تكلفة، ويحافظ على صلاحية ذاكرة الموجّه المؤقتة.",
+    "contextCompactReactiveMicrocompactDesc": "بين جولات حلقة الأدوات، عندما يتجاوز الاستخدام العتبة، تُمسح نتائج tool_results المؤقتة (ls/grep/find/…). لا يجري المستوى 0 استدعاءً إضافيًا للنموذج، لكن تغيير سجل الطلب قد يبطل ذاكرة الموجّه المؤقتة بعد موضع التغيير.",
     "contextCompactReactiveTriggerRatio": "نسبة التفعيل",
     "contextCompactReactiveTriggerRatioDesc": "نسبة الاستخدام التي تُفعِّل microcompaction التفاعلي (افتراضي 75%).",
     "contextCompactSaved": "تم حفظ الإعدادات",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "الوكيل الافتراضي",
     "defaultModel": "النموذج الافتراضي",
     "defaultModelDesc": "النموذج الرئيسي المستخدم",
-    "deferredToolsEnabled": "تحميل الأدوات المؤجل",
-    "deferredToolsEnabledDesc": "فعّل التحميل المستند إلى tool_search. تظل الأدوات مضافة حتى تؤجلها أدناه. يسري ذلك على المحادثة التالية.",
-    "deferredToolsPerToolDesc": "قم بتشغيل الأدوات التي يجب اكتشاف مخططاتها فقط عبر tool_search بدلاً من إرسالها مقدمًا.",
+    "deferredToolsEnabled": "سياسة تحميل مخططات الأدوات",
+    "deferredToolsEnabledDesc": "يؤجل الوضع الموصى به الأدوات المدمجة غير الأساسية وجميع أدوات MCP الديناميكية إلى tool_search. يظل التحميل المباشر للأدوات المدمجة ملتزمًا بإعداد التأجيل الخاص بكل خادم MCP.",
+    "deferredToolsModeCustom": "مخصص",
+    "deferredToolsModeDisabled": "المدمجة مباشرة",
+    "deferredToolsModeRecommended": "موصى به",
+    "deferredToolsPerToolDesc": "تُحمّل هذه الأدوات المدمجة عبر tool_search. يؤدي تغيير أي مفتاح إلى اختيار الوضع المخصص.",
     "deferredToolsPerToolTitle": "الأدوات المدمجة المؤجلة",
     "devClearAll": "مسح الكل",
     "devClearAllDesc": "مسح جميع البيانات وإعادة التعيين إلى القيم الافتراضية",
@@ -5253,8 +5486,12 @@
       "intro": "شغّل أوامر مخصصة / HTTP / مطالبات / وكلاء فرعيين عند أحداث دورة الحياة. متوافق على مستوى الحقول مع hooks في Claude Code.",
       "disableAll": "تعطيل جميع الـ hooks",
       "disableAllDesc": "مفتاح رئيسي — يوقف كل hook في جميع النطاقات.",
-      "allowProjectScope": "السماح بخطافات المشروع والمحلية",
-      "allowProjectScopeDesc": "يسمح لملفّي .hope-agent/hooks.json و hooks.local.json في دليل العمل بإضافة خطافات — مفيد للمشاركة مع فريقك. مُعطَّل افتراضيًا لأنها قد تنفِّذ أوامر من تلقاء نفسها، لذا فعِّله فقط للمشاريع التي تثق بها.",
+      "trustedProjectScopes": "مساحات عمل Hook الموثوقة",
+      "trustedProjectScopesDesc": "وافِق على ملفات Hook للمشروع والمحلية لكل مساحة عمل على حدة. أدخل المسار المطلق الدقيق؛ تُرفض الأسماء البديلة والروابط الرمزية.",
+      "workspacePath": "المسار المطلق لمساحة العمل",
+      "trustWorkspace": "الوثوق بالمحتوى",
+      "noTrustedWorkspaces": "لا توجد ملفات Hook موثوقة لمساحات العمل.",
+      "trustContentBound": "ترتبط الثقة بمحتوى ملفات Hook عند إضافة مساحة العمل. يؤدي أي تغيير أو نقل أو اسم بديل للمسار إلى تعطيلها. لإعادة الموافقة، أزل مساحة العمل واحفظ، ثم أضفها واحفظ مجددًا.",
       "scopeNote": "تحرّر هذه اللوحة hooks نطاق user. نطاقات project (.hope-agent/hooks.json، مشتركة عبر المستودع) وlocal (hooks.local.json) وmanaged (/etc/hope-agent/hooks.json) قائمة على الملفات وتُدمج فوقها.",
       "pickEvent": "اختر حدثًا…",
       "addHook": "إضافة hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "يشغّل هذا المعالج نموذج LLM / وكيلًا فرعيًا بشكل مضمّن وسيبطئ في كل مرة يُطلق فيها هذا الحدث الحاجب. يُفضّل استخدام command / http هنا، أو نقله إلى حدث مراقبة (مثل PostToolUse).",
       "invalidJson": "JSON غير صالح",
       "modelInheritDefault": "اتباع افتراضي الأتمتة",
-      "defaultShell": "افتراضي"
+      "defaultShell": "افتراضي",
+      "allowProjectScope": "السماح بخطافات المشروع والمحلية",
+      "allowProjectScopeDesc": "يسمح لملفّي .hope-agent/hooks.json و hooks.local.json في دليل العمل بإضافة خطافات — مفيد للمشاركة مع فريقك. مُعطَّل افتراضيًا لأنها قد تنفِّذ أوامر من تلقاء نفسها، لذا فعِّله فقط للمشاريع التي تثق بها."
     },
     "hours": "ساعة",
     "inheritGlobal": "وراثة الإعدادات العامة",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "حذف الخادم \"{{name}}\"؟ لا يمكن التراجع عن هذا.",
       "confirmDeleteTitle": "هل تريد حذف \"{{name}}\"؟",
       "connectTimeout": "مهلة (مهلة) الاتصال",
+      "connectionSettings": "استراتيجية الاتصال",
       "cwdLabel": "دليل العمل (اختياري)",
       "cwdPlaceholder": "وراثة التطبيق CWD",
       "deferredToolsLabel": "تأجيل مخططات الأدوات",
+      "directToolsLabel": "تحميل مخططات الأدوات مباشرة",
       "deleted": "تم حذف الخادم \"{{name}}\".",
       "deniedTools": "قائمة رفض الأداة",
       "descriptionLabel": "الوصف (اختياري)",
       "descriptionPlaceholder": "ماذا يفعل هذا الخادم",
       "disabled": "معطّل",
       "eagerLabel": "الاتصال عند بدء التشغيل",
+      "effectiveDeferredByGlobal": "تؤجل السياسة العامة «موصى به» أدوات هذا الخادم بالفعل.",
       "edit": "تحرير",
       "editTitle": "تحرير خادم MCP - {{name}}",
       "emptyDesc": "قم بإضافة خادم MCP أو قم باستيراد خادم من تكوين Claude Desktop. خوادم stdio تعمل اليوم؛ تصل عمليات النقل عن بعد HTTP/SSE/WebSocket في مرحلة لاحقة.",
@@ -5749,11 +5991,13 @@
       "importJson": "استيراد JSON",
       "invalidName": "يجب أن يتطابق الاسم مع ^[a-z0-9_-]{1,32}$ (أحرف صغيرة، أرقام، شرطة سفلية، واصلة)",
       "loadFailed": "فشل تحميل الخوادم",
+      "lazyLabel": "الاتصال عند الطلب",
       "nameImmutable": "لا يمكن تغيير الاسم بعد الإنشاء. احذف وأعد الإضافة لإعادة التسمية.",
       "nameLabel": "الاسم",
       "reconnect": "أعد الاتصال",
       "remoteTransportPhase4": "ستهبط وسائل النقل HTTP / SSE / WebSocket في المرحلة الرابعة.",
       "saved": "تم الحفظ",
+      "securitySettings": "الأمان والموافقات",
       "signOut": "تسجيل الخروج",
       "signOutSuccess": "تم مسح بيانات اعتماد \"{{name}}\"",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "شغّل أدوات سطر الأوامر داخل بيئة Docker معزولة للحد من الوصول إلى النظام.",
     "sandboxDockerAvailable": "Docker متاح",
     "sandboxDockerChecking": "جاري الفحص...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "احصل على Docker Desktop",
     "sandboxDockerNotInstalled": "Docker غير موجود، يرجى تثبيت Docker Desktop أولاً",
     "sandboxDockerNotRunning": "Docker مثبت لكن لا يعمل، يرجى تشغيل Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker غير متاح",
     "sandboxImage": "الصورة",
     "sandboxImageDesc": "صورة Docker المستخدمة للبيئة المعزولة.",
+    "sandboxImageDigestRequired": "ثبّت الصورة بصيغة name@sha256:<ملخص من 64 خانة>؛ تُرفض الوسوم القابلة للتغيير.",
     "sandboxMemoryLimit": "حد الذاكرة",
     "sandboxNetworkBridge": "جسر",
     "sandboxNetworkHost": "مضيف",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "الحاوية",
     "sandboxSectionResources": "حدود الموارد",
     "sandboxSectionSecurity": "تعزيز الأمان",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "ثانية",
     "security": "سياسة الأمان",
     "selectDefaultModel": "اختر النموذج الافتراضي",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "الحد الأقصى لعدد Agents الأطفال من جلسة الأب هذه التي يمكن تشغيلها في الوقت نفسه. الزائد ينتظر في الطابور.",
     "subagentMaxDepth": "الحد الأقصى لعمق التداخل",
     "subagentMaxDepthDesc": "عدد مستويات تفويض sub-agent المسموح بها تحت هذا Agent. القيم الأعلى تسمح للأطفال بإنشاء أطفال آخرين.",
+    "subagentProviderRetryAttempts": "محاولات استرداد البوابة",
+    "subagentProviderRetryAttemptsDesc": "محاولات إضافية بعد فشل جميع المزوّدين والنماذج البديلة. القيمة 0 تعطل الاسترداد الخارجي.",
+    "subagentProviderRetryBackoff": "مهلة إعادة المحاولة الأساسية",
+    "subagentProviderRetryBackoffDesc": "الانتظار الأولي قبل إعادة محاولة بوابة مستنفدة، ثم يزداد الانتظار تدريجيًا.",
     "subagentTimeout": "المهلة الافتراضية",
     "subagentTimeoutDesc": "أقصى مدة تشغيل للـ Agent الطفل. 0 يعني بلا مهلة. يُستخدم عندما لا يحدد الاستدعاء timeout_secs خاصاً به.",
     "subagentTimeoutUnit": "ثوانٍ",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "تطبيق تصحيح",
     "toolAskUserQuestionDesc": "إرسال أسئلة منظَّمة للمستخدم (اختيار واحد / متعدد / إدخال حر)",
     "toolAskUserQuestionName": "سؤال المستخدم",
+    "toolAudioGenerateDesc": "إنشاء كلام أو موسيقى أو مؤثرات صوتية من النص",
     "toolBrowserDesc": "التحكم في المتصفح لتنفيذ الإجراءات",
     "toolBrowserName": "المتصفح",
     "toolCallNarration": "تحديثات التقدم",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "إدارة العمليات",
     "toolProjectReadFileDesc": "قراءة الملفات المرفوعة إلى مشروع الجلسة الحالية",
     "toolProjectReadFileName": "قراءة ملف المشروع",
+    "toolReadContextResourceDesc": "قراءة لقطة ثابتة من @file أو @plan مرتبطة بالدورة الحالية",
     "toolReadDesc": "قراءة محتويات الملف مع دعم التصفح واكتشاف الصور",
     "toolReadName": "قراءة ملف",
     "toolRecallMemoryDesc": "البحث عن الذاكرات المحفوظة واستردادها",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "إرسال مرفق",
     "toolSendNotificationDesc": "إرسال رسائل إشعار سطح المكتب",
     "toolSendNotificationName": "إرسال إشعار",
+    "toolSessionContinueDesc": "استئناف محادثة متوقفة فقط بعد طلب صريح من المستخدم",
     "toolSessionStatusDesc": "الاستعلام عن وكيل الجلسة ونموذجها وعدد رسائلها وطوابعها الزمنية",
     "toolSessionStatusName": "حالة الجلسة",
     "toolSessionToNoteDesc": "تقطير المحادثة إلى ملاحظة منظّمة.",
     "toolSessionToNoteName": "الجلسة إلى ملاحظة",
     "toolSessionsHistoryDesc": "تصفّح سجل رسائل جلسة ما بشكل مُرقَّم",
     "toolSessionsHistoryName": "سجل الجلسة",
+    "toolSessionsCreateDesc": "إنشاء جلسة دردشة عادية جديدة، مع إمكانية ربطها بمشروع وتشغيل الوكيل برسالة أو مرفق أولي",
     "toolSessionsListDesc": "عرض الجلسات الأخرى (العنوان، الوكيل، النموذج، عدد الرسائل)",
     "toolSessionsListName": "قائمة الجلسات",
     "toolSessionsSearchDesc": "البحث في رسائل الدردشة المحفوظة وإرجاع نوافذ السياق المطابقة",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "إرسال إلى جلسة",
     "toolSubagentDesc": "تفويض المهام إلى sub-Agent للتنفيذ",
     "toolSubagentName": "Sub-Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "إنشاء مهمة قابلة للتتبع للجلسة الحالية",
     "toolTaskCreateName": "إنشاء مهمة",
     "toolTaskListDesc": "عرض جميع المهام في الجلسة الحالية",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "محدّث",
     "weatherWind": "الرياح",
     "webFetch": "جلب الويب",
+    "webFetchMaxTokensCap": "الحد الأقصى لميزانية الرموز",
+    "webFetchMaxTokensCapDesc": "الحد الصارم لقيمة max_tokens في استدعاء الأداة",
+    "webFetchMaxConcurrentPerHost": "الطلبات المتزامنة لكل مضيف",
+    "webFetchMinHostDelay": "الحد الأدنى للتأخير لكل مضيف (مللي ثانية)",
+    "webFetchSectionRendering": "العرض الديناميكي",
+    "webFetchRenderMode": "وضع العرض الافتراضي",
+    "webFetchRenderNever": "أبدًا (جلب مباشر فقط)",
+    "webFetchRenderAuto": "تلقائي (عند الحاجة)",
+    "webFetchRenderAlways": "دائمًا",
+    "webFetchRenderModeDesc": "يستخدم متصفحًا جديدًا ومعزولًا من دون ملفات تعريف الارتباط أو حالة الحساب",
+    "webFetchRenderTimeout": "مهلة العرض (بالثواني)",
+    "webFetchCacheEntries": "لقطات ذاكرة التخزين المؤقت",
     "webFetchCacheTtl": "TTL التخزين المؤقت (دقائق)",
     "webFetchCacheTtlDesc": "كم من الوقت لتخزين الصفحات المجلوبة. اضبط على 0 لتعطيل التخزين المؤقت.",
     "webFetchDesc": "تكوين كيفية استخراج أداة web_fetch للمحتوى من URLs، بما في ذلك التخزين المؤقت والأمان وحدود المحتوى.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "نقطة النهاية مفقودة",
     "memoryExternalProviderBlockPolicyUnsupported": "السياسة غير مدعومة",
     "memoryExternalProviderBlockAdapterUnavailable": "المحول غير متوفر",
+    "memoryExternalProviderBlockCompatibilityUnverified": "Compatibility unverified",
+    "memoryExternalProviderBlockCompatibilityBlocked": "Unsafe provider version",
     "memoryExternalProviderBlockLastError": "الخطأ الأخير",
     "memoryExternalProviderErrors": {
       "load": "فشل تحميل موفري الذاكرة الخارجية",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "فشل تحميل اتصال موفر الذاكرة الخارجية",
       "saveCredentials": "فشل حفظ اتصال موفر الذاكرة الخارجية",
       "clearCredentials": "فشل في مسح اتصال موفر الذاكرة الخارجية",
+      "testConnection": "Failed to test external memory provider connection",
       "copyPreflightDiagnostics": "فشل في نسخ الاختبار المبدئي لموفر الذاكرة الخارجية",
       "copySyncDiagnostics": "فشل نسخ تقرير مزامنة موفر الذاكرة الخارجية",
       "detail": "التفاصيل: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "يتم تخزين بيانات الاعتماد بشكل منفصل مع أذونات الملفات المقيدة.",
     "memoryExternalProviderConnectionSaved": "تم حفظ الاتصال",
     "memoryExternalProviderConnectionCleared": "تم مسح الاتصال",
+    "memoryExternalProviderConnectionTest": "Test connection",
+    "memoryExternalProviderCompatibilityPassed": "Connection and compatibility check passed",
+    "memoryExternalProviderCompatibilityUnverified": "Connection reached, but the provider version could not be verified",
+    "memoryExternalProviderCompatibilityBlocked": "Provider version is below the safe minimum",
+    "memoryExternalProviderCompatibilitySummary": "Status: {{status}} · detected {{detected}} · minimum {{minimum}}",
     "memoryExternalProviderEndpoint": "نقطة النهاية",
     "memoryExternalProviderEndpointKeep": "مخزنة: {{origin}} · اتركها فارغة للاحتفاظ بها",
     "memoryExternalProviderSubjectId": "معرف النطاق البعيد",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "المدة الافتراضية",
       "durationOption": "{{seconds}} ثانية"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "حذف ذاكرة"
     },
+    "fork": {
+      "description": "المتابعة في جلسة جديدة"
+    },
     "handover": {
       "description": "تحويل الجلسة إلى محادثة IM"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "بدء دردشة جديدة"
+    },
+    "side": {
+      "description": "بدء محادثة جانبية دون مقاطعة المحادثة الرئيسية"
     },
     "noResults": "لا توجد أوامر مطابقة",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "متوقف مؤقتًا",
     "progress": "التقدم",
     "resume": "استئناف",
+    "resumeFeedback": {
+      "counts": "تم استئناف {{resumed}} · فشل {{failed}}",
+      "noOpDescription": "أكمل جميع أعضاء الفريق بالفعل؛ لم تبدأ أي محاولة جديدة.",
+      "noOpTitle": "لا حاجة إلى الاستئناف",
+      "partialTitle": "تم استئناف الفريق جزئيًا",
+      "refusedTitle": "رُفض استئناف الفريق",
+      "resumedTitle": "تم استئناف الفريق",
+      "resuming": "جارٍ الاستئناف…"
+    },
     "review": "مراجعة",
     "reviewer": "المراجِع",
     "send": "إرسال",
@@ -9282,6 +9572,7 @@
       "timed_out": "انتهت المهلة — تم تطبيق القيم الافتراضية"
     },
     "ask_user_question": "اسأل المستخدم",
+    "audio_generate": "إنشاء صوت",
     "browser": "المتصفح",
     "canvas": "اللوحة",
     "delete_memory": "حذف ذاكرة",
@@ -9313,13 +9604,16 @@
     "process": "إدارة العمليات",
     "rawCall": "عرض الاستدعاء الخام",
     "read": "قراءة الملف",
+    "read_context_resource": "قراءة مورد السياق",
     "recall_memory": "استدعاء ذاكرة",
     "restore_settings_backup": "استعادة نسخة الإعدادات",
     "save_memory": "حفظ ذاكرة",
     "send_attachment": "إرسال مرفق",
     "send_notification": "إرسال إشعار",
+    "session_continue": "متابعة الجلسة",
     "session_status": "حالة الجلسة",
     "sessions_history": "سجل الجلسات",
+    "sessions_create": "إنشاء جلسة",
     "sessions_list": "قائمة الجلسات",
     "sessions_send": "إرسال إلى الجلسة",
     "skill": "تحميل مهارة",
@@ -9329,6 +9623,8 @@
     "task_list": "قائمة المهام",
     "task_update": "تحديث المهمة",
     "team": "فريق الوكلاء",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "البحث عن الأدوات",
     "update_core_memory": "تحديث الذاكرة الأساسية",
     "update_memory": "تحديث ذاكرة",
@@ -9589,6 +9885,9 @@
     "openPanel": "فتح مساحة العمل",
     "resizePanel": "تغيير حجم لوحة مساحة العمل",
     "sourceFromSearch": "بحث",
+    "sourceFetchDirect": "جلب",
+    "sourceFetchRendered": "عرض",
+    "sourceFetchCache": "ذاكرة مؤقتة",
     "sourceFromUser": "المستخدم",
     "sourceFromAttachment": "مرفق",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "يحمي",
     "defaultName": "مخرج"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "المهام الخلفية",
     "openPanel": "المهام الخلفية",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "إصلاح بالذكاء الاصطناعي",
       "fixStarted": "بدأ الذكاء الاصطناعي بالإصلاح",
       "fixBusy": "هناك محادثة قيد التنفيذ، يرجى المحاولة مرة أخرى بعد قليل",
-      "fixPrompt": "يرجى إصلاح المشكلة التي اكتشفها الفحص الذاتي للتصميم: {{detail}}. استخدم رموز نظام التصميم (var(--ds-*)) لتوحيد الألوان واستبدال الأنماط المضمّنة. أجرِ الحد الأدنى الضروري من التغييرات فقط وحافظ على بقية التصميم كما هي."
+      "fixPrompt": "يرجى إصلاح المشكلة التي اكتشفها الفحص الذاتي للتصميم: {{detail}}. استخدم رموز نظام التصميم (var(--ds-*)) لتوحيد الألوان واستبدال الأنماط المضمّنة. أجرِ الحد الأدنى الضروري من التغييرات فقط وحافظ على بقية التصميم كما هي.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "مجموعة نظام التصميم",
@@ -12533,7 +12836,15 @@
       "copyLink": "نسخ الرابط",
       "copied2": "تم النسخ",
       "loadErr": "فشل تحميل حالة المشاركة",
-      "shareTo": "مشاركة إلى"
+      "shareTo": "مشاركة إلى",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "النشر على Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "جميع المخرجات تطابق كودها",
       "checkStale": "{{n}} من المخرجات لديها تحديثات في الكود",
       "chatPrompt": "لقد تباعد الكود المنفَّذ عن هذا التصميم. حدِّث التصميم الحالي ليعكس تغييرات الكود المشار إليها، مع الحفاظ على مقصد التصميم وكل شيء آخر دون تغيير."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "الاسم",
       "shortDescription": "وصف قصير (اختياري)",
       "prompt": "كيف تريد أن يبدو حيوانك الأليف؟",
+      "version": "إصدار لوحة الصور",
+      "versionV2": "v2 · موصى به",
+      "versionV1": "v1 · قديم",
+      "versionV2Description": "يتضمن اتجاهات النظر الـ16 مع عقارب الساعة المستخدمة في Codex v2.",
+      "versionV1Description": "ينشئ اللوحة الأصلية ذات الصفوف التسعة للعملاء الأقدم.",
       "generate": "إنشاء معاينة",
       "generating": "جارٍ إنشاء المعاينة…",
       "failed": "تعذر إنشاء هذا الحيوان"
+    },
+    "upgrade": {
+      "action": "الترقية إلى v2",
+      "upgraded": "تم إنشاء نسخة v2 مع الاحتفاظ بالحيوان الأصلي v1.",
+      "alreadyExists": "هذه الترقية إلى v2 موجودة بالفعل في مكتبتك.",
+      "failed": "تعذرت ترقية هذا الحيوان إلى v2"
     },
     "export": {
       "action": "تصدير إلى Codex",
@@ -12848,7 +13218,7 @@
       "failed": "تعذر تصدير هذا الحيوان"
     },
     "window": {
-      "interact": "تفاعل مع حيوان Hope الأليف",
+      "interact": "تفاعل مع {{name}}",
       "tuckAway": "إخفاء الحيوان"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "الإعدادات",
       "user": "إعدادات المستخدم"
     }
+  },
+  "toolchainDoctor": {
+    "title": "تشخيص سلسلة الأدوات",
+    "description": "فحوصات للقراءة فقط لبيئات النظام وأدوات التطوير الاختيارية. لن يقوم Hope Agent بالتثبيت أو الترقية أو التشغيل أو إعادة الإعداد.",
+    "refresh": "إعادة الفحص",
+    "loading": "جارٍ فحص سلسلة الأدوات المحلية…",
+    "loadFailed": "فشلت فحوصات سلسلة الأدوات",
+    "readOnlyNotice": "يتم عرض الإصدارات والتوفر وإمكانية الوصول إلى Docker وفئة السياق وفئة مالك المقبس والأغلفة المؤقتة من دون كشف المسارات أو بيانات الاعتماد.",
+    "detectedVersion": "تم اكتشاف {{version}}",
+    "notDetected": "غير مكتشف",
+    "minimumVersion": "الحد الأدنى {{version}}",
+    "diagnosticFacts": "رموز التشخيص",
+    "status": {
+      "detected": "مكتشف",
+      "supported": "مدعوم",
+      "degraded": "محدود",
+      "blocked": "محظور"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "مطلوب إجابة",
+      "detail": "{{count}} أسئلة تنتظر في المحادثة",
+      "detail_one": "سؤال واحد ينتظر في المحادثة",
+      "openAction": "أجب الآن"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

@@ -7,6 +7,7 @@
 //! - `hope-agent server start [--bind ADDR] [--api-key-file PATH]` — same flags
 //!   as the desktop binary; runs the HTTP/WS server and blocks until exit.
 //! - `hope-agent knowledge-mcp` — stdio MCP wrapper for Knowledge Space.
+//! - `hope-agent pet` — local pet package listing, two-stage import, and desktop activation.
 //! - `--version` / `--help`.
 //! - `hope-agent server {install,uninstall,status,stop,setup}` — print a
 //!   pointer at the orchestrator (compose / k8s / browser onboarding) and
@@ -29,6 +30,11 @@ struct ServerArgs {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    // 特征 crate 装配：必须先于任何 `init_runtime` 路径（server / acp / mcp
+    // 各分支）——init 尾部冻结工具注册表，之后再挂 `app_update` 会 panic。
+    // 序列本体在 `ha_server::wire_features()`，与 `server_smoke` 共用一份。
+    ha_server::wire_features();
+
     if matches!(
         args.get(1).map(String::as_str),
         Some("--version") | Some("-V")
@@ -43,6 +49,10 @@ fn main() {
 
     if args.len() >= 2 && args[1] == "mcp" {
         return run_mcp(&args[2..]);
+    }
+
+    if args.len() >= 2 && args[1] == "pet" {
+        return run_pet_cli(&args[2..]);
     }
 
     // `hope-agent server [sub] [opts...]`
@@ -134,7 +144,7 @@ fn print_top_help() {
     println!("Hope Agent — headless HTTP/WebSocket server");
     println!();
     println!("This binary ships in the official Docker image. Only the headless");
-    println!("`server`, `knowledge-mcp` and `mcp` subcommands are wired up; the");
+    println!("`server`, `knowledge-mcp`, `mcp`, and `pet` subcommands are wired up; the");
     println!("desktop GUI, ACP stdio, and `auth` flows live in the Tauri-built binary.");
     println!();
     println!("Usage:");
@@ -142,6 +152,7 @@ fn print_top_help() {
     println!("  hope-agent server token <show|rotate>");
     println!("  hope-agent knowledge-mcp [OPTIONS]");
     println!("  hope-agent mcp [OPTIONS]");
+    println!("  hope-agent pet <capabilities|activate|list|preview|import> [OPTIONS]");
     println!();
     println!("Server options:");
     println!("  --bind, -b ADDR                   Bind address (default: 127.0.0.1:8420)");
@@ -239,7 +250,7 @@ fn run_knowledge_mcp(args: &[String]) {
     ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
     ha_core::init_runtime("knowledge-mcp");
 
-    if let Err(e) = ha_core::knowledge::agent_mcp::run_stdio(options) {
+    if let Err(e) = ha_knowledge::knowledge::agent_mcp::run_stdio(options) {
         eprintln!("[knowledge-mcp] Server error: {e}");
         std::process::exit(1);
     }
@@ -275,18 +286,38 @@ fn run_mcp(args: &[String]) {
     ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
     ha_core::init_runtime("mcp");
 
-    let providers: Vec<Box<dyn ha_core::mcp_server::ToolProvider>> =
-        vec![Box::new(ha_core::design::mcp_provider::DesignToolProvider)];
+    let providers: Vec<Box<dyn ha_core::mcp_server::ToolProvider>> = vec![Box::new(
+        ha_design::design::mcp_provider::DesignToolProvider,
+    )];
     if let Err(e) = ha_core::mcp_server::run_stdio(options, providers) {
         eprintln!("[mcp] Server error: {e}");
         std::process::exit(1);
     }
 }
 
+fn run_pet_cli(args: &[String]) {
+    if let Err(error) = ha_core::paths::ensure_dirs() {
+        eprintln!("[pet] Failed to initialize data directories: {error}");
+        std::process::exit(1);
+    }
+    ha_core::set_app_version(env!("CARGO_PKG_VERSION"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|error| {
+            eprintln!("[pet] Failed to initialize async runtime: {error}");
+            std::process::exit(1);
+        });
+    if let Err(error) = runtime.block_on(ha_pet::cli::run(args)) {
+        eprintln!("[pet] {error:#}");
+        std::process::exit(1);
+    }
+}
+
 fn parse_knowledge_mcp_args(
     args: &[String],
-) -> Option<ha_core::knowledge::agent_mcp::KnowledgeMcpOptions> {
-    let mut options = ha_core::knowledge::agent_mcp::KnowledgeMcpOptions::default();
+) -> Option<ha_knowledge::knowledge::agent_mcp::KnowledgeMcpOptions> {
+    let mut options = ha_knowledge::knowledge::agent_mcp::KnowledgeMcpOptions::default();
     for arg in args {
         match arg.as_str() {
             "--allow-proposals" => options.allow_proposals = true,
@@ -524,6 +555,7 @@ fn run_server(args: &[String]) {
             .expect("init_runtime contract")
             .clone(),
         chat_cancels: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        pet_activate: None,
     });
     let config = ha_server::ServerConfig {
         bind_addr,

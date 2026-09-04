@@ -1,74 +1,8 @@
 // ── Types ──
 
 use serde::Serialize;
-use std::collections::HashMap;
 
 use super::manifest::CompactionManifest;
-
-// ── Token Estimate Calibrator ──
-
-/// Calibrates token estimates using actual API usage feedback.
-/// Uses exponential moving average (EMA) for smooth adaptation.
-#[derive(Debug, Clone)]
-pub struct TokenEstimateCalibrator {
-    calibration_factor: f64,
-    sample_count: u32,
-}
-
-impl TokenEstimateCalibrator {
-    pub fn new() -> Self {
-        Self {
-            calibration_factor: 1.0,
-            sample_count: 0,
-        }
-    }
-
-    /// Update calibration factor with actual token count from API response.
-    pub fn update(&mut self, estimated: u32, actual: u32) {
-        if estimated == 0 || actual == 0 {
-            return;
-        }
-        let ratio = actual as f64 / estimated as f64;
-        // EMA with α=0.3 (recent values weighted more)
-        self.calibration_factor = self.calibration_factor * 0.7 + ratio * 0.3;
-        self.sample_count += 1;
-    }
-
-    /// Apply calibration to a raw estimate.
-    pub fn calibrated_estimate(&self, raw_estimate: u32) -> u32 {
-        (raw_estimate as f64 * self.calibration_factor) as u32
-    }
-}
-
-impl Default for TokenEstimateCalibrator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Provider/model-scoped calibrators. Anthropic's disjoint cache counters and
-/// OpenAI's inclusive input counter can produce materially different ratios;
-/// sharing one EMA across request shapes makes compaction oscillate after a
-/// failover or model switch.
-#[derive(Debug, Clone, Default)]
-pub struct TokenEstimateCalibrators {
-    by_key: HashMap<String, TokenEstimateCalibrator>,
-}
-
-impl TokenEstimateCalibrators {
-    pub fn update(&mut self, key: &str, estimated: u32, actual: u32) {
-        self.by_key
-            .entry(key.to_string())
-            .or_default()
-            .update(estimated, actual);
-    }
-
-    pub fn calibrated_estimate(&self, key: &str, raw_estimate: u32) -> u32 {
-        self.by_key.get(key).map_or(raw_estimate, |calibrator| {
-            calibrator.calibrated_estimate(raw_estimate)
-        })
-    }
-}
 
 // ── Compact Result ──
 
@@ -118,29 +52,38 @@ pub struct SummarizationSplit {
     pub boundary_warnings: Vec<String>,
 }
 
-/// Information about a tool result found in a message.
+/// Stable location of one provider-level tool result inside a message.
+///
+/// Anthropic can put several `tool_result` blocks in the same user message, so
+/// a message index alone is not enough to identify the result that a compaction
+/// policy inspected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum ToolResultLocator {
+    OpenAiChatContent,
+    OpenAiResponsesOutput,
+    AnthropicBlock(usize),
+}
+
+/// Read-only snapshot of one provider-level tool result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct ToolResultUnit {
+    pub locator: ToolResultLocator,
+    pub call_id: Option<String>,
+    pub direct_tool_name: Option<String>,
+    pub text: Option<String>,
+}
+
+/// Information about a tool result unit found in a message.
 pub(super) struct ToolResultInfo {
     /// Index in the messages array
     pub(super) msg_index: usize,
+    /// Provider-specific result location within the message.
+    pub(super) locator: ToolResultLocator,
     /// Tool name (if extractable)
     #[allow(dead_code)]
     pub(super) tool_name: Option<String>,
     /// Content text length
     pub(super) content_chars: usize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::TokenEstimateCalibrators;
-
-    #[test]
-    fn calibration_isolated_by_provider_model_shape_key() {
-        let mut calibrators = TokenEstimateCalibrators::default();
-        calibrators.update("anthropic:claude", 100, 200);
-        assert!(calibrators.calibrated_estimate("anthropic:claude", 100) > 100);
-        assert_eq!(
-            calibrators.calibrated_estimate("openai_responses:gpt-5", 100),
-            100
-        );
-    }
 }

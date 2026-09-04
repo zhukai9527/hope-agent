@@ -179,7 +179,7 @@ pub fn get_external_memory_provider_preflight() -> ExternalMemoryProviderPreflig
         crate::config::cached_config().memory_providers.clone(),
     );
     let (stats, stats_error) = external_memory_provider_stats_for_planning();
-    cfg.sync_preflight_with_stats_status(&stats, stats_error)
+    super::types::external_memory_sync_preflight_with_stats_status(&cfg, &stats, stats_error)
 }
 
 pub async fn run_external_memory_provider_sync() -> ExternalMemoryProviderSyncReport {
@@ -189,7 +189,9 @@ pub async fn run_external_memory_provider_sync() -> ExternalMemoryProviderSyncRe
     crate::memory::execute_external_memory_provider_sync(cfg, stats, stats_error).await
 }
 
-pub(crate) fn external_memory_provider_stats_for_planning() -> (MemoryStats, Option<String>) {
+/// Typed read aggregation consumed by the feature-owned external provider
+/// runtime. It exposes statistics only, never a SessionDB connection.
+pub fn external_memory_provider_stats_for_planning() -> (MemoryStats, Option<String>) {
     let stats_result = match crate::get_memory_backend() {
         Some(backend) => backend.stats(None).map_err(|err| err.to_string()),
         None => Err("memory backend unavailable".to_string()),
@@ -292,7 +294,7 @@ pub fn save_embedding_model_config(
         );
     }
     if reload_knowledge {
-        crate::knowledge::apply_knowledge_embedding_from_config(source);
+        crate::knowledge_hooks::apply_embedding_from_config(source);
         app_info!(
             "knowledge",
             "embedding_models",

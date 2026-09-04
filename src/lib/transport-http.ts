@@ -93,6 +93,7 @@ function generateHttpChatRequestId(): string {
  * gains more routes.
  */
 const COMMAND_MAP: Record<string, EndpointDef> = {
+  list_capability_mentions: { method: "GET", path: "/api/chat/capability-mentions" },
   // -- Projects --
   list_projects_cmd: { method: "GET", path: "/api/projects" },
   get_project_overview_cmd: { method: "GET", path: "/api/projects/{id}/overview" },
@@ -350,6 +351,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   get_pet_config_cmd: { method: "GET", path: "/api/pets/config" },
   save_pet_config_cmd: { method: "PUT", path: "/api/pets/config" },
   pet_set_enabled_cmd: { method: "POST", path: "/api/pets/enabled" },
+  pet_activate_cmd: { method: "POST", path: "/api/pets/activate" },
   pet_list_cmd: { method: "GET", path: "/api/pets" },
   pet_asset_path_cmd: { method: "GET", path: "/api/pets/asset" },
   pet_codex_candidates_cmd: { method: "GET", path: "/api/pets/codex-candidates" },
@@ -362,6 +364,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
     path: "/api/pets/import/previews/{previewToken}/thumbnail",
   },
   pet_create_preview_cmd: { method: "POST", path: "/api/pets/create/preview" },
+  pet_upgrade_v2_cmd: { method: "POST", path: "/api/pets/upgrade-v2" },
   pet_import_preview_cmd: { method: "POST", path: "/api/pets/import/preview" },
   pet_import_preview_cancel_cmd: {
     method: "POST",
@@ -390,6 +393,8 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   list_archived_sessions_cmd: { method: "GET", path: "/api/sessions/archived" },
   create_session_cmd: { method: "POST", path: "/api/sessions" },
   fork_session_cmd: { method: "POST", path: "/api/sessions/{sessionId}/fork" },
+  create_side_chat_cmd: { method: "POST", path: "/api/sessions/{sessionId}/side-chats" },
+  list_side_chats_cmd: { method: "GET", path: "/api/sessions/{sessionId}/side-chats" },
   get_session_cmd: { method: "GET", path: "/api/sessions/{sessionId}" },
   set_session_pinned_cmd: { method: "PATCH", path: "/api/sessions/{sessionId}/pinned" },
   set_session_incognito: { method: "PATCH", path: "/api/sessions/{sessionId}/incognito" },
@@ -474,6 +479,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   cancel_queued_turn_user_message: { method: "POST", path: "/api/chat/turn-message/cancel" },
   control_model_recovery: { method: "POST", path: "/api/chat/recovery/control" },
   stop_chat: { method: "POST", path: "/api/chat/stop" },
+  continue_chat: { method: "POST", path: "/api/chat/continue" },
   cancel_runtime_task: { method: "POST", path: "/api/runtime-tasks/cancel" },
 
   // -- Session-scoped tasks (TaskProgressPanel user controls) --
@@ -499,6 +505,7 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   test_proxy: { method: "POST", path: "/api/config/proxy/test" },
   has_providers: { method: "GET", path: "/api/providers/has-any" },
   get_system_timezone: { method: "GET", path: "/api/system/timezone" },
+  get_toolchain_doctor_report: { method: "GET", path: "/api/system/toolchain-doctor" },
   check_auth_status: { method: "GET", path: "/api/auth/codex/status" },
   logout_codex: { method: "POST", path: "/api/auth/codex/logout" },
   try_restore_session: { method: "POST", path: "/api/auth/session/restore" },
@@ -576,6 +583,55 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   create_design_share_cmd: { method: "POST", path: "/api/design/artifacts/{artifactId}/share" },
   get_design_share_cmd: { method: "GET", path: "/api/design/artifacts/{artifactId}/share" },
   revoke_design_share_cmd: { method: "DELETE", path: "/api/design/artifacts/{artifactId}/share" },
+  run_design_visual_regression_cmd: {
+    method: "POST",
+    path: "/api/design/artifacts/{artifactId}/visual-regression",
+  },
+  accept_design_visual_baseline_cmd: { method: "POST", path: "/api/design/visual-baseline" },
+  get_design_scenarios_cmd: { method: "GET", path: "/api/design/artifacts/{artifactId}/scenarios" },
+  save_design_scenarios_cmd: {
+    method: "PUT",
+    path: "/api/design/artifacts/{artifactId}/scenarios",
+  },
+  get_design_components_manifest_cmd: {
+    method: "GET",
+    path: "/api/design/projects/{projectId}/components",
+  },
+  save_design_components_draft_cmd: {
+    method: "PUT",
+    path: "/api/design/projects/{projectId}/components/draft",
+  },
+  publish_design_components_manifest_cmd: {
+    method: "POST",
+    path: "/api/design/components/publish",
+  },
+  scan_design_components_cmd: {
+    method: "POST",
+    path: "/api/design/projects/{projectId}/components/scan",
+  },
+  preview_figma_roundtrip_cmd: { method: "POST", path: "/api/design/figma-roundtrip/preview" },
+  commit_figma_roundtrip_cmd: { method: "POST", path: "/api/design/figma-roundtrip/commit" },
+  list_figma_roundtrip_reconciliations_cmd: {
+    method: "GET",
+    path: "/api/design/artifacts/{artifactId}/figma-roundtrip/reconciliations",
+  },
+  resolve_figma_roundtrip_reconciliation_cmd: {
+    method: "POST",
+    path: "/api/design/figma-roundtrip/reconcile",
+  },
+  list_figma_roundtrip_links_cmd: {
+    method: "GET",
+    path: "/api/design/artifacts/{artifactId}/figma-roundtrip",
+  },
+  create_design_review_space_cmd: { method: "POST", path: "/api/design/review-spaces" },
+  list_design_review_spaces_cmd: {
+    method: "GET",
+    path: "/api/design/artifacts/{artifactId}/review-spaces",
+  },
+  revoke_design_review_space_cmd: {
+    method: "DELETE",
+    path: "/api/design/artifacts/{artifactId}/review-spaces/{grantId}",
+  },
   save_cf_deploy_config_cmd: { method: "PUT", path: "/api/design/deploy/config" },
   get_cf_deploy_config_cmd: { method: "GET", path: "/api/design/deploy/config" },
   deploy_design_artifact_cmd: { method: "POST", path: "/api/design/artifacts/{artifactId}/deploy" },
@@ -1251,11 +1307,14 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   // -- Cron --
   cron_list_jobs: { method: "GET", path: "/api/cron/jobs" },
   cron_get_job: { method: "GET", path: "/api/cron/jobs/{id}" },
+  cron_get_job_snapshot: { method: "GET", path: "/api/cron/jobs/{id}/snapshot" },
+  cron_preflight: { method: "POST", path: "/api/cron/preflight" },
   cron_create_job: { method: "POST", path: "/api/cron/jobs" },
   cron_update_job: { method: "PUT", path: "/api/cron/jobs/{id}" },
   cron_toggle_job: { method: "POST", path: "/api/cron/jobs/{id}/toggle" },
   cron_delete_job: { method: "DELETE", path: "/api/cron/jobs/{id}" },
   cron_run_now: { method: "POST", path: "/api/cron/jobs/{id}/run" },
+  cron_cancel_run: { method: "POST", path: "/api/cron/runs/{runLogId}/cancel" },
   cron_jobs_referencing_account: {
     method: "GET",
     path: "/api/cron/jobs-referencing-account/{accountId}",
@@ -1265,6 +1324,27 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   cron_run_timeline: { method: "GET", path: "/api/cron/timeline" },
   cron_unread_total: { method: "GET", path: "/api/cron/unread" },
   cron_mark_all_read: { method: "POST", path: "/api/cron/read-all" },
+  cron_workspace_resources: { method: "GET", path: "/api/cron/workspaces" },
+  cron_workspace_resource_for_run: {
+    method: "GET",
+    path: "/api/cron/runs/{runLogId}/workspace",
+  },
+  cron_workspace_takeover: {
+    method: "POST",
+    path: "/api/cron/jobs/{jobId}/workspace/takeover",
+  },
+  cron_workspace_return: {
+    method: "POST",
+    path: "/api/cron/jobs/{jobId}/workspace/return",
+  },
+  cron_workspace_discard_run: {
+    method: "POST",
+    path: "/api/cron/runs/{runLogId}/workspace/discard",
+  },
+  cron_workspace_discard_task: {
+    method: "POST",
+    path: "/api/cron/jobs/{jobId}/workspace/discard",
+  },
 
   // -- Dashboard --
   dashboard_overview: { method: "POST", path: "/api/dashboard/overview" },
@@ -1311,6 +1391,10 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   run_external_memory_provider_sync: {
     method: "POST",
     path: "/api/config/external-memory-providers/sync",
+  },
+  test_external_memory_provider_connection: {
+    method: "POST",
+    path: "/api/config/external-memory-providers/{providerId}/test",
   },
   get_external_memory_provider_credential_status: {
     method: "GET",
@@ -1993,6 +2077,12 @@ function normalizeHttpCommandArgs(
   command: string,
   args: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
+  if (command === "cron_update_job") {
+    const job = args?.job
+    if (job && typeof job === "object" && !Array.isArray(job)) {
+      return { ...args, id: (job as Record<string, unknown>).id }
+    }
+  }
   if (command === "import_artifact") {
     const request = args?.request
     return request && typeof request === "object" && !Array.isArray(request)
@@ -2114,6 +2204,61 @@ export class HttpTransport implements Transport {
   /** Whether this client targets the same normalized HTTP origin/path. */
   matchesBaseUrl(candidate: string): boolean {
     return this.baseUrl === normalizeHttpBaseUrl(candidate)
+  }
+
+  /** Stable target used by the remote-service updater and its reconnect UI. */
+  getBaseUrl(): string {
+    return this.baseUrl
+  }
+
+  /**
+   * Owner-plane request for the server process updater. This deliberately
+   * accepts only the fixed app-update API family: callers cannot turn it into
+   * an arbitrary authenticated fetch primitive.
+   */
+  async requestAppUpdate<T>(
+    path: string,
+    init: { method?: "GET" | "POST"; body?: unknown; signal?: AbortSignal } = {},
+  ): Promise<T> {
+    if (!/^\/api\/app-update(?:\/|$)/.test(path)) {
+      throw new Error("Only /api/app-update requests are allowed")
+    }
+    const auth = this.authSnapshot()
+    const headers: Record<string, string> = {}
+    if (auth.apiKey) headers.Authorization = `Bearer ${auth.apiKey}`
+    let body: string | undefined
+    if (init.body !== undefined) {
+      headers["Content-Type"] = "application/json"
+      body = JSON.stringify(init.body)
+    }
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      method: init.method ?? "GET",
+      headers,
+      body,
+      signal: init.signal,
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "")
+      this.handleAuthFailure(response.status, auth.revision)
+      throw new HttpTransportResponseError(
+        response.status,
+        `[HttpTransport] ${init.method ?? "GET"} ${path} returned ${response.status}: ${detail}`,
+      )
+    }
+    return (await response.json()) as T
+  }
+
+  /** Public health probe used to verify the target version after restart. */
+  async probeHealth(signal?: AbortSignal): Promise<{ status: string; version: string }> {
+    const response = await fetch(`${this.baseUrl}/api/health`, {
+      signal,
+      credentials: "same-origin",
+      cache: "no-store",
+    })
+    if (!response.ok) throw new Error(`Health probe failed (${response.status})`)
+    return (await response.json()) as { status: string; version: string }
   }
 
   /** Update the API key at runtime. */
@@ -2510,6 +2655,21 @@ export class HttpTransport implements Transport {
     })
 
     if (!response.ok) {
+      // Preserve the transport-neutral CAS result so the form can keep its
+      // draft and offer reload/retry. External HTTP callers still receive 409.
+      if (command === "cron_update_job" && response.status === 409) {
+        const conflict = await response
+          .clone()
+          .json()
+          .catch(() => null)
+        if (
+          conflict &&
+          typeof conflict === "object" &&
+          (conflict as { code?: unknown }).code === "cron_revision_conflict"
+        ) {
+          return conflict as T
+        }
+      }
       const text = await response.text().catch(() => "")
       this.handleAuthFailure(response.status, auth.revision)
       throw new HttpTransportResponseError(
@@ -2594,6 +2754,7 @@ export class HttpTransport implements Transport {
       blockedReason?: string
       sessionDeleted?: boolean
       accepted?: boolean
+      queuedRequestId?: string
     }>("chat", requestArgs)
     // `sessionDeleted` is set when a blocked first message on a design/knowledge
     // lazy-created session dropped that session before returning. Suppress the
@@ -2618,6 +2779,17 @@ export class HttpTransport implements Transport {
         JSON.stringify({
           type: "text",
           text: resp.blockedReason,
+        }),
+      )
+    }
+    // `accepted=false` is omitted by the Rust serializer; the durable queue id
+    // is the positive wire signal for this accepted-as-pending outcome.
+    if (resp.queuedRequestId) {
+      onEvent(
+        JSON.stringify({
+          type: "turn_queued",
+          session_id: resp.sessionId,
+          request_id: resp.queuedRequestId,
         }),
       )
     }

@@ -1,7 +1,7 @@
 /**
  * 设计空间（Design Space）前端类型。
  *
- * 与 `crates/ha-core/src/design/` 的 serde camelCase 输出对齐。
+ * 与 `crates/ha-design/src/design/` 的 serde camelCase 输出对齐。
  */
 
 import type { ActiveModel, FileChangeMetadata } from "./chat"
@@ -241,6 +241,31 @@ export interface CritiqueResult {
   overall: number
   summary: string
   fixes: string[]
+}
+
+export interface DesignQualityRun {
+  artifactId: string
+  artifactHash: string
+  deterministicPassed: boolean
+  diffs: {
+    viewport: { width: number; height: number }
+    currentHash: string
+    baselineHash?: string
+    changedRatio?: number
+    meanDelta?: number
+    passed: boolean
+  }[]
+  findings: { code: string; severity: string; message: string }[]
+}
+
+export interface DesignReviewGrant {
+  id: string
+  artifactId: string
+  versionNumber: number
+  role: "viewer" | "commenter"
+  expiresAt: string
+  createdAt: string
+  revokedAt?: string
 }
 
 /** 可视化微调回写入参（`patch_design_element_cmd`）。 */

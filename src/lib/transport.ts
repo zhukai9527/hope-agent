@@ -38,6 +38,15 @@ export interface ChatAttachment {
   upload_id?: string;
   /** For `source: "quote"`: 1-based line range of the quoted snippet ("12-20"). */
   quote_lines?: string;
+  /** For `source: "quote"`: whether the persisted reference can be reopened
+   * in the file browser. False for visual or synthetic sources. */
+  quote_revealable?: boolean;
+  /** For `source: "quote"`: exact linked-project root identity used to
+   * restore the same browser scope after edit/fork/resend. */
+  quote_project_root?: { index: number; path: string };
+  /** For `source: "quote"`: absolute Git worktree root selected beneath the
+   * primary or linked repository. */
+  quote_worktree_root?: string;
   /** For `source: "message_quote"`: role of the selected conversation message. */
   quote_role?: "user" | "assistant";
 }
@@ -80,6 +89,7 @@ export interface PetAssetLease {
  */
 export interface ChatStartArgs {
   message: string;
+  incomingTurn?: import("@/components/chat/mentions/typedMentions").IncomingTurnWire;
   attachments: ReadonlyArray<ChatAttachment>;
   sessionId: string | null;
   /** Opaque UI request identity used to stop a first turn before its lazy
@@ -118,7 +128,7 @@ export interface ChatStartArgs {
   /** First-turn Goal creation payload. Only honored when the chat request
    *  auto-creates a new session; the backend creates the durable Goal before
    *  the model turn starts so the first response can immediately use the
-   *  Active Goal system section. */
+   *  Active Goal run instruction + data context. */
   initialGoal?: {
     objective: string;
     completionCriteria?: string;
@@ -152,7 +162,13 @@ export interface ChatStartArgs {
   designProjectId?: string | null;
   /** First-party message-list + composer surface. Product routing metadata;
    * never included in model messages. Internal/side-query callers omit it. */
-  uiSurface?: "main_chat" | "quick_chat" | "knowledge_chat" | "design_chat" | "pet_chat";
+  uiSurface?:
+    | "main_chat"
+    | "side_chat"
+    | "quick_chat"
+    | "knowledge_chat"
+    | "design_chat"
+    | "pet_chat";
   // Tauri's invoke serializes extra unknown fields without complaint, and
   // HTTP's POST body is plain JSON — keep this open so HTTP impl can
   // pass-through without an unsafe `as Record<string, unknown>` cast.
@@ -766,12 +782,13 @@ export interface FileSearchResponse {
 
 /** Selects which working directory the file-browser API operates on. */
 export interface ProjectFsScope {
-  /** `"session"` / `"project"` resolve a session/project working dir; `"path"`
+  /** `"session"` / `"project"` resolve a session/project working dir;
+   *  `"project_folder"` resolves a live-authorized linked project root; `"path"`
    *  is a read-only worktree jump whose `scopeId` is an encoded triple
    *  `base_scope ∣ base_scope_id ∣ target_abs` (see `FileBrowserView`'s
    *  `encodePathScope`), validated server-side against the base repo's worktree
    *  list so it can only reach the current repo's own worktrees. */
-  scope: "session" | "project" | "path";
+  scope: "session" | "project" | "project_folder" | "path";
   scopeId: string;
 }
 
@@ -796,6 +813,8 @@ export type WorkspaceWriteState =
 export interface WorkspaceAccess {
   readable: boolean;
   writeState: WorkspaceWriteState;
+  /** Canonical root selected by the backend's session/project scope resolver. */
+  rootPath: string;
 }
 
 /** One entry in a workspace directory listing. Paths are relative to the
@@ -875,7 +894,13 @@ export type UrlSourceDto =
   | {
       kind: "url";
       url: string;
-      origin: "web_search" | "message" | "user_url";
+      origin: "web_fetch" | "web_search" | "message" | "user_url";
+      title?: string;
+      retrievedAt?: string;
+      fetchMode?: "direct" | "rendered";
+      cacheHit?: boolean;
+      truncated?: boolean;
+      warnings?: string[];
     }
   | {
       kind: "attachment";
@@ -1021,7 +1046,12 @@ export interface GitDirtySummary {
 }
 
 export type ManagedWorktreeState = "active" | "archived" | "handoff" | "bootstrap_failed";
-export type ManagedWorktreePurpose = "manual" | "workflow" | "subagent";
+export type ManagedWorktreePurpose =
+  | "manual"
+  | "workflow"
+  | "subagent"
+  | "scheduled_run"
+  | "scheduled_task";
 export type ManagedWorktreePathSource = "builtin" | "hook";
 
 export interface ManagedWorktreeDirtySnapshot {
@@ -1038,6 +1068,12 @@ export interface ManagedWorktree {
   sessionId: string;
   childSessionId?: string | null;
   workflowRunId?: string | null;
+  ownerSessionId?: string | null;
+  ownerScheduledTaskId?: string | null;
+  scheduledTaskId?: string | null;
+  runtimeSessionId?: string | null;
+  runtimeRunId?: string | null;
+  handoffSessionId?: string | null;
   purpose: ManagedWorktreePurpose;
   state: ManagedWorktreeState;
   label?: string | null;
@@ -4247,6 +4283,26 @@ export interface GitOperationRun {
   createdAt: number;
   updatedAt: number;
   completedAt?: number | null;
+}
+
+export type ToolchainDoctorStatus = "detected" | "supported" | "degraded" | "blocked";
+
+export interface ToolchainDoctorCheck {
+  id: string;
+  status: ToolchainDoctorStatus;
+  detectedVersion?: string;
+  minimumVersion?: string;
+  relatedVersions?: Record<string, string>;
+  detailCode: string;
+  facts?: string[];
+}
+
+export interface ToolchainDoctorReport {
+  generatedAt: string;
+  platform: string;
+  readOnly: true;
+  checks: ToolchainDoctorCheck[];
+  summary: Record<ToolchainDoctorStatus, number>;
 }
 
 /**

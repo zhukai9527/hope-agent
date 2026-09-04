@@ -1,8 +1,9 @@
 mod cancel;
 mod helpers;
-pub(crate) mod injection;
+// cron 执行器（ha-cron）经此注入托管 /loop 的父会话轮次——`inject_and_run_parent`
+// 是「注入回投须在同一 future 内 await finalize」那条红线的唯一入口，不另开旁路。
+pub mod injection;
 mod mailbox;
-mod mention;
 pub(crate) mod queue;
 mod spawn;
 mod types;
@@ -103,10 +104,11 @@ fn clamp_max_concurrent(raw: u32) -> usize {
 
 // ── Global statics (used by injection, mailbox, helpers) ────────
 
-/// Global set tracking which parent sessions currently have an active backend injection.
-/// Prevents concurrent double-injection for the same session.
-static INJECTING_SESSIONS: std::sync::LazyLock<Mutex<HashSet<String>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+/// Per-session active backend injection identity. The run id both serialises
+/// distinct injections and coalesces a duplicate durable sweep for the exact
+/// source already running.
+static INJECTING_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Sessions currently in one or more user-initiated chat() calls.
 /// Injection must wait until the session is idle.
@@ -119,17 +121,98 @@ pub static ACTIVE_CHAT_SESSIONS: std::sync::LazyLock<Mutex<HashMap<String, usize
 pub(crate) struct ActiveInjection {
     pub(crate) run_id: String,
     pub(crate) cancel: Arc<AtomicBool>,
+    /// Monotonic session-lineage Stop generation admitted before this parent
+    /// turn started. Cross-process Stop convergence cancels the turn whenever
+    /// the durable epoch advances, even if a fast Continue already cleared the
+    /// active pause flag.
+    pub(crate) admitted_pause_epoch: u64,
+    /// Shared initial/late IM-mirror handoff. The coordinator owns the durable
+    /// receipt and closes terminal-vs-install races without keeping the global
+    /// active-injection registry locked across provider I/O.
+    pub(crate) im_mirror: Arc<injection::ActiveInjectionMirrorCoordinator>,
 }
 
 pub(crate) static INJECTION_CANCELS: std::sync::LazyLock<Mutex<HashMap<String, ActiveInjection>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Stop the current parent-result model turn for one session. The durable
+/// session pause receipt is written before callers invoke this, so the
+/// injection's normal cancellation/requeue path cannot immediately start a
+/// replacement generation behind the user's Stop.
+pub(crate) fn request_pause_parent_injection(session_id: &str) -> bool {
+    let cancel = INJECTION_CANCELS.lock().ok().and_then(|active| {
+        active
+            .get(session_id)
+            .map(|injection| injection.cancel.clone())
+    });
+    if let Some(cancel) = cancel {
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        true
+    } else {
+        false
+    }
+}
+
+pub(crate) fn active_parent_injection_session_ids() -> Vec<String> {
+    INJECTION_CANCELS
+        .lock()
+        .map(|active| active.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+pub(crate) fn active_parent_injection_generations() -> Vec<(String, u64)> {
+    INJECTION_CANCELS
+        .lock()
+        .map(|active| {
+            active
+                .iter()
+                .map(|(session_id, injection)| (session_id.clone(), injection.admitted_pause_epoch))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Current ParentInjection generation for a session. IM mirror sinks use this
+/// as a read-only per-frame fence so a terminal generation cannot consume the
+/// next injection's deltas from the session-wide sink registry.
+pub fn active_injection_run_id(session_id: &str) -> Option<String> {
+    INJECTION_CANCELS
+        .lock()
+        .ok()?
+        .get(session_id)
+        .map(|active| active.run_id.clone())
+}
+
+/// Whether one ParentInjection generation still owns the session or is queued
+/// for an in-process retry. Late IM mirrors use this broader lifecycle fence so
+/// a cancellation/retry of the same logical run does not prematurely detach
+/// and let a second mirror claim the generation.
+pub fn injection_generation_is_live(session_id: &str, run_id: &str) -> bool {
+    let active = INJECTING_SESSIONS
+        .lock()
+        .map(|injecting| injecting.get(session_id).is_some_and(|id| id == run_id))
+        .unwrap_or(false);
+    if active {
+        return true;
+    }
+    PENDING_INJECTIONS
+        .lock()
+        .map(|pending| {
+            pending
+                .iter()
+                .any(|task| task.parent_session_id == session_id && task.run_id == run_id)
+        })
+        .unwrap_or(false)
+}
 
 /// Run IDs whose results have been read by the parent agent via check/result tool actions.
 /// If a run_id is here, auto-injection is skipped.
 static FETCHED_RUN_IDS: std::sync::LazyLock<Mutex<HashSet<String>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// Queue of injection tasks that were cancelled (user sent new message) and need retry.
+/// Unified per-session FIFO for idle retries and IM-readiness-gated
+/// ParentInjection work. Keeping one queue prevents a newer ready task from
+/// bypassing an older task blocked on its Channel delivery surface.
 static PENDING_INJECTIONS: std::sync::LazyLock<Mutex<Vec<injection::PendingInjection>>> =
     std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
@@ -149,6 +232,21 @@ static SESSION_IDLE_NOTIFY: std::sync::LazyLock<tokio::sync::Notify> =
 /// active, stamps it `Killed` directly so a caller is never left with an
 /// un-cancellable row. Returns true if a cancel was signalled or stamped.
 pub fn request_cancel_run(run_id: &str) -> bool {
+    request_run_interruption(run_id, cancel::SubagentCancelReason::UserKilled)
+}
+
+/// Interrupt an attempt for a resumable session Stop. The immutable attempt
+/// settles as `interrupted/session_paused`; its thread stays open so Continue
+/// can create a new continuation without pretending the old run resurrected.
+pub fn request_pause_run(run_id: &str) -> bool {
+    request_run_interruption(run_id, cancel::SubagentCancelReason::SessionPaused)
+}
+
+fn session_pause_fallback_is_locally_owned(runner_owner: Option<&str>) -> bool {
+    runner_owner == Some(runtime_owner_token())
+}
+
+fn request_run_interruption(run_id: &str, reason: cancel::SubagentCancelReason) -> bool {
     // R7.2 promote-vs-cancel safety. The queue mutex serializes this dequeue
     // against the scheduler's promote (`take_for_session`): exactly one side can
     // claim a parked entry.
@@ -164,7 +262,10 @@ pub fn request_cancel_run(run_id: &str) -> bool {
     // unused (no engine will read it) — drop it so the registry doesn't leak.
     let signalled = crate::get_subagent_cancels()
         .map(|registry| {
-            let hit = registry.cancel(run_id);
+            let hit = match reason {
+                cancel::SubagentCancelReason::UserKilled => registry.cancel(run_id),
+                cancel::SubagentCancelReason::SessionPaused => registry.pause(run_id),
+            };
             if claimed_parked {
                 registry.remove(run_id);
             }
@@ -174,7 +275,7 @@ pub fn request_cancel_run(run_id: &str) -> bool {
 
     // A claimed parked run won't settle itself (no engine) — stamp it terminal.
     if claimed_parked {
-        stamp_run_killed(run_id);
+        stamp_run_interrupted(run_id, reason);
         return true;
     }
     // Running run whose flag we just tripped — let the engine settle `Killed`.
@@ -187,12 +288,37 @@ pub fn request_cancel_run(run_id: &str) -> bool {
     if let Some(db) = crate::get_session_db() {
         if let Ok(Some(run)) = db.get_subagent_run(run_id) {
             if !run.status.is_terminal() {
-                stamp_run_killed(run_id);
-                return true;
+                if reason == cancel::SubagentCancelReason::SessionPaused
+                    && session_pause_fallback_is_locally_owned(run.runner_owner.as_deref())
+                {
+                    stamp_run_interrupted(run_id, reason);
+                    return true;
+                } else if reason == cancel::SubagentCancelReason::UserKilled {
+                    stamp_run_killed(run_id);
+                    return true;
+                }
             }
         }
     }
     false
+}
+
+fn stamp_run_interrupted(run_id: &str, reason: cancel::SubagentCancelReason) {
+    if reason == cancel::SubagentCancelReason::UserKilled {
+        stamp_run_killed(run_id);
+        return;
+    }
+    if let Some(db) = crate::get_session_db() {
+        let _ = db.update_subagent_status_with_reason(
+            run_id,
+            SubagentStatus::Interrupted,
+            Some(SubagentTerminalReason::SessionPaused),
+            None,
+            Some("Paused by session Stop; explicit Continue can resume this thread"),
+            None,
+            None,
+        );
+    }
 }
 
 /// Stamp a sub-agent run `Killed` via the status choke point (syncs the
@@ -214,12 +340,22 @@ fn stamp_run_killed(run_id: &str) {
 // ── Re-exports ──────────────────────────────────────────────────
 
 pub use cancel::SubagentCancelRegistry;
-pub(crate) use helpers::mark_run_fetched_in_memory;
+// 阶段 5 第七刀放开：唯一的 crate 外消费者是 ha-skills 的 `fork_helper`
+// （技能 fork 结果被 `skill` 工具显式消费后抑制重复注入），随 fork 派发
+// 机器一同迁出。durable 抑制仍走 `SessionDB::suppress_subagent_result_delivery`，
+// 这里只是进程内快路径。
+pub use helpers::mark_run_fetched_in_memory;
 pub use helpers::{cleanup_orphan_runs, mark_run_fetched, take_runs_fetched};
+pub(crate) use helpers::{
+    replay_pending_parent_deliveries, replay_pending_parent_deliveries_for_session,
+};
 pub use mailbox::{ChatSessionGuard, SubagentMailboxMessage, SUBAGENT_MAILBOX};
-pub(crate) use mention::resolve_inline_agent_mentions;
-pub(crate) use spawn::spawn_subagent_with_run_id;
+pub(crate) use spawn::{
+    discard_prepared_subagent, launch_prepared_subagent, prepare_subagent,
+    spawn_subagent_with_run_id, TeamMemberLaunchFence,
+};
 pub use spawn::{resume_subagent, spawn_subagent, HOOK_SPAWN_LABEL};
+pub(crate) use types::SubagentProviderRecovery;
 pub use types::{
     SpawnParams, SubagentDeliveryKind, SubagentOwnerKind, SubagentRun, SubagentStatus,
     SubagentTerminalReason, SubagentThread, SubagentThreadState,
@@ -261,6 +397,17 @@ mod concurrency_tests {
             crate::agent_config::SubagentConfig::default().default_timeout_secs,
             0
         );
+    }
+
+    #[test]
+    fn session_pause_fallback_never_terminalizes_another_process_runner() {
+        assert!(session_pause_fallback_is_locally_owned(Some(
+            runtime_owner_token()
+        )));
+        assert!(!session_pause_fallback_is_locally_owned(Some(
+            "another-process-owner"
+        )));
+        assert!(!session_pause_fallback_is_locally_owned(None));
     }
 
     #[test]

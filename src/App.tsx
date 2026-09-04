@@ -30,6 +30,7 @@ import { PortalScopeProvider } from "@/components/ui/portal-scope"
 import { LightboxProvider } from "@/components/common/ImageLightbox"
 import ErrorBoundary from "@/components/common/ErrorBoundary"
 import MarkdownRenderer from "@/components/common/MarkdownRenderer"
+import ServerUpdateNotice from "@/components/common/ServerUpdateNotice"
 import ProviderSetup from "@/components/settings/ProviderSetup"
 import type { SettingsSection } from "@/components/settings/types"
 import type { AgentTab } from "@/components/settings/agent-panel/types"
@@ -39,7 +40,14 @@ import { CURRENT_ONBOARDING_VERSION } from "@/components/onboarding/version"
 import ConfigRecoveryScreen, { type ConfigHealth } from "@/components/config/ConfigRecoveryScreen"
 import IconSidebar from "@/components/common/IconSidebar"
 import ChatScreen, { type ChatInsert } from "@/components/chat/ChatScreen"
-import { subscribeChatFocus, type ChatFocusTarget } from "@/components/chat/chatFocus"
+import type { PendingFileQuote } from "@/types/chat"
+import {
+  chatFocusTargetForPetNavigation,
+  subscribeChatFocus,
+  type ChatFocusTarget,
+} from "@/components/chat/chatFocus"
+import { subscribeCronTaskDraft, subscribeCronTaskFocus } from "@/components/cron/cronNavigation"
+import type { CronJob } from "@/components/cron/CronJobForm.types"
 import type { KnowledgeFocusTarget } from "@/components/knowledge/knowledgeFocus"
 import {
   clearMemoryFocusUrl,
@@ -145,8 +153,24 @@ interface PendingChatFocus extends ChatFocusTarget {
   nonce: number
 }
 
+interface PendingChatQuote {
+  quote: PendingFileQuote
+  nonce: number
+}
+
 interface PendingProjectFocus {
   projectId: string
+  nonce: number
+}
+
+interface PendingCronTaskFocus {
+  jobId: string
+  nonce: number
+}
+
+/** Copy-as-new-task handoff: a retained (possibly deleted) task seeds a draft. */
+interface PendingCronTaskDraft {
+  seed: CronJob
   nonce: number
 }
 
@@ -190,14 +214,21 @@ export default function App() {
   const [pendingSessionId, setPendingSessionId] = useState<string | undefined>(undefined)
   const [currentChatProjectId, setCurrentChatProjectId] = useState<string | null>(null)
   const [configHealth, setConfigHealth] = useState<ConfigHealth | null>(null)
-  // PlansView pushes `@plan:<short_id>:v<n>` tokens here; KnowledgeView pushes
-  // `[[note]]` refs (with a KB to auto-attach). ChatScreen appends + clears.
+  // Cross-space "reference in chat" actions land here with any typed
+  // provenance/KB attachment metadata. ChatScreen appends once and clears.
   const [pendingChatInsert, setPendingChatInsert] = useState<ChatInsert | undefined>(undefined)
   // 设计空间「实现到代码」：跳到实现会话后把 handoff pack 作首条消息自动发送（一次性，nonce 防重放）。
   const [pendingAutoSend, setPendingAutoSend] = useState<
     { sessionId: string; message: string; nonce: number } | undefined
   >(undefined)
   const [pendingChatFocus, setPendingChatFocus] = useState<PendingChatFocus | null>(null)
+  const [pendingCronTaskFocus, setPendingCronTaskFocus] = useState<PendingCronTaskFocus | null>(
+    null,
+  )
+  const [pendingCronTaskDraft, setPendingCronTaskDraft] = useState<PendingCronTaskDraft | null>(
+    null,
+  )
+  const [pendingChatQuote, setPendingChatQuote] = useState<PendingChatQuote | null>(null)
   const [pendingProjectFocus, setPendingProjectFocus] = useState<PendingProjectFocus | null>(null)
   const [pendingKnowledgePetFocus, setPendingKnowledgePetFocus] =
     useState<PendingKnowledgePetFocus | null>(null)
@@ -235,6 +266,9 @@ export default function App() {
 
   const completedLocalModelJobToasts = useRef<Set<string>>(new Set())
   const chatFocusNonceRef = useRef(0)
+  const cronTaskFocusNonceRef = useRef(0)
+  const cronTaskDraftNonceRef = useRef(0)
+  const chatQuoteNonceRef = useRef(0)
   const projectFocusNonceRef = useRef(0)
   const petFocusNonceRef = useRef(0)
   const knowledgeFocusNonceRef = useRef(0)
@@ -581,7 +615,40 @@ export default function App() {
     [keepConfigRecoveryView],
   )
 
+  const handleArtifactQuoteToChat = useCallback(
+    (quote: PendingFileQuote) => {
+      if (keepConfigRecoveryView()) return
+      const nonce = chatQuoteNonceRef.current + 1
+      chatQuoteNonceRef.current = nonce
+      setPendingChatQuote({ quote, nonce })
+      setView("chat")
+    },
+    [keepConfigRecoveryView],
+  )
+
   useEffect(() => subscribeChatFocus(handleChatFocus), [handleChatFocus])
+
+  useEffect(
+    () =>
+      subscribeCronTaskFocus((jobId) => {
+        if (keepConfigRecoveryView()) return
+        const nonce = ++cronTaskFocusNonceRef.current
+        setPendingCronTaskFocus({ jobId, nonce })
+        setView("calendar")
+      }),
+    [keepConfigRecoveryView],
+  )
+
+  useEffect(
+    () =>
+      subscribeCronTaskDraft((seed) => {
+        if (keepConfigRecoveryView()) return
+        const nonce = ++cronTaskDraftNonceRef.current
+        setPendingCronTaskDraft({ seed, nonce })
+        setView("calendar")
+      }),
+    [keepConfigRecoveryView],
+  )
 
   useEffect(() => {
     if (!isTauriMode()) return
@@ -629,8 +696,9 @@ export default function App() {
     const unlisten = getTransport().listen("pet:navigate", (raw) => {
       const target = parsePayload<PetNavigationTarget>(raw)
       if (!target || keepConfigRecoveryView()) return
-      if (target.kind === "regular") {
-        handleChatFocus({ sessionId: target.sessionId })
+      if (target.kind === "regular" || target.kind === "side") {
+        const chatTarget = chatFocusTargetForPetNavigation(target)
+        if (chatTarget) handleChatFocus(chatTarget)
         return
       }
       const nonce = ++petFocusNonceRef.current
@@ -1240,7 +1308,19 @@ export default function App() {
                     <CronCalendarView
                       isViewVisible={view === "calendar"}
                       defaultProjectId={currentChatProjectId}
+                      taskFocus={pendingCronTaskFocus}
+                      onTaskFocusHandled={(nonce) =>
+                        setPendingCronTaskFocus((prev) => (prev?.nonce === nonce ? null : prev))
+                      }
+                      taskDraft={pendingCronTaskDraft}
+                      onTaskDraftHandled={(nonce) =>
+                        setPendingCronTaskDraft((prev) => (prev?.nonce === nonce ? null : prev))
+                      }
                       onOpenSettings={handleOpenSettings}
+                      onCreateWithModel={(prompt) => {
+                        setPendingChatInsert({ token: prompt })
+                        setView("chat")
+                      }}
                     />
                   </Suspense>
                 </PersistentViewSurface>
@@ -1290,7 +1370,15 @@ export default function App() {
                         setView("chat")
                       }}
                       onInsertMention={(token) => {
-                        setPendingChatInsert({ token })
+                        const targetId = token.slice("@plan:".length)
+                        setPendingChatInsert({
+                          token,
+                          mention: {
+                            kind: "plan",
+                            targetId,
+                            displayLabel: token,
+                          },
+                        })
                         setView("chat")
                       }}
                     />
@@ -1379,7 +1467,10 @@ export default function App() {
                       </div>
                     }
                   >
-                    <ArtifactsView isViewVisible={view === "artifacts"} />
+                    <ArtifactsView
+                      isViewVisible={view === "artifacts"}
+                      onAddQuoteToChat={handleArtifactQuoteToChat}
+                    />
                   </Suspense>
                 </PersistentViewSurface>
               )}
@@ -1402,6 +1493,10 @@ export default function App() {
                   externalChatFocus={pendingChatFocus}
                   onExternalChatFocusHandled={(nonce) => {
                     setPendingChatFocus((prev) => (prev?.nonce === nonce ? null : prev))
+                  }}
+                  externalFileQuote={pendingChatQuote}
+                  onExternalFileQuoteHandled={(nonce) => {
+                    setPendingChatQuote((prev) => (prev?.nonce === nonce ? null : prev))
                   }}
                   externalProjectFocus={pendingProjectFocus}
                   onExternalProjectFocusHandled={(nonce) => {
@@ -1627,6 +1722,7 @@ export default function App() {
                   </div>
                 </div>
               )}
+              <ServerUpdateNotice />
             </div>
           </div>
         </LightboxProvider>

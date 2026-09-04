@@ -6,8 +6,8 @@
 //! formatting the result for the LLM.
 
 use crate::ask_user::{
-    self, AskUserDirectionCard, AskUserI18nText, AskUserQuestion, AskUserQuestionAnswer,
-    AskUserQuestionGroup, AskUserQuestionOption, AskUserText,
+    self, AskUserDirectionCard, AskUserFileConstraints, AskUserI18nText, AskUserQuestion,
+    AskUserQuestionAnswer, AskUserQuestionGroup, AskUserQuestionOption, AskUserText,
 };
 use crate::process_registry::create_session_id;
 use serde_json::json;
@@ -17,7 +17,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Execute the ask_user_question tool.
 /// Sends structured questions to the user and blocks until they respond or time out.
-pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
+///
+/// pub：结构化问答唯一入口（AGENTS.md 红线）——特征 crate 的工具 adapter
+/// （ha-updater `app_update` install/rollback 确认）从 crate 外复用，不 fork。
+pub async fn execute(args: &Value, session_id: Option<&str>) -> String {
     let sid = match session_id {
         Some(s) => s,
         None => return "Error: no session context available".to_string(),
@@ -125,11 +128,18 @@ pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
             })
             .unwrap_or_default();
 
+        let file_constraints = if input_kind.as_deref() == Some("file") {
+            Some(parse_file_constraints(q))
+        } else {
+            None
+        };
+
         questions.push(AskUserQuestion {
             question_id,
             text,
             options,
             input_kind,
+            file_constraints,
             allow_custom,
             multi_select,
             template,
@@ -141,6 +151,13 @@ pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
 
     if questions.is_empty() {
         return "Error: at least one question is required".to_string();
+    }
+    if questions
+        .iter()
+        .any(|q| q.input_kind.as_deref() == Some("file"))
+        && (questions.len() != 1 || questions[0].input_kind.as_deref() != Some("file"))
+    {
+        return "Error: the file input PoC must be the only question in its request".to_string();
     }
 
     let request_id = create_session_id();
@@ -161,6 +178,22 @@ pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
         .clone()
         .or_else(|| subagent_owner.clone())
         .unwrap_or_else(|| sid.to_string());
+    if questions
+        .iter()
+        .any(|question| question.input_kind.as_deref() == Some("file"))
+    {
+        let attached_to_channel = crate::globals::get_channel_db()
+            .and_then(|db| {
+                db.get_conversation_by_session(&effective_sid)
+                    .ok()
+                    .flatten()
+            })
+            .is_some();
+        if !attached_to_channel {
+            return "Error: file input is currently available only for an attached IM conversation"
+                .to_string();
+        }
+    }
     let source = Some(
         if plan_owner.is_some() {
             "plan"
@@ -275,7 +308,7 @@ pub(crate) async fn execute(args: &Value, session_id: Option<&str>) -> String {
     // Final cleanup: mark persisted row answered and drop any IM-side pending
     // state so stale entries don't accumulate in the button/text maps.
     let _ = ask_user::mark_group_answered(&request_id);
-    crate::channel::worker::ask_user::drop_pending_by_request_id(&request_id).await;
+    crate::channel_hooks::drop_ask_user_by_request_id(&request_id).await;
 
     // ElicitationResult hook (observation): the question group reached a
     // terminal state.
@@ -365,6 +398,7 @@ fn synthesize_default_answers(questions: &[AskUserQuestion]) -> Vec<AskUserQuest
             question_id: q.question_id.clone(),
             selected,
             custom_input: custom,
+            files: Vec::new(),
         });
     }
     out
@@ -378,14 +412,17 @@ fn format_answers_for_llm(
 ) -> String {
     let mut items = Vec::new();
     for question in questions {
+        let mut selected_values = Vec::new();
         let mut selected_labels = Vec::new();
         let mut custom_input: Option<String> = None;
+        let mut files = Vec::new();
 
         if let Some(answer) = answers
             .iter()
             .find(|a| a.question_id == question.question_id)
         {
             for sel in &answer.selected {
+                selected_values.push(sel.clone());
                 let label = question
                     .options
                     .iter()
@@ -399,12 +436,16 @@ fn format_answers_for_llm(
                     custom_input = Some(c.clone());
                 }
             }
+            files = answer.files.clone();
         }
 
         items.push(serde_json::json!({
+            "questionId": question.question_id,
             "question": question.text.fallback_text(),
             "selected": selected_labels,
+            "selectedValues": selected_values,
             "customInput": custom_input,
+            "files": files,
         }));
     }
 
@@ -430,9 +471,61 @@ fn normalize_input_kind(raw: &str) -> Option<String> {
     let s = raw.trim().to_ascii_lowercase();
     matches!(
         s.as_str(),
-        "single" | "multi" | "text" | "textarea" | "direction-cards"
+        "single" | "multi" | "text" | "textarea" | "direction-cards" | "file"
     )
     .then_some(s)
+}
+
+const ASK_USER_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024;
+
+fn normalize_file_type(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "pdf" | ".pdf" | "application/pdf" => Some("application/pdf"),
+        "txt" | ".txt" | "text/plain" => Some("text/plain"),
+        "md" | ".md" | "markdown" | "text/markdown" => Some("text/markdown"),
+        _ => None,
+    }
+}
+
+fn parse_file_constraints(question: &Value) -> AskUserFileConstraints {
+    let raw = question
+        .get("file_constraints")
+        .or_else(|| question.get("fileConstraints"));
+    let mut types = raw
+        .and_then(|value| value.get("types"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(normalize_file_type)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    types.sort();
+    types.dedup();
+    if types.is_empty() {
+        types = vec![
+            "application/pdf".into(),
+            "text/plain".into(),
+            "text/markdown".into(),
+        ];
+    }
+    let max_bytes = raw
+        .and_then(|value| value.get("max_bytes").or_else(|| value.get("maxBytes")))
+        .and_then(Value::as_u64)
+        .filter(|value| *value > 0)
+        .unwrap_or(ASK_USER_FILE_MAX_BYTES)
+        .min(ASK_USER_FILE_MAX_BYTES);
+    AskUserFileConstraints {
+        types,
+        max_bytes,
+        // The first shared contract is single-file only. Ignore a model's
+        // attempt to widen this value instead of creating provider-specific
+        // multi-file semantics accidentally.
+        count: 1,
+    }
 }
 
 /// Parse a `direction-cards` option's `card` payload. Any malformed shape
@@ -506,7 +599,7 @@ fn parse_text_value(value: &Value) -> Option<AskUserText> {
     }
 }
 
-pub(super) fn i18n_text(key: &str, params: Value, fallback: impl Into<String>) -> Value {
+pub fn i18n_text(key: &str, params: Value, fallback: impl Into<String>) -> Value {
     let params = params.as_object().cloned().unwrap_or_default();
     json!({
         "key": key,
@@ -521,7 +614,14 @@ mod tests {
 
     #[test]
     fn input_kind_whitelist_filters_garbage() {
-        for good in ["single", "multi", "text", "textarea", "direction-cards"] {
+        for good in [
+            "single",
+            "multi",
+            "text",
+            "textarea",
+            "direction-cards",
+            "file",
+        ] {
             assert_eq!(normalize_input_kind(good).as_deref(), Some(good));
         }
         // Case / whitespace tolerant.
@@ -577,5 +677,33 @@ mod tests {
         assert!(parse_direction_card(&json!({})).is_none());
         assert!(parse_direction_card(&json!({ "palette": [], "references": [] })).is_none());
         assert!(parse_direction_card(&json!("not an object")).is_none());
+    }
+
+    #[test]
+    fn formatted_answers_preserve_question_and_option_identity() {
+        let questions: Vec<AskUserQuestion> = serde_json::from_value(json!([{
+            "questionId": "q-treatment",
+            "text": "How should this be handled?",
+            "options": [
+                { "value": "steps", "label": "Same label" },
+                { "value": "implement", "label": "Same label" }
+            ]
+        }]))
+        .expect("valid questions");
+        let answers = vec![AskUserQuestionAnswer {
+            question_id: "q-treatment".into(),
+            selected: vec!["implement".into()],
+            custom_input: Some("Keep the explanation concise".into()),
+            files: Vec::new(),
+        }];
+
+        let formatted = format_answers_for_llm(&questions, &answers, false);
+        let value: Value = serde_json::from_str(&formatted).expect("valid result JSON");
+        let answer = &value["answers"][0];
+
+        assert_eq!(answer["questionId"], "q-treatment");
+        assert_eq!(answer["selected"], json!(["Same label"]));
+        assert_eq!(answer["selectedValues"], json!(["implement"]));
+        assert_eq!(answer["customInput"], "Keep the explanation concise");
     }
 }

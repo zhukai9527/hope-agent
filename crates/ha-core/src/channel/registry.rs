@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures_util::{stream, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -6,6 +7,23 @@ use tokio_util::sync::CancellationToken;
 
 use super::traits::ChannelPlugin;
 use super::types::*;
+
+pub(crate) const DELIVERY_SURFACE_STATE_CHANGED_EVENT: &str =
+    "channel:delivery_surface_state_changed";
+
+/// Notify the Primary delivery coordinator that resolving this account's IM
+/// surface may now produce a different result. Successful starts can turn
+/// `Unavailable` into `Attached`; a persisted disable/removal can turn it into
+/// `Absent`. Consumers re-resolve from live state rather than trusting an event
+/// subtype, so duplicate notifications are harmless.
+pub(crate) fn emit_delivery_surface_state_changed(account_id: &str) {
+    if let Some(bus) = crate::get_event_bus() {
+        bus.emit(
+            DELIVERY_SURFACE_STATE_CHANGED_EVENT,
+            serde_json::json!({ "accountId": account_id }),
+        );
+    }
+}
 
 /// Handle to a running channel account worker.
 pub struct ChannelWorkerHandle {
@@ -108,7 +126,7 @@ impl ChannelRegistry {
         }
         // Clear any queued retry so a manual Start / UI Restart doesn't
         // race with the watchdog firing a redundant attempt.
-        super::start_watchdog::mark_success(&account.id).await;
+        crate::channel_hooks::start_watchdog_mark_success(&account.id).await;
 
         app_info!(
             "channel",
@@ -117,13 +135,18 @@ impl ChannelRegistry {
             account.label,
             account.channel_id
         );
+        // A queued ParentInjection may have inspected this exact binding while
+        // the account was unavailable. EventBus keeps ChannelRegistry
+        // independent of the injection implementation; the Primary listener
+        // re-resolves this account's queued delivery surfaces.
+        emit_delivery_surface_state_changed(&account.id);
         Ok(())
     }
 
     /// Stop a running channel account. Also cancels any queued
     /// watchdog retry — user intent always overrides the watchdog.
     pub async fn stop_account(&self, account_id: &str) -> Result<()> {
-        super::start_watchdog::cancel_pending(account_id).await;
+        crate::channel_hooks::start_watchdog_cancel_pending(account_id).await;
 
         let handle = {
             let mut workers = self.workers.lock().await;
@@ -175,6 +198,78 @@ impl ChannelRegistry {
         } else {
             ChannelHealth::default()
         }
+    }
+
+    /// Merge worker liveness with bounded adapter-owned runtime discovery.
+    /// Signal and WhatsApp are the only current external sidecars in this
+    /// account snapshot contract; probing every network adapter on the
+    /// settings poll would create unrelated traffic and latency.
+    pub async fn health_with_probe(&self, account_id: &str) -> ChannelHealth {
+        let mut health = self.health(account_id).await;
+        let account = crate::config::cached_config()
+            .channels
+            .find_account(account_id)
+            .cloned();
+        let Some(account) = account else {
+            return health;
+        };
+        let should_probe = matches!(account.channel_id, ChannelId::Signal | ChannelId::WhatsApp)
+            || !health.is_running;
+        if !should_probe {
+            return health;
+        }
+        let Some(plugin) = self.get_plugin(&account.channel_id) else {
+            return health;
+        };
+        if let Ok(Ok(probe)) =
+            tokio::time::timeout(std::time::Duration::from_secs(4), plugin.probe(&account)).await
+        {
+            health.probe_ok = probe.probe_ok;
+            health.bot_name = probe.bot_name;
+            health.error = probe.error;
+            health.last_probe = probe.last_probe;
+            health.capability_snapshot = probe.capability_snapshot;
+        }
+        health
+    }
+
+    pub async fn list_health_with_probes(&self) -> Vec<(String, ChannelHealth)> {
+        let accounts = crate::config::cached_config()
+            .channels
+            .accounts
+            .iter()
+            .enumerate()
+            .map(|(index, account)| {
+                (
+                    index,
+                    account.id.clone(),
+                    matches!(account.channel_id, ChannelId::Signal | ChannelId::WhatsApp),
+                )
+            })
+            .collect::<Vec<_>>();
+        // The Settings UI polls this aggregate endpoint every 10 seconds.
+        // Only external sidecars need runtime discovery; regular adapters use
+        // worker liveness and must not emit network probes merely because they
+        // are stopped. Bound sidecar fan-out so one slow account cannot turn
+        // the aggregate into N serial four-second waits.
+        let mut health = stream::iter(accounts.into_iter().map(
+            |(index, account_id, should_probe)| async move {
+                let snapshot = if should_probe {
+                    self.health_with_probe(&account_id).await
+                } else {
+                    self.health(&account_id).await
+                };
+                (index, account_id, snapshot)
+            },
+        ))
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
+        .await;
+        health.sort_by_key(|(index, _, _)| *index);
+        health
+            .into_iter()
+            .map(|(_, account_id, snapshot)| (account_id, snapshot))
+            .collect()
     }
 
     /// List all running accounts with their health.

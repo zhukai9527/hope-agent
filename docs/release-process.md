@@ -38,19 +38,27 @@ PR（release notes + CHANGELOG + version bump）
 
 R2 排第一是**可达性**不是延迟：有一部分用户根本访问不了 `github.com`。
 
-两处配置必须逐项逐序相等：[`tauri.conf.json`](../src-tauri/tauri.conf.json) `plugins.updater.endpoints` ↔ [`manifest.rs`](../crates/ha-core/src/updater/manifest.rs) `UPDATE_MANIFEST_URLS`，由 [`scripts/verify-updater-endpoints.mjs`](../scripts/verify-updater-endpoints.mjs) 在 CI 与 pre-push 强制。
+两处配置必须逐项逐序相等：[`tauri.conf.json`](../src-tauri/tauri.conf.json) `plugins.updater.endpoints` ↔ [`manifest.rs`](../crates/ha-updater/src/manifest.rs) `UPDATE_MANIFEST_URLS`，由 [`scripts/verify-updater-endpoints.mjs`](../scripts/verify-updater-endpoints.mjs) 在 CI 与 pre-push 强制。
 
 GitHub 的 `releases/latest` 只解析**已 published 且非 prerelease** 的 Release，所以 draft 状态客户端拉不到。
 
 ### 0.4 版本号单一来源
 
-`package.json` 是唯一真相源，[`sync-version.mjs`](../scripts/sync-version.mjs) 同步到 `src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`、`ha-core` / `ha-server` / `ha-browser-host` / `ha-eval` 的 Cargo.toml 及 `Cargo.lock`。**禁止手改任何一处**。tag 触发后 [`verify-release-version.mjs`](../scripts/verify-release-version.mjs) 校验全部来源一致且与 tag 名匹配。
+`package.json` 是版本号唯一真相源，[scripts/sync-version.mjs](../scripts/sync-version.mjs) 把它同步到 [src-tauri/Cargo.toml](../src-tauri/Cargo.toml)、[src-tauri/tauri.conf.json](../src-tauri/tauri.conf.json)、`ha-base`、`ha-config-schema`、`ha-core`、`ha-acp`、`ha-browser`、`ha-channel`、`ha-cron`、`ha-dash`、`ha-design`、`ha-eval-runtime`、`ha-improve`、`ha-knowledge`、`ha-local-llm`、`ha-mac`、`ha-mcp`、`ha-media`、`ha-pet`、`ha-skills`、`ha-updater`、`ha-vcs`、`ha-weather`、`ha-server`、`ha-browser-host`、`ha-eval` 及 `Cargo.lock`。**禁止手改任何一处**。CI 入口 [scripts/verify-release-version.mjs](../scripts/verify-release-version.mjs) 在 tag 触发后校验所有产品版本来源一致且与 tag 名匹配。
 
 ### 0.5 macOS 代码签名
 
 `release.yml` 用固定自签名证书签 macOS 包，让已授予的系统权限（录屏 / 辅助功能）跨自动更新不失效——ad-hoc 签名的 cdhash 每次变，授权每次重置。一次性配置（证书 + 4 个 Secrets）见 [macos-self-signing.md](macos-self-signing.md)；Secrets 未配时自动退回 ad-hoc，不阻塞发布。
 
 ---
+
+## 工作流供应链约束
+
+所有外部 Action 的 `uses` 固定完整 40 位提交摘要，旁注保留原版本；Dependabot 只提出更新 PR，不自动合并。改摘要须审阅上游来源，不恢复可移动 tag。
+
+R2 访问密钥只注入实际读取/发布步骤的环境，安装步骤只收到必要的非凭据配置；预检只使用存在性/相等性布尔值，不把密钥插进脚本。镜像的 rclone 固定 `v1.74.4` 及 SHA-256，下载后先核验再解压执行，摘要取自[官方校验清单](https://downloads.rclone.org/v1.74.4/SHA256SUMS)。Wrangler 桥安装单独运行且不持上传凭据，版本固定并禁止安装脚本；这不是完整的传递依赖来源证明。
+
+`scripts/check-workflow-supply-chain.mjs` 与其回归测试同时接入 pre-push 和 `lint.yml`，守住 Action 摘要、R2 环境范围与 rclone 核验顺序。守卫用固定版本的 `yaml` 解析实际结构，覆盖行内映射、引号键、多行值与可复用工作流；重复键、别名、合并键及未知标签直接拒绝，错误不回显源内容。这是本仓库的静态契约检查，不是通用工作流或 Shell 安全审计器。job 名与矩阵不变，required checks 不变。受保护环境、桶前缀权限、签名凭据和新密钥仍须所有者另行批准，不能因本地检查通过宣称这些外部控制已启用。
 
 ## 1. patch 发版完整步骤
 
@@ -293,7 +301,7 @@ download/
 - **临时目录一律落在 `$RUNNER_TEMP` 下，禁用裸相对路径**。`assets/` 曾经是裸路径，于是和仓库自带的 `assets/` 目录合并，把 `alpha-logo.png`、`transparency-logo.png` 当作发布产物镜像了上去。
 - **`latest/` 别名不能带 immutable 头**。那些文件名每版复用，长 TTL 会让边缘把旧安装包钉住一年。别名由 [`mirror-latest-aliases.mjs`](../scripts/mirror-latest-aliases.mjs) 按规则剥版本号派生，但 README 实际链接的 8 个名字在 `REQUIRED_ALIASES` 里硬登记——规则失灵时报错，而不是发布一堆 404。两侧对齐由 `check-release-paths.mjs` 在 PR 时守。
 - **`notes` 里的 GitHub 链接会被改写成镜像域名**（只改 R2 那份 manifest，仓库源文件不动，§1.1(a) 的绝对 URL 规则不变）。`notes` 是应用内「发现新版」弹窗正文，中英切换与 CHANGELOG 两条链接对目标用户就是死链。链到 `REQUIRED` 之外的文档时 workflow fail-closed。
-- **签名原样复制、绝不重算**。信任模型见 [self-update](architecture/self-update.md#manifest-端点链r2-镜像优先github-兜底)。
+- **签名原样复制、绝不重算**。信任模型见 [self-update](architecture/infra/self-update.md#manifest-端点链r2-镜像优先github-兜底)。
 
 > 存储成本：一版约 1.5 GB，R2 存储 $0.015/GB·月、egress 免费，按每月 3 版算一年累积约 55 GB（每月 < $1）。刻意全部保留不做清理——现有 R2 发布路径全程只用 `copy` 不用 `sync` 就是为了「绝不删除」，加删除逻辑要单独定义失败语义。
 
@@ -398,6 +406,8 @@ git cherry-pick --abort          # 整段放弃
 | 新 minor 发完忘了切 `release/X.Y` | patch 修复无处落，紧急修复要回退 main 历史 | §2.3 publish 后立即切 |
 | 改 workflow job 名后没同步 ruleset | PR 卡在等一个已不存在的 job | 见 AGENTS.md "## 分支与发布" |
 | 改 `release.yml` 但没在 PR 阶段验证 | tag push 后跑真实 release 才 fail，删 tag 重打 + 又一轮 CI。v0.2.0 三次因此返工 | §4.1 |
+| 两条 build lane 同时上传 `latest.json` | 输的那条报 `422 already_exists` 整个 job 失败，它的平台条目从清单里整段消失 | §4.2 |
+| Rust `tauri` crate 与 npm `@tauri-apps/api` 的 major.minor 不一致 | Tauri CLI 拒绝构建，tag 一推四个平台全在几分钟内失败，只能删 tag 重打。CI 抓不到（clippy / cargo test / vitest 都不跑 `tauri build`） | `verify-tauri-version-sync.mjs`（CI + pre-push）。crate 侧常因 `cargo update` 被顺带抬版本，v0.30.0 即因此返工一轮 |
 
 ### 4.1 修改 release.yml 时的验证流程
 
@@ -416,6 +426,21 @@ git cherry-pick --abort          # 整段放弃
 跑法：[Actions → Release workflow](https://github.com/shiwenwen/hope-agent/actions/workflows/release.yml) → Run workflow → branch 选 PR 分支 → `tag` 填一个不存在的 sentinel 如 `v0.0.0-dryrun`（verify 步骤自动跳过）→ `dry_run` 勾 true。全平台 build 矩阵会跑（含 bare-binary path check 与 signer 验证），但跳过 draft Release 创建、bare-binary 上传、patch-manifest job。产物在 run 的 `Artifacts` 段下载。
 
 dry-run 不改任何 GitHub 状态：不打 tag、不建 Release、不碰 latest.json，失败重跑无副作用。
+
+### 4.2 `latest.json` 并发上传竞态
+
+4 条 build lane 往**同一个** draft Release 推产物，而 tauri-action 的 `uploadVersionJSON` 是对同一个 `latest.json` 做**读-改-写**：列 asset → 找到就下载、把已有 `platforms` 读进来 → 合并自己这条 lane 的 → 删旧 asset → 传新的。两条 lane 同时走到这里，都看到「还没有 latest.json」，于是都发 create，输的那条拿 `422 already_exists` 直接失败。
+
+v0.29.0 就是这样：linux-arm64 跑满 87 分钟、deb / rpm / AppImage 全都传完了，最后一步栽在这儿。后果不只是 job 红——**它的 `linux-aarch64*` 条目从清单里整段消失了**，而剩下三个平台的清单结构完全正常。上游 tauri-action 到 v1.0.0 都没修这个（v0.6.1 是 `--config`、v0.6.2 是 workspace root 探测）。
+
+两道防御：
+
+- **release.yml 自动重试一次**，但**只在已产出 bundle 时**重试。产出了 bundle 说明编译已完成、只是发布环节失败，此时 target 目录是热的，重试只重新打包不重新编译；重试对已存在 asset 是安全的（`uploadAssets` 先删后传，`uploadVersionJSON` 这次能找到 latest.json 因而走合并路径）。没产出 bundle 说明构建本身就挂了，闸门直接 `exit 1` —— 别让它盲目重试，arm64 lane 历史上被 OOM 杀过，那会把一次 90 分钟的失败变成 180 分钟。**这个 `exit 1` 同时是 `continue-on-error` 的诚实性保证**，去掉它首次失败就会静默通过。
+- **`patch-latest-json.mjs` 的 `--require` 现在同时断言 `platforms` 段**（原来只守 `bare_binary`）。任一平台的 `{os}-{arch}` 条目缺失或缺 `signature` / `url`，都在 publish 之前硬失败。
+
+重试是缓解不是根治——根因是 4 个写者共享一个清单，真正的结构性修法是让 `latest.json` 只由构建后的单一 job 生成。没做是因为那要复刻 tauri-action 的签名优先级与 bundle 命名规则（`-appimage` / `-deb` / `-rpm` / `-nsis` / `-app`、AppImage 的 `.sig` vs `.tar.gz.sig`），弄错就是**静默毁掉某平台的自动更新**，且只有真发一次版才验得出来。要做就单独开 PR、配 dry-run 验证，别夹在发版里。
+
+仍然撞上时：`gh run rerun <run-id> --failed` 重跑失败的 lane 即可，tauri-action 对已存在 asset 是先删后传，重跑幂等。
 
 ---
 
@@ -438,7 +463,7 @@ dry-run 不改任何 GitHub 状态：不打 tag、不建 Release、不碰 latest
 |---|---|
 | [package.json](../package.json) | 版本号单一真相源 |
 | [src-tauri/tauri.conf.json](../src-tauri/tauri.conf.json) | Tauri app 版本 + updater endpoints + pubkey |
-| [crates/ha-core/src/updater/manifest.rs](../crates/ha-core/src/updater/manifest.rs) | headless 侧 updater endpoints，与上一行必须逐项逐序相等 |
+| [crates/ha-updater/src/manifest.rs](../crates/ha-updater/src/manifest.rs) | headless 侧 updater endpoints，与上一行必须逐项逐序相等 |
 | [.github/workflows/release.yml](../.github/workflows/release.yml) | tag push 触发的发版 workflow，含 release notes 提取 |
 | [docs/release-notes/](release-notes/) | 双语 release notes，文件名 `vX.Y.Z[.en].md` |
 | [CHANGELOG.md](../CHANGELOG.md) | 用户视角变更日志，单行 entry + PR 引用 |

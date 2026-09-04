@@ -30,12 +30,17 @@ import {
   isActionableReview,
   pullRequestUnavailableReason,
 } from "./gitPullRequestUtils"
+import {
+  usePanelRevealRefresh,
+  usePanelVisible,
+} from "@/components/chat/right-panel/panelVisibility"
 
 interface PullRequestPanelProps {
   sessionId: string
   expectedUrl?: string | null
   onClose: () => void
   onFillInput?: (value: string) => void
+  integrated?: boolean
 }
 
 export function PullRequestPanel({
@@ -43,8 +48,10 @@ export function PullRequestPanel({
   expectedUrl,
   onClose,
   onFillInput,
+  integrated = false,
 }: PullRequestPanelProps) {
   const { t } = useTranslation()
+  const panelVisible = usePanelVisible()
   const [feedback, setFeedback] = useState<GitPullRequestFeedback | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -100,13 +107,16 @@ export function PullRequestPanel({
     }
   }, [loadFeedback])
 
+  // Pure poll with no event feed behind it: stand down while the tab is hidden.
+  // `usePanelRevealRefresh` covers the catch-up on the way back.
   useEffect(() => {
-    if (currentPullRequestNumber === null) return
+    if (currentPullRequestNumber === null || !panelVisible) return
     const timer = window.setInterval(() => void loadFeedback(), 30_000)
     return () => {
       window.clearInterval(timer)
     }
-  }, [currentPullRequestNumber, loadFeedback])
+  }, [currentPullRequestNumber, loadFeedback, panelVisible])
+  usePanelRevealRefresh(() => void loadFeedback())
 
   const fillPrompt = useCallback((prompt: string) => {
     if (!onFillInput) return
@@ -178,7 +188,7 @@ export function PullRequestPanel({
           feedback={feedback}
           loading={loading}
           refreshError={error}
-          onClose={onClose}
+          onClose={integrated ? undefined : onClose}
           onRefresh={() => void loadFeedback()}
           onFixAll={!error && onFillInput && hasFixableFeedback
             ? () => fillPrompt(buildPullRequestFixPrompt(
@@ -211,16 +221,18 @@ export function PullRequestPanel({
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
               {t("workspace.git.pullRequestPanelTitle", "拉取请求")}
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={onClose}
-              aria-label={t("common.close", "关闭")}
-            >
-              <X className="h-4 w-4" />
-            </Button>
+            {!integrated && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={onClose}
+                aria-label={t("common.close", "关闭")}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
           </div>
           <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
             <div className="flex max-w-sm flex-col items-center gap-3">

@@ -1,12 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// ── Default Constants ────────────────────────────────────────────
-
-pub(super) const DEFAULT_MAX_SKILLS_IN_PROMPT: usize = 150;
-pub(super) const DEFAULT_MAX_SKILLS_PROMPT_CHARS: usize = 30_000;
-pub(super) const DEFAULT_MAX_SKILL_FILE_BYTES: u64 = 256 * 1024;
-pub(super) const DEFAULT_MAX_CANDIDATES_PER_ROOT: usize = 300;
+// 类型已下沉 ha-config-schema，原地再导出保持 `crate::skills::SkillPromptBudget` 路径不变。
+// （原先那条 `#[cfg(test)] pub(super) use` 的两个上限常量只服务 skills 模块内的
+// prompt 预算测试，随 `tests.rs` 迁入 ha-skills 后改由那边直接引 schema。）
+pub use ha_config_schema::skills::SkillPromptBudget;
 
 // ── Cache Version ────────────────────────────────────────────────
 
@@ -29,32 +27,6 @@ pub fn bump_skill_version() {
 #[allow(dead_code)]
 pub fn skill_cache_version() -> u64 {
     SKILL_CACHE_VERSION.load(Ordering::Relaxed)
-}
-
-/// Extract the `description:` frontmatter field from a SKILL.md content
-/// string without instantiating the full `ParsedFrontmatter`. Used by
-/// `author::delete_skill` to persist the language-rich description into
-/// the `skill_discarded` learning event meta so the auto-review pipeline
-/// can build a real topical blacklist (rather than matching against
-/// kebab-case ids that may not share a language with the user).
-pub(crate) fn parse_frontmatter_for_discard(content: &str) -> Option<String> {
-    let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return None;
-    }
-    let after_open = &trimmed[3..];
-    let end = after_open.find("\n---")?;
-    let yaml_block = &after_open[..end];
-    for line in yaml_block.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("description:") {
-            let v = rest.trim().trim_matches(|c| c == '"' || c == '\'');
-            if !v.is_empty() {
-                return Some(v.to_string());
-            }
-        }
-    }
-    None
 }
 
 pub(super) fn skill_cache_version_raw() -> u64 {
@@ -100,47 +72,6 @@ impl SkillStatus {
     /// Draft/Archived skills are hidden from prompt catalog + tool filtering.
     pub fn is_discoverable(&self) -> bool {
         matches!(self, Self::Active)
-    }
-}
-
-/// Configurable limits for skill prompt generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillPromptBudget {
-    /// Maximum number of skills to include in the system prompt.
-    #[serde(default = "default_max_count")]
-    pub max_count: usize,
-    /// Maximum total characters for the skills prompt section.
-    #[serde(default = "default_max_chars")]
-    pub max_chars: usize,
-    /// Maximum size of a SKILL.md file in bytes.
-    #[serde(default = "default_max_file_bytes")]
-    pub max_file_bytes: u64,
-    /// Maximum subdirectories to scan per skills root (DoS prevention).
-    #[serde(default = "default_max_candidates")]
-    pub max_candidates_per_root: usize,
-}
-
-fn default_max_count() -> usize {
-    DEFAULT_MAX_SKILLS_IN_PROMPT
-}
-fn default_max_chars() -> usize {
-    DEFAULT_MAX_SKILLS_PROMPT_CHARS
-}
-fn default_max_file_bytes() -> u64 {
-    DEFAULT_MAX_SKILL_FILE_BYTES
-}
-fn default_max_candidates() -> usize {
-    DEFAULT_MAX_CANDIDATES_PER_ROOT
-}
-
-impl Default for SkillPromptBudget {
-    fn default() -> Self {
-        Self {
-            max_count: DEFAULT_MAX_SKILLS_IN_PROMPT,
-            max_chars: DEFAULT_MAX_SKILLS_PROMPT_CHARS,
-            max_file_bytes: DEFAULT_MAX_SKILL_FILE_BYTES,
-            max_candidates_per_root: DEFAULT_MAX_CANDIDATES_PER_ROOT,
-        }
     }
 }
 
@@ -242,7 +173,7 @@ impl SkillDisplay {
 }
 
 /// Environment requirements parsed from SKILL.md frontmatter `requires:` block.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SkillRequires {
     /// Binaries that must exist in PATH (all required — AND logic).
     #[serde(default)]
@@ -368,6 +299,11 @@ pub struct SkillEntry {
     /// Parsed from SKILL.md frontmatter `allowed-tools:` field.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    /// Whether `allowed-tools` was present in frontmatter. This preserves the
+    /// security-significant distinction between legacy omission (no added
+    /// ceiling) and an explicitly empty list (deny every tool).
+    #[serde(default)]
+    pub allowed_tools_declared: bool,
     /// Context mode: "fork" runs skill in a sub-agent, "inline" (default) in main conversation.
     /// Parsed from SKILL.md frontmatter `context:` field.
     #[serde(default)]
@@ -408,7 +344,80 @@ pub struct SkillEntry {
     pub display: SkillDisplay,
 }
 
+/// Frozen result of resolving one or more explicit composer skill mentions.
+/// The prompt payload and execution narrowing are produced from the same
+/// entries so they cannot drift across the authority boundary.
+#[derive(Debug, Clone, Default)]
+pub struct MentionSkillActivation {
+    pub content: String,
+    pub resolved_names: Vec<String>,
+    pub rejected_names: Vec<String>,
+    /// Initial explicit-skill ceiling. The chat engine intersects it with any
+    /// pre-existing caller ceiling; it can never add tools.
+    pub tool_ceiling: SkillToolCeiling,
+}
+
+pub const SKILL_DENY_ALL_SENTINEL: &str = "__hope_skill_ceiling_denies_all__";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SkillToolCeiling {
+    /// Legacy frontmatter omitted `allowed-tools`; no additional restriction.
+    #[default]
+    Unspecified,
+    /// Frontmatter explicitly declared an empty list.
+    DenyAll,
+    /// Frontmatter declared a non-empty allowlist.
+    Restricted(Vec<String>),
+}
+
+impl SkillToolCeiling {
+    pub fn execution_filter(&self) -> Vec<String> {
+        match self {
+            Self::Unspecified => Vec::new(),
+            Self::DenyAll => vec![SKILL_DENY_ALL_SENTINEL.to_string()],
+            Self::Restricted(tools) => tools.clone(),
+        }
+    }
+}
+
+/// Apply a skill ceiling to the legacy execution-filter representation.
+/// Empty `current` means unrestricted; the private impossible-name sentinel
+/// represents deny-all. The result is monotonic and never widens `current`.
+pub fn narrow_skill_execution_filter(
+    current: &mut Vec<String>,
+    selected: SkillToolCeiling,
+) -> bool {
+    let before = current.clone();
+    let selected = match selected {
+        SkillToolCeiling::Unspecified => return false,
+        SkillToolCeiling::DenyAll => vec![SKILL_DENY_ALL_SENTINEL.to_string()],
+        SkillToolCeiling::Restricted(tools) => tools,
+    };
+    if current.is_empty() {
+        *current = selected;
+    } else if !(current.len() == 1 && current[0] == SKILL_DENY_ALL_SENTINEL) {
+        current.retain(|tool| selected.iter().any(|allowed| allowed == tool));
+        if current.is_empty() {
+            current.push(SKILL_DENY_ALL_SENTINEL.to_string());
+        }
+    }
+    *current != before
+}
+
 impl SkillEntry {
+    pub fn tool_ceiling(&self) -> SkillToolCeiling {
+        if !self.allowed_tools_declared {
+            SkillToolCeiling::Unspecified
+        } else if self.allowed_tools.is_empty() {
+            SkillToolCeiling::DenyAll
+        } else {
+            let mut tools = crate::mcp::canonicalize_tool_filter_names(&self.allowed_tools);
+            tools.sort();
+            tools.dedup();
+            SkillToolCeiling::Restricted(tools)
+        }
+    }
+
     /// Text used to decide "when should this skill trigger" — the catalog
     /// renderer and any future scorer should go through here rather than
     /// branching on `when_to_use.is_some()` at the call site.
@@ -456,6 +465,7 @@ impl SkillEntry {
             any_bins,
             always,
             allowed_tools: self.allowed_tools,
+            allowed_tools_declared: self.allowed_tools_declared,
             context_mode: self.context_mode,
             agent: self.agent,
             effort: self.effort,
@@ -463,6 +473,46 @@ impl SkillEntry {
             authored_by: self.authored_by,
             display: self.display,
         }
+    }
+}
+
+#[cfg(test)]
+mod skill_tool_ceiling_tests {
+    use super::{narrow_skill_execution_filter, SkillToolCeiling, SKILL_DENY_ALL_SENTINEL};
+
+    #[test]
+    fn ceiling_preserves_omitted_empty_and_restricted_as_three_states() {
+        assert!(SkillToolCeiling::Unspecified.execution_filter().is_empty());
+        assert_eq!(
+            SkillToolCeiling::DenyAll.execution_filter(),
+            vec![SKILL_DENY_ALL_SENTINEL.to_string()]
+        );
+        assert_eq!(
+            SkillToolCeiling::Restricted(vec!["read_file".into()]).execution_filter(),
+            vec!["read_file"]
+        );
+    }
+
+    #[test]
+    fn narrowing_is_monotonic_and_disjoint_sets_become_deny_all() {
+        let mut filter = vec!["read_file".to_string(), "list_dir".to_string()];
+        assert!(narrow_skill_execution_filter(
+            &mut filter,
+            SkillToolCeiling::Restricted(vec!["list_dir".into(), "write_file".into()]),
+        ));
+        assert_eq!(filter, vec!["list_dir"]);
+
+        assert!(narrow_skill_execution_filter(
+            &mut filter,
+            SkillToolCeiling::Restricted(vec!["write_file".into()]),
+        ));
+        assert_eq!(filter, vec![SKILL_DENY_ALL_SENTINEL]);
+
+        assert!(!narrow_skill_execution_filter(
+            &mut filter,
+            SkillToolCeiling::Unspecified,
+        ));
+        assert_eq!(filter, vec![SKILL_DENY_ALL_SENTINEL]);
     }
 }
 
@@ -492,6 +542,8 @@ pub struct SkillSummary {
     /// Tool restriction from SKILL.md frontmatter.
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub allowed_tools_declared: bool,
     /// Context mode from SKILL.md frontmatter.
     #[serde(default)]
     pub context_mode: Option<String>,
@@ -553,6 +605,8 @@ pub struct SkillDetail {
     #[serde(default)]
     pub allowed_tools: Vec<String>,
     #[serde(default)]
+    pub allowed_tools_declared: bool,
+    #[serde(default)]
     pub context_mode: Option<String>,
     #[serde(default)]
     pub agent: Option<String>,
@@ -589,6 +643,7 @@ impl SkillDetail {
             any_bins: self.requires.any_bins.clone(),
             always: self.requires.always,
             allowed_tools: self.allowed_tools.clone(),
+            allowed_tools_declared: self.allowed_tools_declared,
             context_mode: self.context_mode.clone(),
             agent: self.agent.clone(),
             effort: self.effort.clone(),

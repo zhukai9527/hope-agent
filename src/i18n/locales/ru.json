@@ -190,14 +190,6 @@
     "labelPlaceholder": "Метка (напр. Ключ Org A)",
     "title": "Профили ротации API Key"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "Требуется ответ",
-      "detail": "{{count}} вопросов ожидают в диалоге",
-      "detail_one": "Вопрос ожидает в диалоге",
-      "openAction": "Ответить сейчас"
-    }
-  },
   "canvas": {
     "close": "Закрыть",
     "export": "Экспорт",
@@ -318,6 +310,16 @@
     "removeConfig": "Удалить",
     "running": "Работает",
     "selectChannel": "Выбрать канал",
+    "nativeReply": "Нативные потоковые ответы",
+    "nativeReplyHint": "Использовать нативный поток ответов платформы. При отключении сразу выполняется переход к обычным сообщениям.",
+    "imsgProtocolV1": "Надёжный протокол imsg",
+    "imsgProtocolV1Hint": "Согласовывает протокол v1, восстанавливает watch после переполнения и контролирует перезапуск дочернего процесса. Отключите для старого RPC.",
+    "googleChatStandardMarkdown": "Стандартный Markdown",
+    "googleChatStandardMarkdownHint": "Использовать стандартный Markdown Google Chat для новых текстовых сообщений. Отключите для старого синтаксиса Chat.",
+    "discordChannelObfuscation": "Тестировать обфускацию приватных каналов",
+    "discordChannelObfuscationHint": "Включает для аккаунта временное поведение Gateway Discord. Скрытые каналы никогда не выбираются и не обрабатываются.",
+    "discordFileRequests": "Нативные файловые запросы Discord",
+    "discordFileRequestsHint": "Разрешает структурированным вопросам открывать загрузку одного файла. Сервер повторно проверяет тип, размер и привязку к диалогу.",
     "showThinking": "Показывать рассуждения в сообщениях IM",
     "showThinkingHint": "Если включено, рассуждения модели отображаются в виде цитаты перед ответом каждого раунда. По умолчанию выключено.",
     "signalAccount": "Номер телефона",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark (международная версия)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "Сообщение отправлено в «{{title}}»",
+      "receivedFrom": "Отправлено из диалога «{{title}}»",
+      "untitled": "Диалог без названия",
+      "details": "Подробности сообщения"
+    },
     "addWorkingDirectory": "Добавить рабочий каталог",
     "askAnything": "Расскажите свою идею: @ ищет файлы/заметки/навыки, # — быстрые подсказки, / — быстрые команды...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "Продолжить в новой сессии",
       "continuedFrom": "Продолжено из",
       "created": "Продолжено в новой сессии",
+      "createdButNotOpened": "Ответвление `{{id}}` создано, но не открыто. Выберите его в списке сессий, чтобы продолжить.",
       "failed": "Не удалось продолжить в новой сессии",
       "sourceFallback": "исходная сессия"
+    },
+    "sideChat": {
+      "label": "Боковой чат",
+      "untitled": "Боковой чат {{index}}",
+      "new": "Новый боковой чат",
+      "close": "Закрыть панель бокового чата",
+      "nonBlocking": "Задавайте отдельные вопросы, не прерывая основной чат",
+      "askSelection": "Спросить в боковом чате",
+      "createFailed": "Не удалось создать боковой чат"
     },
     "browserPanel": {
       "backendBadgeTooltip": "Бэкенд браузера: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "Сжатие раннего контекста",
     "contextCompactedMsgs": "{{count}} старых сообщ.",
     "contextCompactionFailedTitle": "Сжатие контекста приостановлено",
+    "contextCompactionRetry": "Повторить сжатие",
     "contextCompaction": {
       "preparing": "Сжатие раннего контекста",
       "summarizing": "Создание сводки сеанса",
@@ -553,6 +572,7 @@
       "noMatches": "Нет подходящих быстрых подсказок"
     },
     "cronTaskStarted": "Запущена запланированная задача",
+    "scheduledOrigin": "Запланированная задача: {{name}}",
     "cronTrigger": "Запланированная задача",
     "loopTriggered": "Запущен один шаг цикла",
     "loopTrigger": "Цикл",
@@ -651,6 +671,7 @@
     "markAllRead": "Отметить всё как прочитанное",
     "markAsRead": "Отметить как прочитанное",
     "pinSession": "Закрепить",
+    "pinnedSessions": "Закреплённые",
     "unpinSession": "Открепить",
     "minutesAgo": "{{count}} мин назад",
     "modelsCount": "{{count}} моделей",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "Песочница",
       "off": {
-        "desc": "Автоматически выбрать хост, WSL или изолированную среду.",
-        "label": "Автоматически"
+        "desc": "Запустить на хосте; поведение при одобрении не изменилось.",
+        "label": "Песочница выключена"
       },
       "setupTitle": "Настройте Docker для включения песочницы.",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "Ошибка аутентификации",
     "reasonBilling": "Биллинг / квота исчерпана",
     "reasonContextOverflow": "Переполнение контекста",
+    "reasonDispatchUnknown": "Результат отправки неизвестен — без автоматического повтора",
     "reasonModelNotFound": "Модель не найдена",
     "reasonOverloaded": "Сервис перегружен",
     "reasonRateLimit": "Превышен лимит запросов",
@@ -899,6 +921,7 @@
     "statusThinking": "Мышление",
     "statusUpdated": "Обновлено",
     "stopReply": "Остановить ответ",
+    "continuePausedWork": "Продолжить приостановленную работу",
     "stopGenerationDone": "Генерация остановлена",
     "subagentFrom": "Делегировано от {{agent}}",
     "subagentResultCompleted": "Завершено",
@@ -923,6 +946,7 @@
     "thinking": "Думаю...",
     "thinkingAutoDisabled": "{{provider}}/{{model}} не поддерживает текущий режим мышления. Мышление было отключено автоматически, и запрос был повторен.",
     "visionAutoDisabled": "{{provider}} / {{model}} не поддерживает ввод изображений. Изображение проигнорировано, ответ продолжен.",
+    "visionBridgeConfigureAction": "Настроить мост зрения",
     "toolCalling": "Вызов инструментов...",
     "totalTokens": "Всего",
     "unknownProvider": "Неизвестный провайдер",
@@ -983,6 +1007,9 @@
       "failed": "Не удалось экспортировать беседу.",
       "untitled": "Без названия"
     },
+    "capabilityMention": {
+      "heading": "Плагины и коннекторы"
+    },
     "skillMention": {
       "heading": "Навыки",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Требуется расширение Chrome"
     },
     "conversationEmpty": "В этом разговоре нет сообщений",
-    "pendingCancelForceInsert": "Отменить вставку этого раунда",
+    "pendingCancelForceInsert": "Изменить на отправку после ответа",
     "pendingSaving": "Сохранение",
     "pendingSavingTip": "Сообщение и вложения сохраняются в восстанавливаемую очередь.",
     "pendingInserting": "Вставка",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "Отправить сейчас",
     "pendingFallbackAfterReply": "Отправить после ответа",
     "pendingFallbackAfterReplyTip": "Точка завершения инструмента не обнаружена и будет отправлена после завершения текущего ответа.",
-    "pendingForceInsertTip": "Он будет ждать завершения выполнения выполняемого инструмента, а затем вставит его в модель, не прерывая работу текущего инструмента.",
+    "pendingForceInsertTip": "Сообщение будет вставлено для модели после завершения всех инструментов, выполняющихся в этом пакете, без их прерывания; если в этом ходе больше не будет границы инструментов, оно отправится после ответа.",
+    "pendingInsert": "Вставить",
     "pendingInserted": "вставлен",
     "pendingInsertedTip": "Он был вставлен в модель после завершения этого этапа оснастки.",
-    "pendingQueuedShort": "Очередь",
+    "pendingHeldAfterStop": "Отправка приостановлена",
+    "pendingHeldAfterStopTip": "Текущий ответ остановлен, поэтому это сообщение не будет отправлено автоматически.",
+    "pendingMoreActions": "Другие действия с сообщением",
+    "pendingQueuedShort": "Отправить после ответа",
     "pendingQueuedTip": "Оно добавлено в очередь ожидания и будет отправлено после завершения текущего ответа.",
     "pendingQueueTitle": "Для отправки",
-    "pendingWaitingToolBoundary": "Дождитесь завершения работы инструмента",
-    "pendingWaitingToolBoundaryTip": "Дождитесь завершения последнего вызова инструмента; если инструмент больше не вызывается в этом раунде, он будет отправлен после завершения ответа.",
+    "pendingWaitingToolBoundary": "Ожидание вставки",
+    "pendingWaitingToolBoundaryTip": "Ожидание завершения всех инструментов, выполняющихся в этом пакете, перед вставкой; если в этом ходе больше не будет границы инструментов, сообщение отправится после ответа.",
     "processNotification": "процесс завершен",
     "rightPanel": {
       "collapse": "Свернуть правую панель",
       "expand": "Развернуть правую панель",
       "switch": "Переключить правую панель",
       "dock": "Панель закрепления справа",
-      "openPanel": "Открыть {{panel}}",
-      "switchToPanel": "Переключиться на {{panel}}",
-      "collapsePanel": "Свернуть {{panel}}",
-      "expandPanel": "Развернуть {{panel}}",
+      "resize": "Изменить ширину рабочей области",
       "workflowActiveCount": "Активных процессов: {{count}}",
       "workflowAttentionCount": "Требуют внимания: {{count}}",
       "backgroundRunningCount": "Фоновых задач выполняется: {{count}}",
-      "subagentRunningCount": "Субагентов выполняется: {{count}}"
+      "subagentRunningCount": "Субагентов выполняется: {{count}}",
+      "openPanel": "Открыть {{panel}}",
+      "switchToPanel": "Переключиться на {{panel}}",
+      "collapsePanel": "Свернуть {{panel}}",
+      "expandPanel": "Развернуть {{panel}}"
     },
     "visionBridgeEngaged": "Основная модель не поддерживает изображения, поэтому {{model}} описала их за неё.",
     "visionBridgeUnavailable": "Модель зрения не смогла описать изображение, поэтому оно было пропущено.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "Добавить цель",
     "agent": "Agent",
     "archivedProject": "(в архиве)",
+    "workspaceModePersistent": "Постоянное рабочее дерево",
+    "workspaceCleanup": "После каждого запуска",
+    "workspaceCleanupOption": {
+      "retain": "Сохранять",
+      "discardIfClean": "Удалять, если нет изменений",
+      "always": "Удалять всегда"
+    },
+    "workspaceCleanupHint": {
+      "retain": "Worktree каждого запуска сохраняется, пока вы не заархивируете или не удалите его.",
+      "discardIfClean": "Worktree удаляется только если запуск не оставил изменений и новых коммитов — ничего нужного не пропадёт.",
+      "always": "Worktree удаляется после каждого запуска вместе с незакоммиченными изменениями. Только для задач, чей результат уходит доставкой."
+    },
+    "workspaceModeHint": "Проект использует свой каталог; Новое создаёт дерево для каждого запуска; Постоянное повторно используется задачей. Базовая ветка применяется к деревьям.",
+    "workspaceActionBlocked": "Недоступно: {{reason}}",
+    "workspaceActionReturn": "Вернуть",
+    "workspaceActionResume": "Вернуть и возобновить",
+    "workspaceActionDone": "{{action}} завершено",
     "atGrace": "Окно (с)",
     "atGraceHint": "Окно догоняющего запуска: одноразовая задача, время которой наступило при закрытом приложении, всё ещё выполнится, если опоздание не больше этого числа секунд; иначе помечается как пропущенная (0 = строго, без догоняющего запуска).",
     "atMinute": "В минуту",
     "atTime": "В",
     "autoAgent": "Авто (проект/по умолчанию)",
+    "cancelRunFailed": "Не удалось остановить этот запуск",
     "completed": "Завершена",
     "conversationEmpty": "В этой беседе нет сообщений",
     "conversationsSelectHint": "Выберите запуск для просмотра",
@@ -1463,7 +1513,7 @@
     "cronHelp": "Формат: сек мин час день месяц день_недели (например 0 0 9 * * 1-5 = пн–пт 9:00)",
     "dateTime": "Дата и время",
     "daySuffix": "",
-    "deleteConfirmDesc": "Это навсегда удалит задачу запланированные задачи и историю её запусков.",
+    "deleteConfirmDesc": "Удаление остановит только будущие запуски по расписанию. История запусков, диалоги и рабочие деревья сохранятся.",
     "deleteConfirmTitle": "Удалить \"{{name}}\"?",
     "deleteFailed": "Не удалось удалить \"{{name}}\"",
     "deleteSuccess": "\"{{name}}\" удалена",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "Каждый месяц",
     "failures": "Сбои",
     "filterAll": "Все",
+    "filterAttention": "Требует внимания",
+    "schedulerPrimary": "Планировщик: основной процесс",
+    "schedulerSecondary": "Планировщик: вторичный процесс (не выполняет задачи)",
+    "schedulerRunning": "Выполняется {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "Отключена автоматически после {{failures}}/{{max}} сбоев подряд",
+      "runFailed": "Последний запуск завершился ошибкой",
+      "missed": "Запланированный запуск пропущен",
+      "deliveryStale": "Цель доставки больше не действительна",
+      "failing": "{{failures}}/{{max}} сбоев подряд"
+    },
     "freq_custom": "Пользовательская",
     "freq_daily": "Ежедневно",
     "freq_hourly": "Ежечасно",
@@ -1521,6 +1582,19 @@
     "name": "Название задачи",
     "namePlaceholder": "например, Ежедневная сводка",
     "newJob": "Новая задача",
+    "conversationTarget": "Где выполнять",
+    "conversationTargetNew": "Новый чат при каждом запуске",
+    "conversationTargetExisting": "Существующий чат",
+    "sessionTargetPlaceholder": "Выберите чат",
+    "sessionTargetSearchPlaceholder": "Поиск чатов",
+    "sessionTargetEmpty": "Подходящих чатов нет",
+    "errorSessionTargetRequired": "Выберите чат, в котором будет выполняться задача",
+    "copyAsNewTask": "Копировать как новую задачу",
+    "deletedTaskHint": "Задача удалена: история сохранена, новые запуски не планируются.",
+    "runAgain": "Запустить снова",
+    "createWithModel": "Создать с помощью модели",
+    "manualSetup": "Настроить вручную",
+    "createWithModelPrompt": "Помоги мне создать задачу по расписанию. Я хочу, чтобы при ... она автоматически ...",
     "nextRun": "Следующий запуск",
     "noConversations": "Пока нет истории запусков",
     "noConversationsYet": "У этой учётной записи пока нет записанных бесед (сначала получите сообщение ботом)",
@@ -1536,8 +1610,13 @@
     "paused": "На паузе",
     "prefixDeliveryWithName": "Добавлять имя задачи в начало",
     "prefixDeliveryWithNameDesc": "Добавляйте [Cron] {name} к успешным доставкам, чтобы различать несколько задач, отправленных в один чат.",
+    "preflightTitle": "Предварительная проверка",
+    "preflightDescription": "Перед продолжением проверьте расписание и фактическую среду выполнения.",
+    "preflightIssue": "Требуется проверка: {{code}}",
     "project": "Проект",
+    "reloadLatest": "Загрузить последнюю версию",
     "removeTarget": "Убрать цель",
+    "revisionConflict": "Эта задача была изменена в другом месте. Черновик сохранён; загружайте последнюю версию, только когда готовы заменить его.",
     "resume": "Возобновить",
     "runHistory": "История запусков",
     "runNow": "Запустить сейчас",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "Выполняется",
     "runStatusSuccess": "Успех",
     "schedule": "Расписание",
+    "scheduleSession": "Запланировать этот чат",
+    "sessionTurnTarget": "Целевой чат",
+    "sessionTurnLiveHint": "При каждом запуске из этого чата заново считываются агент, проект, пространства знаний, рабочий каталог, режим разрешений и песочница.",
     "scheduleAt": "Однократно",
     "scheduleCron": "По расписанию",
     "scheduleEvery": "Повторяющаяся",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "Запуск без ограничений",
+      "unlimitedModeWarning": "Отключает ограничения оценки по стоимости, времени, токенам, вызовам, агентам и параллельности. Запуск может продолжаться бессрочно и привести к неконтролируемым расходам Provider; защита разрешений, безопасности, изоляции, отмены и очистки остаётся активной.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "Просмотр",
-    "resizePanel": "Изменить размер панели просмотра"
+    "resizePanel": "Изменить размер панели просмотра",
+    "pathBreadcrumb": "Путь к файлу",
+    "revealFolder": "Показать папку в панели файлов",
+    "copyPath": "Копировать полный путь"
   },
   "fileBrowser": {
     "panelTitle": "Файлы",
+    "primaryFolder": "Основная",
+    "defaultProjectFolder": "Папка проекта по умолчанию",
     "jumpToFile": "Показать в файловом браузере",
     "copied": "Скопировано",
     "copyFailed": "Ошибка копирования",
@@ -2733,7 +2850,10 @@
     "zoomOut": "Уменьшить",
     "zoomIn": "Увеличить",
     "fitWidth": "По ширине",
-    "officeNoContent": "Не удалось извлечь содержимое из этого файла."
+    "officeNoContent": "Не удалось извлечь содержимое из этого файла.",
+    "openInNewTab": "Открыть в новой вкладке",
+    "collapseTree": "Скрыть список файлов",
+    "expandTree": "Показать список файлов"
   },
   "diffPanel": {
     "fileTooLarge": "Файл слишком большой, отображаются только первые 256КБ",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "Высокий",
     "low": "Низкий",
+    "max": "Максимум",
     "medium": "Средний",
     "minimal": "Минимальный",
     "none": "Выкл",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "Обработано"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "закрыть {{count}} агентов",
+          "close_other": "закрыть {{count}} агентов",
+          "closeAll": "закрыть всех агентов",
+          "message_one": "отправить сообщение {{count}} агентам",
+          "message_other": "отправить сообщение {{count}} агентам",
+          "observe_one": "проверить {{count}} агентов",
+          "observe_other": "проверить {{count}} агентов",
+          "resume_one": "возобновить {{count}} агентов",
+          "resume_other": "возобновить {{count}} агентов"
+        },
+        "cron": {
+          "pause_one": "приостановить {{count}} расписаний",
+          "pause_other": "приостановить {{count}} расписаний",
+          "resume_one": "возобновить {{count}} расписаний",
+          "resume_other": "возобновить {{count}} расписаний"
+        },
+        "job": {
+          "cancel_one": "отменить {{count}} задач",
+          "cancel_other": "отменить {{count}} задач"
+        },
+        "process": {
+          "close_one": "закрыть {{count}} процессов",
+          "close_other": "закрыть {{count}} процессов"
+        },
+        "team": {
+          "pause_one": "приостановить {{count}} команд",
+          "pause_other": "приостановить {{count}} команд",
+          "resume_one": "возобновить {{count}} команд",
+          "resume_other": "возобновить {{count}} команд"
+        },
+        "workflow": {
+          "cancel_one": "отменить {{count}} процессов",
+          "cancel_other": "отменить {{count}} процессов",
+          "pause_one": "приостановить {{count}} процессов",
+          "pause_other": "приостановить {{count}} процессов",
+          "resume_one": "возобновить {{count}} процессов",
+          "resume_other": "возобновить {{count}} процессов"
+        }
+      },
+      "aggregate": {
+        "failed_one": "с ошибкой: {{count}}",
+        "failed_other": "с ошибкой: {{count}}",
+        "pending_one": "ожидается: {{count}}",
+        "pending_other": "ожидается: {{count}}",
+        "refused_one": "отклонено: {{count}}",
+        "refused_other": "отклонено: {{count}}",
+        "requested_one": "запрошено: {{count}}",
+        "requested_other": "запрошено: {{count}}",
+        "resumed_one": "возобновлено: {{count}}",
+        "resumed_other": "возобновлено: {{count}}",
+        "terminal_one": "завершено: {{count}}",
+        "terminal_other": "завершено: {{count}}"
+      },
+      "allTargets": "Все агенты",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} уже завершены",
+        "alreadyTerminal_other": "{{count}} уже завершены",
+        "refused_one": "{{count}} отклонены",
+        "refused_other": "{{count}} отклонены"
+      },
+      "failureDetails": "Ошибки возобновления",
+      "state": {
+        "accepted": "Запрошено · {{action}}",
+        "alreadyTerminal_one": "{{count}} целей уже были завершены",
+        "alreadyTerminal_other": "{{count}} целей уже были завершены",
+        "completed": "Завершено · {{action}}",
+        "failed": "Ошибка · {{action}}",
+        "noAgentsToClose": "Нет агентов, требующих закрытия",
+        "noResumeNeeded": "Команда уже завершила работу · возобновление не требуется",
+        "partial": "Частично завершено · {{action}}",
+        "refused": "Отклонено · {{action}}",
+        "running": "Выполняется · {{action}}"
+      }
     },
     "skill": {
       "completed": "Загруженный навык: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "Завершено {{name}}",
           "failed": "{{name}} не удалось",
           "running": "Запуск {{name}}"
+        },
+        "sessions_create": {
+          "completed": "Создано: {{name}}",
+          "failed": "Не удалось создать {{name}}",
+          "running": "Создание {{name}}"
         },
         "sessions_list": {
           "completed": "Завершено {{name}}",
@@ -3587,13 +3790,16 @@
     "popOutActive": "Открыто в отдельном окне",
     "question": {
       "answered": "Отвечено",
+      "customAnswer": "Дополнительный ввод",
       "customPlaceholder": "Введите свой ответ...",
       "customRequired": "Введите свой ответ или выберите другой вариант.",
       "default": "по умолчанию",
       "multiSelect": "мульти",
+      "options": "Исходные варианты",
       "pending": "Ожидание вашего ответа…",
       "preview": "Предпросмотр",
       "recommended": "Рекомендуется",
+      "response": "Ваш ответ",
       "retry": "Повторить",
       "submit": "Отправить ответы",
       "timedOut": "таймаут",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "Разархивировать",
     "unassigned": "Не назначено",
     "uploadLogo": "Загрузить логотип",
+    "linkedDirs": {
+      "add": "Добавить папку",
+      "defaultPrimary": "Папка проекта по умолчанию (создаётся автоматически)",
+      "empty": "Дополнительные папки не связаны",
+      "folderActions": "Действия с папкой",
+      "hint": "Подключите нужные проекту папки. Новые чаты, относительные пути, Git и инструкции используют основную папку.",
+      "invalid": "Недопустимая связанная папка",
+      "label": "Исходные папки",
+      "makePrimary": "Сделать основной",
+      "primary": "Основная",
+      "remove": "Удалить {{path}}",
+      "removeFolder": "Удалить папку"
+    },
     "workingDir": {
       "clear": "Очистить",
       "hint": "Сессии этого проекта по умолчанию используют этот каталог; настройка сессии его переопределяет.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "ACP-бэкенды",
     "acpBinary": "Бинарь",
+    "acpDistribution": "Описание дистрибутива",
+    "acpDistributionPackage": "Пакет или продукт",
+    "acpDistributionRequired": "Этот устаревший бэкенд заблокирован, пока явно не указано его происхождение запуска.",
+    "acpDistributionVersion": "Закреплённая версия",
+    "acpLaunchArgs": "Аргументы запуска",
+    "acpProtocol": "Протокол",
+    "acpTrustDistribution": "Задать дистрибутив",
     "acpControl": "Плоскость управления ACP",
     "acpControlDesc": "Управление внешними ACP-агентами (Claude Code, Codex CLI, Gemini CLI и т. д.)",
     "acpEnabled": "Включить плоскость управления ACP",
@@ -4194,6 +4420,7 @@
         "send_attachment": "Отправить файловое вложение в IM-каналы",
         "session_status": "Запросить текущее состояние сессии",
         "sessions_history": "Прочитать историю сообщений из других сессий",
+        "sessions_create": "Создать новую обычную сессию чата",
         "sessions_list": "Показать метаданные всех сессий",
         "sessions_send": "Отправить сообщение в другую сессию, чтобы запустить работу",
         "update_settings": "Изменить настройки AppConfig",
@@ -4213,6 +4440,7 @@
         "send_attachment": "Отправить вложение",
         "session_status": "Статус сессии",
         "sessions_history": "История сессии",
+        "sessions_create": "Создать сессию",
         "sessions_list": "Список сессий",
         "sessions_send": "Отправка между сессиями",
         "update_settings": "Обновить настройки",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Управление интеграциями Telegram, WeChat, Feishu, Discord, Slack и других IM-каналов",
     "charLimitExceeded": "Превышен лимит, лишнее содержимое будет обрезано",
     "chat": "Чат",
+    "chatEnterToSend": "Отправлять по Enter",
+    "chatEnterToSendDesc": "Включено: Enter отправляет, Shift+Enter добавляет строку. Выключено: Enter добавляет строку, Ctrl+Enter отправляет.",
     "chatAutoExpandThinking": "Автоматически разворачивать процесс размышления",
     "chatAutoExpandThinkingDesc": "Автоматически разворачивать блоки размышлений в чате. Если выключено, нажмите для ручного разворачивания.",
     "chatAutoCollapseCompletedTurns": "Сворачивать завершенные ходы",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "Максимальная доля окна контекста, которую может занять один результат (10%–60%). Увеличьте, чтобы сохранить большие чтения файлов и web fetches",
     "contextCompactMicrocompact": "Микросжатие",
     "contextCompactMicrocompactEnabled": "Включить микросжатие",
-    "contextCompactMicrocompactEnabledDesc": "Бесплатное удаление старых эфемерных результатов инструментов (ls/grep/find и т.п.). Выполняется до других слоёв сжатия",
+    "contextCompactMicrocompactEnabledDesc": "Удаляет старые эфемерные результаты инструментов (ls/grep/find и т. п.) без дополнительного вызова модели; выполняется до других уровней сжатия",
     "contextCompactMicrocompactTools": "Список инструментов микросжатия",
     "contextCompactMicrocompactToolsDesc": "Старые результаты выбранных инструментов будут автоматически очищаться",
     "contextCompactMinPrunableChars": "Мин. обрезаемый объём",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "Защищает последние N раундов сообщений и расширяет границу до исходного хода пользователя",
     "contextCompactPruning": "Обрезание результатов",
     "contextCompactReactiveMicrocompact": "Реактивный microcompact",
-    "contextCompactReactiveMicrocompactDesc": "Между раундами цикла инструментов при превышении порога очищаются временные tool_results (ls/grep/find/…). Уровень 0 — без затрат, кэш системных инструкций остаётся действительным.",
+    "contextCompactReactiveMicrocompactDesc": "Между раундами цикла инструментов при превышении порога очищаются временные tool_results (ls/grep/find/…). Уровень 0 не вызывает модель дополнительно, но изменение истории запроса может сделать кэш системных инструкций недействительным после точки изменения.",
     "contextCompactReactiveTriggerRatio": "Порог срабатывания",
     "contextCompactReactiveTriggerRatioDesc": "Порог использования для реактивного microcompact (по умолчанию 75%).",
     "contextCompactSaved": "Настройки сохранены",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "Агент по умолчанию",
     "defaultModel": "Модель по умолчанию",
     "defaultModelDesc": "Основная используемая модель",
-    "deferredToolsEnabled": "Отложенная загрузка инструментов",
-    "deferredToolsEnabledDesc": "Включите загрузку через tool_search. Инструменты остаются добавленными, пока вы не отложите их ниже. Изменение вступит в силу в следующем разговоре.",
-    "deferredToolsPerToolDesc": "Включите только те инструменты, схемы которых должны обнаруживаться через tool_search, а не отправляться заранее.",
+    "deferredToolsEnabled": "Загрузка схем инструментов",
+    "deferredToolsEnabledDesc": "Рекомендуемый режим переносит необязательные встроенные инструменты и все динамические инструменты MCP в tool_search. «Встроенные сразу» по-прежнему учитывает настройку отсрочки каждого сервера MCP.",
+    "deferredToolsModeCustom": "Настраиваемый",
+    "deferredToolsModeDisabled": "Встроенные сразу",
+    "deferredToolsModeRecommended": "Рекомендуемый",
+    "deferredToolsPerToolDesc": "Эти встроенные инструменты загружаются через tool_search. Изменение переключателя включает настраиваемый режим.",
     "deferredToolsPerToolTitle": "Отложенные встроенные инструменты",
     "devClearAll": "Очистить всё",
     "devClearAllDesc": "Очистить все данные и сбросить к значениям по умолчанию",
@@ -5253,8 +5486,12 @@
       "intro": "Запускайте пользовательские команды / HTTP / промпты / субагентов на событиях жизненного цикла. Совместимо на уровне полей с hooks Claude Code.",
       "disableAll": "Отключить все hooks",
       "disableAllDesc": "Главный переключатель — отключает все hooks во всех областях.",
-      "allowProjectScope": "Разрешить проектные и локальные хуки",
-      "allowProjectScopeDesc": "Позволяет файлам .hope-agent/hooks.json и hooks.local.json в рабочем каталоге добавлять хуки — удобно для общего доступа в команде. По умолчанию выключено, потому что они могут сами выполнять команды; включайте только для проектов, которым доверяете.",
+      "trustedProjectScopes": "Доверенные рабочие пространства Hook",
+      "trustedProjectScopesDesc": "Разрешайте проектные и локальные файлы Hook отдельно для каждого рабочего пространства. Укажите точный абсолютный путь; псевдонимы и символические ссылки отклоняются.",
+      "workspacePath": "Абсолютный путь рабочего пространства",
+      "trustWorkspace": "Доверять содержимому",
+      "noTrustedWorkspaces": "Нет доверенных файлов Hook рабочего пространства.",
+      "trustContentBound": "Доверие привязывается к содержимому Hook-файлов при добавлении рабочей области. Изменение, перемещение или псевдоним пути отключает его. Для повторного одобрения удалите и сохраните область, затем добавьте и сохраните её снова.",
       "scopeNote": "Эта панель редактирует hooks области user. Области project (.hope-agent/hooks.json, общая через репозиторий), local (hooks.local.json) и managed (/etc/hope-agent/hooks.json) основаны на файлах и объединяются сверху.",
       "pickEvent": "Выберите событие…",
       "addHook": "Добавить hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "Этот обработчик запускает LLM / субагента встроенно и будет замедлять каждый раз, когда срабатывает это блокирующее событие. Здесь предпочтите command / http или перенесите его на событие наблюдения (например, PostToolUse).",
       "invalidJson": "Неверный JSON",
       "modelInheritDefault": "Использовать значение автоматизации по умолчанию",
-      "defaultShell": "По умолчанию"
+      "defaultShell": "По умолчанию",
+      "allowProjectScope": "Разрешить проектные и локальные хуки",
+      "allowProjectScopeDesc": "Позволяет файлам .hope-agent/hooks.json и hooks.local.json в рабочем каталоге добавлять хуки — удобно для общего доступа в команде. По умолчанию выключено, потому что они могут сами выполнять команды; включайте только для проектов, которым доверяете."
     },
     "hours": "ч",
     "inheritGlobal": "Наследовать глобальные настройки",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "Удалить сервер «{{name}}»? Это невозможно отменить.",
       "confirmDeleteTitle": "Удалить «{{name}}»?",
       "connectTimeout": "Тайм-аут подключения (с)",
+      "connectionSettings": "Стратегия подключения",
       "cwdLabel": "Рабочий каталог (необязательно)",
       "cwdPlaceholder": "наследовать приложение cwd",
       "deferredToolsLabel": "Отложить схемы инструментов",
+      "directToolsLabel": "Загружать схемы инструментов напрямую",
       "deleted": "Сервер «{{name}}» удален.",
       "deniedTools": "Список запрещенных инструментов",
       "descriptionLabel": "Описание (необязательно)",
       "descriptionPlaceholder": "Что делает этот сервер",
       "disabled": "Отключён",
       "eagerLabel": "Подключаться при запуске",
+      "effectiveDeferredByGlobal": "Глобальная рекомендуемая политика уже откладывает инструменты этого сервера.",
       "edit": "Редактировать",
       "editTitle": "Редактировать сервер MCP — {{name}}",
       "emptyDesc": "Добавьте сервер MCP или импортируйте его из конфигурации рабочего стола Claude. stdio-серверы работают сегодня; удаленные транспортные средства HTTP/SSE/WebSocket поступают на более позднем этапе.",
@@ -5749,11 +5991,13 @@
       "importJson": "Импортировать JSON",
       "invalidName": "Имя должно соответствовать ^[a-z0-9_-]{1,32}$ (строчные буквы, цифры, подчеркивание, дефис)",
       "loadFailed": "Не удалось загрузить серверы",
+      "lazyLabel": "Подключаться по запросу",
       "nameImmutable": "Имя не может быть изменено после создания. Удалите и повторно добавьте, чтобы переименовать.",
       "nameLabel": "Имя",
       "reconnect": "Восстановить соединение",
       "remoteTransportPhase4": "Транспортные средства HTTP / SSE / WebSocket приземлятся на этапе 4.",
       "saved": "Сохранено",
+      "securitySettings": "Безопасность и подтверждения",
       "signOut": "Выйти",
       "signOutSuccess": "Учётные данные \"{{name}}\" удалены",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "Настройка изоляции Docker-контейнерной песочницы для безопасного выполнения команд",
     "sandboxDockerAvailable": "Docker доступен",
     "sandboxDockerChecking": "Проверка...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Получить Docker Desktop",
     "sandboxDockerNotInstalled": "Docker не обнаружен, сначала установите Docker Desktop",
     "sandboxDockerNotRunning": "Docker установлен, но не запущен. Запустите Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker недоступен",
     "sandboxImage": "Образ",
     "sandboxImageDesc": "Docker-образ для контейнеров песочницы",
+    "sandboxImageDigestRequired": "Закрепите образ как name@sha256:<64-значный дайджест>; изменяемые теги отклоняются.",
     "sandboxMemoryLimit": "Лимит памяти",
     "sandboxNetworkBridge": "Мост",
     "sandboxNetworkHost": "Хост",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "Контейнер",
     "sandboxSectionResources": "Лимиты ресурсов",
     "sandboxSectionSecurity": "Усиление безопасности",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "с",
     "security": "Политика безопасности",
     "selectDefaultModel": "Выбрать модель по умолчанию",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "Максимум дочерних Agents из этой родительской сессии, которые могут выполняться одновременно. Остальные ждут в очереди.",
     "subagentMaxDepth": "Макс. глубина вложенности",
     "subagentMaxDepthDesc": "Сколько уровней делегирования sub-agent разрешено под этим Agent. Большие значения позволяют дочерним Agents создавать своих дочерних Agents.",
+    "subagentProviderRetryAttempts": "Повторы восстановления шлюза",
+    "subagentProviderRetryAttemptsDesc": "Дополнительные попытки после отказа всех провайдеров и резервных моделей. 0 отключает внешнее восстановление.",
+    "subagentProviderRetryBackoff": "Базовая задержка повтора",
+    "subagentProviderRetryBackoffDesc": "Начальная задержка перед повтором исчерпанного шлюза; затем она растёт экспоненциально.",
     "subagentTimeout": "Таймаут по умолчанию",
     "subagentTimeoutDesc": "Максимальное время выполнения дочернего Agent. 0 означает без таймаута. Используется, если вызов не задаёт собственный timeout_secs.",
     "subagentTimeoutUnit": "секунд",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "Применить патч",
     "toolAskUserQuestionDesc": "Отправить пользователю структурированные вопросы (одиночный/множественный выбор, свободный ввод)",
     "toolAskUserQuestionName": "Спросить пользователя",
+    "toolAudioGenerateDesc": "Создание речи, музыки или звуковых эффектов из текста",
     "toolBrowserDesc": "Управление браузером для выполнения действий",
     "toolBrowserName": "Браузер",
     "toolCallNarration": "Обновления прогресса",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "Управление процессами",
     "toolProjectReadFileDesc": "Чтение файлов, загруженных в проект текущей сессии",
     "toolProjectReadFileName": "Чтение файла проекта",
+    "toolReadContextResourceDesc": "Чтение неизменяемого снимка @file или @plan, привязанного к текущему ходу",
     "toolReadDesc": "Чтение содержимого файла с постраничной навигацией и обнаружением изображений",
     "toolReadName": "Чтение файла",
     "toolRecallMemoryDesc": "Поиск и извлечение сохранённой памяти",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "Отправить вложение",
     "toolSendNotificationDesc": "Отправка уведомлений рабочего стола",
     "toolSendNotificationName": "Отправить уведомление",
+    "toolSessionContinueDesc": "Возобновить приостановленный разговор только по явному запросу пользователя",
     "toolSessionStatusDesc": "Запросить агента, модель, количество сообщений и временные метки сессии",
     "toolSessionStatusName": "Статус сессии",
     "toolSessionToNoteDesc": "Извлечь из разговора структурированную заметку.",
     "toolSessionToNoteName": "Диалог в заметку",
     "toolSessionsHistoryDesc": "Постраничный просмотр истории сообщений сессии",
     "toolSessionsHistoryName": "История сессии",
+    "toolSessionsCreateDesc": "Создать новую обычную сессию чата, при необходимости связать её с проектом и запустить агента первым сообщением или вложением",
     "toolSessionsListDesc": "Перечислить другие сессии (заголовок, агент, модель, количество сообщений)",
     "toolSessionsListName": "Список сессий",
     "toolSessionsSearchDesc": "Искать сохраненные сообщения чата и возвращать окна контекста совпадений",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "Отправить в сессию",
     "toolSubagentDesc": "Делегировать задачи sub-Agent на выполнение",
     "toolSubagentName": "Sub-Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "Создать отслеживаемую задачу для текущей сессии",
     "toolTaskCreateName": "Создать задачу",
     "toolTaskListDesc": "Список всех задач в текущей сессии",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "Обновлено",
     "weatherWind": "Ветер",
     "webFetch": "Загрузка веб-страниц",
+    "webFetchMaxTokensCap": "Максимальный бюджет токенов",
+    "webFetchMaxTokensCapDesc": "Жёсткий предел max_tokens в вызове инструмента",
+    "webFetchMaxConcurrentPerHost": "Одновременных запросов на хост",
+    "webFetchMinHostDelay": "Минимальная задержка для хоста (мс)",
+    "webFetchSectionRendering": "Динамический рендеринг",
+    "webFetchRenderMode": "Режим рендеринга по умолчанию",
+    "webFetchRenderNever": "Никогда (только прямой запрос)",
+    "webFetchRenderAuto": "Авто (при необходимости)",
+    "webFetchRenderAlways": "Всегда",
+    "webFetchRenderModeDesc": "Используется новый изолированный браузер без cookie и данных аккаунта",
+    "webFetchRenderTimeout": "Тайм-аут рендеринга (секунды)",
+    "webFetchCacheEntries": "Снимков в кэше",
     "webFetchCacheTtl": "TTL кэша (минут)",
     "webFetchCacheTtlDesc": "Сколько кэшировать загруженные страницы. 0 — кэш отключён.",
     "webFetchDesc": "Настройка того, как инструмент web_fetch извлекает контент из URL: кэш, безопасность и лимиты содержимого.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "Конечная точка отсутствует",
     "memoryExternalProviderBlockPolicyUnsupported": "Политика не поддерживается",
     "memoryExternalProviderBlockAdapterUnavailable": "Адаптер недоступен",
+    "memoryExternalProviderBlockCompatibilityUnverified": "Совместимость не проверена",
+    "memoryExternalProviderBlockCompatibilityBlocked": "Небезопасная версия поставщика",
     "memoryExternalProviderBlockLastError": "Последняя ошибка",
     "memoryExternalProviderErrors": {
       "load": "Не удалось загрузить внешние поставщики памяти.",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "Не удалось загрузить соединение с поставщиком внешней памяти.",
       "saveCredentials": "Не удалось сохранить подключение к поставщику внешней памяти.",
       "clearCredentials": "Не удалось очистить соединение с поставщиком внешней памяти.",
+      "testConnection": "Не удалось проверить соединение с поставщиком внешней памяти",
       "copyPreflightDiagnostics": "Не удалось скопировать предварительную проверку поставщика внешней памяти.",
       "copySyncDiagnostics": "Не удалось скопировать отчет о синхронизации с поставщиком внешней памяти.",
       "detail": "Подробности: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "Учетные данные хранятся отдельно с ограниченными правами доступа к файлам.",
     "memoryExternalProviderConnectionSaved": "Соединение сохранено",
     "memoryExternalProviderConnectionCleared": "Соединение очищено",
+    "memoryExternalProviderConnectionTest": "Проверить соединение",
+    "memoryExternalProviderCompatibilityPassed": "Проверка соединения и совместимости пройдена",
+    "memoryExternalProviderCompatibilityUnverified": "Соединение установлено, но версию поставщика проверить не удалось",
+    "memoryExternalProviderCompatibilityBlocked": "Версия поставщика ниже безопасного минимума",
+    "memoryExternalProviderCompatibilitySummary": "Статус: {{status}} · обнаружена {{detected}} · минимум {{minimum}}",
     "memoryExternalProviderEndpoint": "Конечная точка",
     "memoryExternalProviderEndpointKeep": "Сохранено: {{origin}} · оставьте пустым, чтобы сохранить",
     "memoryExternalProviderSubjectId": "Идентификатор удаленной области",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "Длительность по умолчанию",
       "durationOption": "{{seconds}} с"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "Удалить запись памяти"
     },
+    "fork": {
+      "description": "Продолжить в новой сессии"
+    },
     "handover": {
       "description": "Передать сессию в IM-чат"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "Начать новый чат"
+    },
+    "side": {
+      "description": "Начать боковой чат, не прерывая основной"
     },
     "noResults": "Подходящих команд нет",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "На паузе",
     "progress": "Прогресс",
     "resume": "Возобновить",
+    "resumeFeedback": {
+      "counts": "возобновлено: {{resumed}} · с ошибкой: {{failed}}",
+      "noOpDescription": "Все участники команды уже завершили работу; новые попытки не запускались.",
+      "noOpTitle": "Возобновление не требуется",
+      "partialTitle": "Команда возобновлена частично",
+      "refusedTitle": "Возобновление команды отклонено",
+      "resumedTitle": "Команда возобновлена",
+      "resuming": "Возобновление…"
+    },
     "review": "Проверка",
     "reviewer": "Рецензент",
     "send": "Отправить",
@@ -9282,6 +9572,7 @@
       "timed_out": "Таймаут — применены значения по умолчанию"
     },
     "ask_user_question": "Спросить пользователя",
+    "audio_generate": "Создать аудио",
     "browser": "Браузер",
     "canvas": "Холст",
     "delete_memory": "Удалить память",
@@ -9313,13 +9604,16 @@
     "process": "Менеджер процессов",
     "rawCall": "Просмотреть исходный вызов",
     "read": "Прочитать файл",
+    "read_context_resource": "Читать ресурс контекста",
     "recall_memory": "Вызвать память",
     "restore_settings_backup": "Восстановить резервную копию настроек",
     "save_memory": "Сохранить память",
     "send_attachment": "Отправить вложение",
     "send_notification": "Отправить уведомление",
+    "session_continue": "Продолжить сессию",
     "session_status": "Статус сессии",
     "sessions_history": "История сессий",
+    "sessions_create": "Создать сессию",
     "sessions_list": "Список сессий",
     "sessions_send": "Отправить в сессию",
     "skill": "Загрузить навык",
@@ -9329,6 +9623,8 @@
     "task_list": "Список задач",
     "task_update": "Обновить задачу",
     "team": "Команда агентов",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "Поиск инструментов",
     "update_core_memory": "Обновить основную память",
     "update_memory": "Обновить память",
@@ -9589,6 +9885,9 @@
     "openPanel": "Открыть рабочую область",
     "resizePanel": "Изменить размер панели рабочей области",
     "sourceFromSearch": "Поиск",
+    "sourceFetchDirect": "Загрузка",
+    "sourceFetchRendered": "Рендер",
+    "sourceFetchCache": "Кэш",
     "sourceFromUser": "Пользователь",
     "sourceFromAttachment": "Вложение",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "Сторожить",
     "defaultName": "Артефакт"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "Фоновые задачи",
     "openPanel": "Фоновые задачи",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "Исправить с ИИ",
       "fixStarted": "ИИ начал исправление",
       "fixBusy": "Идёт диалог, повторите попытку позже",
-      "fixPrompt": "Исправьте проблему, обнаруженную самопроверкой дизайна: {{detail}}. Используйте токены дизайн-системы (var(--ds-*)), чтобы упорядочить цвета и заменить жёстко заданные стили. Внесите только минимально необходимые изменения и сохраните остальную часть дизайна без изменений."
+      "fixPrompt": "Исправьте проблему, обнаруженную самопроверкой дизайна: {{detail}}. Используйте токены дизайн-системы (var(--ds-*)), чтобы упорядочить цвета и заменить жёстко заданные стили. Внесите только минимально необходимые изменения и сохраните остальную часть дизайна без изменений.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "Кит дизайн-системы",
@@ -12533,7 +12836,15 @@
       "copyLink": "Копировать ссылку",
       "copied2": "Скопировано",
       "loadErr": "Не удалось загрузить статус",
-      "shareTo": "Поделиться в"
+      "shareTo": "Поделиться в",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Развернуть на Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "Все артефакты совпадают со своим кодом",
       "checkStale": "У {{n}} артефактов есть обновления кода",
       "chatPrompt": "Реализованный код разошёлся с этим дизайном. Обновите текущий дизайн в соответствии с приведёнными изменениями кода, сохранив замысел дизайна и всё остальное без изменений."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "Имя",
       "shortDescription": "Краткое описание (необязательно)",
       "prompt": "Как должен выглядеть ваш питомец?",
+      "version": "Версия спрайтов",
+      "versionV2": "v2 · Рекомендуется",
+      "versionV1": "v1 · Устаревшая",
+      "versionV2Description": "Включает 16 направлений взгляда по часовой стрелке из Codex v2.",
+      "versionV1Description": "Создаёт исходный девятирядный атлас для старых клиентов.",
       "generate": "Создать предпросмотр",
       "generating": "Создаём предпросмотр…",
       "failed": "Не удалось создать питомца"
+    },
+    "upgrade": {
+      "action": "Обновить до v2",
+      "upgraded": "Создана копия v2. Исходный питомец v1 сохранён.",
+      "alreadyExists": "Эта версия v2 уже есть в вашей библиотеке.",
+      "failed": "Не удалось обновить питомца до v2"
     },
     "export": {
       "action": "Экспорт для Codex",
@@ -12848,7 +13218,7 @@
       "failed": "Не удалось экспортировать питомца"
     },
     "window": {
-      "interact": "Взаимодействовать с питомцем Hope",
+      "interact": "Взаимодействовать с {{name}}",
       "tuckAway": "Спрятать питомца"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "Конфигурация",
       "user": "Настройки пользователя"
     }
+  },
+  "toolchainDoctor": {
+    "title": "Диагностика инструментов",
+    "description": "Проверка системных сред и дополнительных инструментов разработки только для чтения. Hope Agent ничего не устанавливает, не обновляет, не запускает и не перенастраивает.",
+    "refresh": "Проверить снова",
+    "loading": "Проверка локальных инструментов…",
+    "loadFailed": "Не удалось проверить инструменты",
+    "readOnlyNotice": "Отображаются версии, доступность, связь с Docker, класс контекста, класс владельца сокета и временные обёртки без раскрытия путей и учётных данных.",
+    "detectedVersion": "Обнаружено {{version}}",
+    "notDetected": "Не обнаружено",
+    "minimumVersion": "Минимум {{version}}",
+    "diagnosticFacts": "Коды диагностики",
+    "status": {
+      "detected": "Обнаружено",
+      "supported": "Поддерживается",
+      "degraded": "Ограничено",
+      "blocked": "Заблокировано"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Требуется ответ",
+      "detail": "{{count}} вопросов ожидают в диалоге",
+      "detail_one": "Вопрос ожидает в диалоге",
+      "openAction": "Ответить сейчас"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

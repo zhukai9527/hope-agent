@@ -77,6 +77,11 @@ pub struct UserConfig {
     #[serde(default = "crate::default_true")]
     pub auto_collapse_completed_turns: bool,
 
+    /// Whether Enter sends the current message. When disabled, Enter inserts a
+    /// newline and Ctrl+Enter sends instead (default: true).
+    #[serde(default = "crate::default_true")]
+    pub enter_to_send: bool,
+
     /// Preferred chat rendering mode: "bubble" or "timeline".
     #[serde(default)]
     pub chat_display_mode: Option<String>,
@@ -97,7 +102,8 @@ pub struct UserConfig {
     #[serde(default)]
     pub remote_api_key: Option<String>,
 
-    /// Whether to inject weather info into system prompt (default: true)
+    /// Whether to expose weather observations in the dynamic environment-data
+    /// lane (default: true).
     #[serde(default = "crate::default_true")]
     pub weather_enabled: bool,
 
@@ -130,6 +136,7 @@ impl Default for UserConfig {
             auto_send_pending: false,
             auto_expand_thinking: true,
             auto_collapse_completed_turns: true,
+            enter_to_send: true,
             chat_display_mode: None,
             server_mode: None,
             remote_server_url: None,
@@ -156,7 +163,8 @@ pub fn load_user_config() -> Result<UserConfig> {
     Ok(config)
 }
 
-/// Save user config to ~/.hope-agent/user.json
+/// Save user config to ~/.hope-agent/user.json with credential-grade atomic
+/// publication, then notify active clients exactly once for a published state.
 pub fn save_user_config_to_disk(config: &UserConfig) -> Result<()> {
     let path = paths::user_config_path()?;
     if let Some(parent) = path.parent() {
@@ -166,7 +174,33 @@ pub fn save_user_config_to_disk(config: &UserConfig) -> Result<()> {
     crate::backup::snapshot_before_write(&path, "user");
 
     let data = serde_json::to_string_pretty(config)?;
-    std::fs::write(&path, data)?;
+    let outcome = crate::platform::write_secure_file_outcome(&path, data.as_bytes());
+    complete_user_config_write(outcome, || {
+        if let Some(bus) = crate::get_event_bus() {
+            bus.emit("config:changed", serde_json::json!({ "category": "user" }));
+        }
+    })
+}
+
+fn complete_user_config_write(
+    outcome: crate::platform::SecureWriteOutcome,
+    notify_changed: impl FnOnce(),
+) -> Result<()> {
+    let durability_warning = match outcome {
+        crate::platform::SecureWriteOutcome::Durable => None,
+        crate::platform::SecureWriteOutcome::PublishedButNotDurable(error) => Some(error),
+        crate::platform::SecureWriteOutcome::NotPublished(error) => return Err(error.into()),
+    };
+    notify_changed();
+    if let Some(error) = durability_warning {
+        crate::app_warn!(
+            "config",
+            "save_user_config",
+            "User config was published, but its final durability barrier failed; \
+             clients were notified for the published state: {}",
+            error
+        );
+    }
     Ok(())
 }
 
@@ -258,7 +292,9 @@ fn language_display_name(code: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::UserConfig;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{complete_user_config_write, UserConfig};
 
     #[test]
     fn default_keeps_default_on_chat_preferences_enabled() {
@@ -266,6 +302,7 @@ mod tests {
 
         assert!(config.auto_expand_thinking);
         assert!(config.auto_collapse_completed_turns);
+        assert!(config.enter_to_send);
         assert!(config.weather_enabled);
     }
 
@@ -275,6 +312,40 @@ mod tests {
 
         assert!(config.auto_expand_thinking);
         assert!(config.auto_collapse_completed_turns);
+        assert!(config.enter_to_send);
         assert!(config.weather_enabled);
+    }
+
+    #[test]
+    fn published_but_not_durable_user_config_notifies_exactly_once() {
+        let notifications = AtomicUsize::new(0);
+        complete_user_config_write(
+            crate::platform::SecureWriteOutcome::PublishedButNotDurable(std::io::Error::other(
+                "injected parent sync failure",
+            )),
+            || {
+                notifications.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .expect("published user config is a logical commit");
+
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn unpublished_user_config_does_not_notify() {
+        let notifications = AtomicUsize::new(0);
+        let error = complete_user_config_write(
+            crate::platform::SecureWriteOutcome::NotPublished(std::io::Error::other(
+                "injected pre-publication failure",
+            )),
+            || {
+                notifications.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .expect_err("unpublished user config must fail");
+
+        assert!(error.to_string().contains("pre-publication"));
+        assert_eq!(notifications.load(Ordering::SeqCst), 0);
     }
 }

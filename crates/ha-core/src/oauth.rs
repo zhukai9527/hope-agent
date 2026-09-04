@@ -209,6 +209,49 @@ pub(crate) async fn load_codex_token_for_evaluation(
     )
 }
 
+/// 已按 `model-eval-codex-oauth.v1` schema 编码、可交给隔离评测运行时的 Codex 凭据。
+///
+/// **`secret` 是明文 JSON，内含 raw access token**——
+/// `config::encode_model_eval_codex_secret` 只做 schema 封装与有效性校验，
+/// 不加密。别把这个类型当成脱敏边界。
+///
+/// 它收窄的是**装配职责**而非凭据可见性：特征 crate 不再需要认识
+/// [`CodexEvaluationToken`]、不再自己决定编码方式与摘要口径，因此
+/// [`CodexEvaluationToken`] / [`load_codex_token_for_evaluation`] /
+/// `config::encode_model_eval_codex_secret` 三者得以保持 `pub(crate)`。
+/// 凭据本身照样流向 `ha-eval-runtime` 并进隔离运行时的 config——那条路径的
+/// 把关点在 `evaluation/provider_resolution.rs`（见 CODEOWNERS）。
+///
+/// 刻意不 derive `Debug`：避免被顺手 `{:?}` 进日志（AGENTS「凭据禁入日志」红线）。
+pub struct CodexEvaluationSecret {
+    /// `config::encode_model_eval_codex_secret` 的产物，直接进隔离 `config.json`。
+    /// **含 raw access token 明文**，见类型文档。
+    pub secret: String,
+    /// 账号标识的摘要，只用于「同一 Provider 不得混用不同凭据」的一致性校验。
+    pub account_id_digest: String,
+}
+
+/// 为本地真实模型评测铸一份 Codex 凭据。`required_validity_secs` 必须覆盖整个
+/// campaign——隔离运行时拿不到 refresh token，中途过期无法续期。
+///
+/// 与迁移前 `ha-eval-runtime` 侧自己拼 token → encode → digest 三步**逐位等价**，
+/// 只是把三步收进 kernel，让那三个 `pub(crate)` 项不必为跨 crate 调用放开。
+pub async fn mint_codex_evaluation_secret(
+    required_validity_secs: u64,
+) -> Result<CodexEvaluationSecret> {
+    let token = load_codex_token_for_evaluation(required_validity_secs).await?;
+    let secret = crate::config::encode_model_eval_codex_secret(
+        &token.access_token,
+        &token.account_id,
+        token.expires_at_ms,
+    )?;
+    let account_id_digest = ha_eval_spec::digest_serializable(&token.account_id)?;
+    Ok(CodexEvaluationSecret {
+        secret,
+        account_id_digest,
+    })
+}
+
 /// Check if token is expired (or within `REFRESH_MARGIN_MS` of expiry).
 pub fn is_token_expired(token: &TokenData) -> bool {
     match token.expires_at {
@@ -243,9 +286,47 @@ fn auth_file_path() -> Result<PathBuf> {
 /// Save token to disk
 pub fn save_token(token: &TokenData) -> Result<()> {
     let path = auth_file_path()?;
+    save_token_at(&path, token)
+}
+
+fn save_token_at(path: &std::path::Path, token: &TokenData) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("OAuth credential path has no parent")?;
+    crate::platform::ensure_credential_directory(parent)
+        .context("authentication: failed to secure OAuth credential directory")?;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
+            bail!("authentication: OAuth credential path must be a regular file");
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("authentication: inspect OAuth credential path"),
+    }
     let json = serde_json::to_string_pretty(token)?;
-    std::fs::write(path, json)?;
-    Ok(())
+    match crate::platform::write_secure_file_outcome(path, json.as_bytes()) {
+        crate::platform::SecureWriteOutcome::Durable => Ok(()),
+        crate::platform::SecureWriteOutcome::PublishedButNotDurable(error) => {
+            // The new refresh token is already visible. Do not pretend the old
+            // one survived or retry a completed credential rotation.
+            app_warn!(
+                "auth",
+                "token_persist",
+                "Credential published; directory sync failed: {}",
+                error
+            );
+            Ok(())
+        }
+        crate::platform::SecureWriteOutcome::NotPublished(error) => {
+            Err(error).context("authentication: failed to persist OAuth credentials")
+        }
+    }
+}
+
+/// Persist credentials without blocking the async runtime's worker threads.
+pub async fn save_token_async(token: &TokenData) -> Result<()> {
+    let token = token.clone();
+    crate::blocking::run_blocking(move || save_token(&token)).await
 }
 
 /// Load token from disk
@@ -320,6 +401,8 @@ pub async fn start_oauth_flow_with_auth_url(
                 // Save token to disk
                 if let Err(e) = save_token(&token) {
                     app_error!("auth", "oauth", "Failed to save token: {}", e);
+                    *result_clone.blocking_lock() = Some(Err(e));
+                    return;
                 }
                 // Notification(auth_success): fire from the OAuth-flow
                 // completion site (a fresh login), NOT from `save_token` —
@@ -419,7 +502,7 @@ fn run_callback_server(expected_state: &str, code_verifier: &str) -> Result<Toke
                     .ok_or_else(|| anyhow!("No authorization code in callback"))?
                     .clone();
 
-                // Send success response to browser
+                // Code receipt is not token exchange or persistence success.
                 let html = r#"<!DOCTYPE html>
 <html><head><title>Hope Agent</title>
 <style>
@@ -430,8 +513,8 @@ fn run_callback_server(expected_state: &str, code_verifier: &str) -> Result<Toke
   p { color: #888; }
 </style></head>
 <body><div class="container">
-  <h1>✅ 登录成功</h1>
-  <p>你可以关闭此页面，回到 Hope Agent 应用。</p>
+  <h1>授权回调已收到</h1>
+  <p>正在完成登录。请回到 Hope Agent 应用查看最终结果，你可以关闭此页面。</p>
 </div></body></html>"#;
 
                 let response = tiny_http::Response::from_string(html).with_header(
@@ -651,7 +734,7 @@ pub async fn refresh_access_token(refresh_token: &str) -> Result<TokenData> {
         token.expires_at = Some(now_ms + expires_in * 1000);
     }
 
-    save_token(&token)?;
+    save_token_async(&token).await?;
     Ok(token)
 }
 
@@ -664,6 +747,75 @@ fn urlencoding(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::failover::{classify_error, FailoverReason};
+
+    fn persistence_fixture() -> TokenData {
+        TokenData {
+            access_token: "synthetic-access".into(),
+            refresh_token: Some("synthetic-refresh".into()),
+            expires_in: None,
+            token_type: None,
+            account_id: None,
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn token_persistence_atomically_replaces_complete_json() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("credentials/auth.json");
+        let mut token = persistence_fixture();
+        save_token_at(&path, &token).unwrap();
+        token.access_token = "synthetic-replacement".into();
+        save_token_at(&path, &token).unwrap();
+        let saved: TokenData = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.access_token, token.access_token);
+        assert_eq!(saved.refresh_token, token.refresh_token);
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1
+        );
+    }
+
+    #[test]
+    fn token_persistence_rejects_non_file_target() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("credentials/auth.json");
+        std::fs::create_dir_all(&path).unwrap();
+        let sentinel = path.join("preserved");
+        std::fs::write(&sentinel, "old state").unwrap();
+        assert!(save_token_at(&path, &persistence_fixture()).is_err());
+        assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "old state");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn token_persistence_tightens_legacy_permissions_and_rejects_links() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("credentials");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = dir.join("auth.json");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        save_token_at(&path, &persistence_fixture()).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let link = dir.join("linked.json");
+        symlink(&path, &link).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(save_token_at(&link, &persistence_fixture()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let linked_dir = root.path().join("linked-credentials");
+        symlink(&dir, &linked_dir).unwrap();
+        assert!(save_token_at(&linked_dir.join("auth.json"), &persistence_fixture()).is_err());
+    }
 
     // Error messages from load_fresh_codex_token must classify as Auth.
 
@@ -728,5 +880,46 @@ mod tests {
             expires_at: Some(123_000),
         };
         assert_eq!(effective_token_expiry(&token), Some(100_000));
+    }
+
+    // **AGENTS.md「凭据禁入日志」红线**：`CodexEvaluationSecret` 明确不
+    // derive `Debug` 以防被 `{:?}` 顺手打到日志（见类型 doc）。这里用
+    // `static_assertions::assert_not_impl_all!` 做 compile-time 守卫——
+    // 若将来给它 derive 了 `Debug`，本文件会**编译失败**（不是运行时失败，
+    // 是直接 build 断），比人肉 review 兜底更可靠。
+    // 具体到 `mint_codex_evaluation_secret_bails_inside_model_eval_mode`：
+    // 由于返回 Ok 侧不 Debug，测试也不能用 `.expect_err(...)`——手动 match
+    // 是本 assertion 的必然副产物，且合意（防凭据顺手 pretty-print 到日志）。
+    static_assertions::assert_not_impl_all!(CodexEvaluationSecret: std::fmt::Debug);
+
+    /// **`mint_codex_evaluation_secret` 有效性契约的下界守卫**：
+    /// `load_codex_token_for_evaluation` 在检测到 `HA_MODEL_EVAL_MODE=1`
+    /// 时**必须立刻 bail**——`oauth.rs:145-147` 明说「Codex evaluation
+    /// credentials must be resolved by the owner process」，即隔离评测运行
+    /// 时里的 Codex 凭据面**永远不能**在这条路径产生。
+    ///
+    /// 若这条早退失守（比如未来重构不小心把它挪到 owner check 之下），隔
+    /// 离运行时会试图读 owner 侧的 OAuth 文件、甚至走 refresh token——
+    /// 直接违反「HA_MODEL_EVAL_MODE 下不得读凭据」的隔离契约。这里就地拦。
+    #[tokio::test]
+    async fn mint_codex_evaluation_secret_bails_inside_model_eval_mode() {
+        let result = crate::test_support::with_env_vars_async(
+            &[("HA_MODEL_EVAL_MODE", std::path::Path::new("1"))],
+            || async { mint_codex_evaluation_secret(60).await },
+        )
+        .await;
+        // Deliberately avoid `.expect_err(...)`：`CodexEvaluationSecret` 刻意
+        // 不 impl Debug（见上方 `assert_not_impl_all!`），Result 的 `Ok` 侧无
+        // Debug 就用不了 `expect_err`——手动 match 是刚才那条守卫的必然副产物，
+        // 且合意：mint 若真的返回了 Ok，我们希望 test 干净地 panic 而不是把
+        // 凭据 pretty-print 到测试日志。
+        match result {
+            Err(err) => assert!(
+                err.to_string()
+                    .contains("must be resolved by the owner process"),
+                "错误信息应指出 mint 的边界，实际：{err}"
+            ),
+            Ok(_) => panic!("隔离评测运行时里 mint 必须立刻 bail，绝不去读 owner OAuth 文件"),
+        }
     }
 }

@@ -190,14 +190,6 @@
     "labelPlaceholder": "레이블 (예: Org A Key)",
     "title": "API Key 로테이션 프로필"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "답변 필요",
-      "detail": "대화 중에 {{count}}개의 질문이 대기 중",
-      "detail_one": "대화 중에 1개의 질문이 대기 중",
-      "openAction": "지금 답변"
-    }
-  },
   "canvas": {
     "close": "닫기",
     "export": "내보내기",
@@ -318,6 +310,16 @@
     "removeConfig": "제거",
     "running": "실행 중",
     "selectChannel": "채널 선택",
+    "nativeReply": "네이티브 스트리밍 답장",
+    "nativeReplyHint": "플랫폼의 네이티브 답장 스트림을 사용합니다. 끄면 일반 메시지로 즉시 대체됩니다.",
+    "imsgProtocolV1": "신뢰성 높은 imsg 프로토콜",
+    "imsgProtocolV1Hint": "프로토콜 v1을 협상하고 watch 오버플로를 복구하며 하위 프로세스 재시작을 감독합니다. 끄면 기존 RPC를 사용합니다.",
+    "googleChatStandardMarkdown": "표준 Markdown",
+    "googleChatStandardMarkdownHint": "새 텍스트 메시지에 Google Chat 표준 Markdown을 사용합니다. 끄면 기존 Chat 문법을 사용합니다.",
+    "discordChannelObfuscation": "비공개 채널 난독화 테스트",
+    "discordChannelObfuscationHint": "이 계정을 Discord의 임시 Gateway 동작에 참여시킵니다. 숨겨진 채널은 선택되거나 처리되지 않습니다.",
+    "discordFileRequests": "Discord 기본 파일 요청",
+    "discordFileRequestsHint": "구조화된 질문에서 단일 파일 업로드 창을 엽니다. 서버가 유형, 크기 및 대화 바인딩을 다시 검증합니다.",
     "showThinking": "IM 메시지에 사고 과정 표시",
     "showThinkingHint": "사용 설정 시 각 라운드 답변 전에 모델의 추론 내용이 인용 블록으로 삽입됩니다. 기본값은 꺼짐.",
     "signalAccount": "전화번호",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark(국제판)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "“{{title}}”에 메시지를 보냈습니다",
+      "receivedFrom": "다른 대화 “{{title}}”에서 보냄",
+      "untitled": "제목 없는 대화",
+      "details": "메시지 세부 정보 보기"
+    },
     "addWorkingDirectory": "작업 디렉터리 추가",
     "askAnything": "아이디어를 말씀해 주세요. @로 파일/노트/스킬, #로 빠른 입력, /로 빠른 명령...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "새 세션에서 계속",
       "continuedFrom": "이어받음",
       "created": "새 세션에서 계속합니다",
+      "createdButNotOpened": "포크 `{{id}}`가 생성되었지만 열지 못했습니다. 세션 목록에서 선택해 계속하세요.",
       "failed": "새 세션에서 계속할 수 없습니다",
       "sourceFallback": "원본 세션"
+    },
+    "sideChat": {
+      "label": "사이드 채팅",
+      "untitled": "사이드 채팅 {{index}}",
+      "new": "새 사이드 채팅",
+      "close": "사이드 채팅 패널 닫기",
+      "nonBlocking": "메인 채팅을 중단하지 않고 별도로 질문하세요",
+      "askSelection": "사이드 채팅에서 질문",
+      "createFailed": "사이드 채팅을 만들 수 없습니다"
     },
     "browserPanel": {
       "backendBadgeTooltip": "브라우저 백엔드: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "이전 컨텍스트 압축 중",
     "contextCompactedMsgs": "이전 메시지 {{count}}개",
     "contextCompactionFailedTitle": "컨텍스트 압축이 일시 중지됨",
+    "contextCompactionRetry": "압축 다시 시도",
     "contextCompaction": {
       "preparing": "이전 컨텍스트 압축 중",
       "summarizing": "세션 요약 생성 중",
@@ -553,6 +572,7 @@
       "noMatches": "일치하는 빠른 입력이 없습니다"
     },
     "cronTaskStarted": "예약 작업이 트리거되었습니다",
+    "scheduledOrigin": "예약 작업: {{name}}",
     "cronTrigger": "예약 작업",
     "loopTriggered": "루프 단계가 한 번 트리거됨",
     "loopTrigger": "루프",
@@ -651,6 +671,7 @@
     "markAllRead": "모두 읽음으로 표시",
     "markAsRead": "읽음으로 표시",
     "pinSession": "고정",
+    "pinnedSessions": "고정",
     "unpinSession": "고정 해제",
     "minutesAgo": "{{count}}분 전",
     "modelsCount": "모델 {{count}}개",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "샌드박스",
       "off": {
-        "desc": "호스트, WSL 또는 격리 환경을 자동으로 선택합니다.",
-        "label": "자동"
+        "desc": "호스트에서 실행하세요. 승인 동작은 변경되지 않습니다.",
+        "label": "샌드박스 끄기"
       },
       "setupTitle": "샌드박스를 활성화하도록 Docker 구성",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "인증 실패",
     "reasonBilling": "결제 / 할당량 초과",
     "reasonContextOverflow": "컨텍스트 초과",
+    "reasonDispatchUnknown": "전송 결과를 알 수 없음 — 자동 재시도 중지",
     "reasonModelNotFound": "모델을 찾을 수 없음",
     "reasonOverloaded": "서비스 과부하",
     "reasonRateLimit": "요청 빈도 초과",
@@ -899,6 +921,7 @@
     "statusThinking": "사고 모드",
     "statusUpdated": "업데이트",
     "stopReply": "응답 중지",
+    "continuePausedWork": "일시 중지된 작업 계속",
     "stopGenerationDone": "생성이 중지되었습니다",
     "subagentFrom": "{{agent}} 에서 위임",
     "subagentResultCompleted": "완료됨",
@@ -923,6 +946,7 @@
     "thinking": "생각 중...",
     "thinkingAutoDisabled": "{{provider}} / {{model}}는 현재 사고 모드를 지원하지 않습니다. Thinking이 자동으로 비활성화되고 요청이 재시도되었습니다.",
     "visionAutoDisabled": "{{provider}} / {{model}}은(는) 이미지 입력을 지원하지 않습니다. 이미지를 무시하고 답변을 계속했습니다.",
+    "visionBridgeConfigureAction": "비전 브리지 설정",
     "toolCalling": "도구 호출 중...",
     "totalTokens": "합계",
     "unknownProvider": "알 수 없는 제공업체",
@@ -983,6 +1007,9 @@
       "failed": "대화 내보내기에 실패했습니다.",
       "untitled": "제목 없음"
     },
+    "capabilityMention": {
+      "heading": "플러그인 및 커넥터"
+    },
     "skillMention": {
       "heading": "스킬",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Chrome 확장 프로그램이 필요합니다."
     },
     "conversationEmpty": "이 대화에는 메시지가 없습니다.",
-    "pendingCancelForceInsert": "이 라운드 삽입 취소",
+    "pendingCancelForceInsert": "답변 후 보내기로 변경",
     "pendingSaving": "저장 중",
     "pendingSavingTip": "메시지와 첨부 파일을 복구 가능한 대기열에 저장하고 있습니다.",
     "pendingInserting": "삽입 중",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "지금 보내기",
     "pendingFallbackAfterReply": "답장 후 보내기",
     "pendingFallbackAfterReplyTip": "도구 완료 지점이 발견되지 않았으며 현재 응답이 끝난 후에 전송됩니다.",
-    "pendingForceInsertTip": "실행 중인 도구가 완료될 때까지 기다렸다가 현재 도구를 중단하지 않고 모델에 삽입합니다.",
+    "pendingForceInsertTip": "이 배치에서 실행 중인 모든 도구가 완료된 후 모델에 삽입합니다. 도구를 중단하지 않으며, 이 턴에서 다음 도구 경계에 도달하지 않으면 답변이 끝난 후 전송됩니다.",
+    "pendingInsert": "삽입",
     "pendingInserted": "삽입됨",
     "pendingInsertedTip": "이 툴링 라운드가 완료된 후 모델에 삽입되었습니다.",
-    "pendingQueuedShort": "대기열",
+    "pendingHeldAfterStop": "전송 일시 중지됨",
+    "pendingHeldAfterStopTip": "현재 답변이 중지되어 이 메시지는 자동으로 전송되지 않습니다.",
+    "pendingMoreActions": "메시지 작업 더 보기",
+    "pendingQueuedShort": "답변 후 보내기",
     "pendingQueuedTip": "대기 대기열에 추가되었으며 현재 응답이 끝난 후 전송됩니다.",
     "pendingQueueTitle": "발송 예정",
-    "pendingWaitingToolBoundary": "도구 완료 지점을 기다립니다.",
-    "pendingWaitingToolBoundaryTip": "최신 도구 호출이 완료될 때까지 기다리십시오. 이번 라운드에서 도구가 더 이상 호출되지 않으면 응답이 완료된 후 전송됩니다.",
+    "pendingWaitingToolBoundary": "삽입 대기 중",
+    "pendingWaitingToolBoundaryTip": "이 배치에서 실행 중인 모든 도구가 완료될 때까지 기다린 후 삽입합니다. 이 턴에서 다음 도구 경계에 도달하지 않으면 답변이 끝난 후 전송됩니다.",
     "processNotification": "프로세스가 종료되었습니다",
     "rightPanel": {
       "collapse": "오른쪽 패널 접기",
       "expand": "오른쪽 패널 펼치기",
       "switch": "오른쪽 패널 전환",
       "dock": "오른쪽 패널 도크",
-      "openPanel": "{{panel}} 열기",
-      "switchToPanel": "{{panel}} 패널로 전환",
-      "collapsePanel": "{{panel}} 접기",
-      "expandPanel": "{{panel}} 펼치기",
+      "resize": "작업대 너비 조절",
       "workflowActiveCount": "활성 워크플로 {{count}}개",
       "workflowAttentionCount": "주의가 필요한 워크플로 {{count}}개",
       "backgroundRunningCount": "백그라운드 작업 {{count}}개 실행 중",
-      "subagentRunningCount": "하위 에이전트 {{count}}개 실행 중"
+      "subagentRunningCount": "하위 에이전트 {{count}}개 실행 중",
+      "openPanel": "{{panel}} 열기",
+      "switchToPanel": "{{panel}} 패널로 전환",
+      "collapsePanel": "{{panel}} 접기",
+      "expandPanel": "{{panel}} 펼치기"
     },
     "visionBridgeEngaged": "기본 모델이 이미지를 볼 수 없어 {{model}}이(가) 이미지 내용을 설명했습니다.",
     "visionBridgeUnavailable": "비전 모델이 이미지를 설명하지 못해 해당 이미지는 제외되었습니다.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "대상 추가",
     "agent": "Agent",
     "archivedProject": "(보관됨)",
+    "workspaceModePersistent": "전용 워크트리",
+    "workspaceCleanup": "각 실행 후",
+    "workspaceCleanupOption": {
+      "retain": "유지",
+      "discardIfClean": "변경 없으면 삭제",
+      "always": "항상 삭제"
+    },
+    "workspaceCleanupHint": {
+      "retain": "각 실행의 Worktree는 보관하거나 삭제할 때까지 유지됩니다.",
+      "discardIfClean": "실행이 변경 사항과 새 커밋을 남기지 않은 경우에만 삭제합니다. 필요할 수 있는 것은 지워지지 않습니다.",
+      "always": "커밋되지 않은 변경까지 포함해 매번 삭제합니다. 실제 결과물이 전달로 나가는 작업에만 사용하세요."
+    },
+    "workspaceModeHint": "프로젝트는 해당 디렉터리를 사용하고, 새 모드는 실행마다 워크트리를 만들며, 전용 모드는 작업별로 재사용합니다. 기준 브랜치는 워크트리에 적용됩니다.",
+    "workspaceActionBlocked": "사용할 수 없음: {{reason}}",
+    "workspaceActionReturn": "반환",
+    "workspaceActionResume": "반환 후 재개",
+    "workspaceActionDone": "{{action}} 완료",
     "atGrace": "유예(초)",
     "atGraceHint": "지연 실행 유예: 앱이 닫힌 동안 실행 시각을 지난 일회성 작업은 초과가 이 초 이내면 실행됩니다. 초과하면 '놓침'으로 표시됩니다(0 = 엄격, 지연 실행 없음).",
     "atMinute": "매시",
     "atTime": "시간",
     "autoAgent": "자동(프로젝트/기본값)",
+    "cancelRunFailed": "이 실행을 중지하지 못했습니다",
     "completed": "완료됨",
     "conversationEmpty": "이 대화에 메시지가 없습니다",
     "conversationsSelectHint": "왼쪽에서 실행을 선택하세요",
@@ -1463,7 +1513,7 @@
     "cronHelp": "형식: 초 분 시 일 월 요일 (예: 0 0 9 * * 1-5 = 평일 오전 9 시)",
     "dateTime": "날짜 및 시간",
     "daySuffix": "일",
-    "deleteConfirmDesc": "이 작업은 예약 작업과 실행 기록을 영구적으로 삭제합니다.",
+    "deleteConfirmDesc": "삭제하면 향후 예약만 중지됩니다. 실행 기록, 대화 및 워크트리는 유지됩니다.",
     "deleteConfirmTitle": "\"{{name}}\"을 삭제할까요?",
     "deleteFailed": "\"{{name}}\" 삭제에 실패했습니다",
     "deleteSuccess": "\"{{name}}\"을 삭제했습니다",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "매월",
     "failures": "실패",
     "filterAll": "전체",
+    "filterAttention": "조치 필요",
+    "schedulerPrimary": "스케줄러: 기본 프로세스",
+    "schedulerSecondary": "스케줄러: 보조 프로세스(작업 실행 불가)",
+    "schedulerRunning": "실행 중 {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "연속 {{failures}}/{{max}}회 실패로 자동 비활성화됨",
+      "runFailed": "최근 실행이 실패했습니다",
+      "missed": "예정된 실행을 놓쳤습니다",
+      "deliveryStale": "전달 대상이 더 이상 유효하지 않습니다",
+      "failing": "연속 {{failures}}/{{max}}회 실패"
+    },
     "freq_custom": "사용자 지정",
     "freq_daily": "매일",
     "freq_hourly": "매시간",
@@ -1521,6 +1582,19 @@
     "name": "작업 이름",
     "namePlaceholder": "예: 일일 요약",
     "newJob": "새 작업",
+    "conversationTarget": "실행 위치",
+    "conversationTargetNew": "실행할 때마다 새 채팅",
+    "conversationTargetExisting": "기존 채팅",
+    "sessionTargetPlaceholder": "채팅 선택",
+    "sessionTargetSearchPlaceholder": "채팅 검색",
+    "sessionTargetEmpty": "일치하는 채팅이 없습니다",
+    "errorSessionTargetRequired": "작업을 실행할 채팅을 선택하세요",
+    "copyAsNewTask": "새 작업으로 복사",
+    "deletedTaskHint": "이 작업은 삭제되었습니다. 기록은 유지되며 이후 실행은 예약되지 않습니다.",
+    "runAgain": "다시 실행",
+    "createWithModel": "모델로 만들기",
+    "manualSetup": "직접 설정",
+    "createWithModelPrompt": "예약 작업을 만들어 주세요. ……할 때 자동으로 ……했으면 좋겠어요.",
     "nextRun": "다음 실행",
     "noConversations": "실행 기록이 아직 없습니다",
     "noConversationsYet": "이 계정에는 아직 기록된 대화가 없습니다 (봇이 먼저 메시지를 수신하게 하세요)",
@@ -1536,8 +1610,13 @@
     "paused": "일시 정지됨",
     "prefixDeliveryWithName": "작업 이름 접두사 추가",
     "prefixDeliveryWithNameDesc": "동일한 채팅에 전달되는 여러 작업을 구별할 수 있도록 성공적인 전달 앞에 [예약 작업] {name}을 붙입니다.",
+    "preflightTitle": "실행 전 점검",
+    "preflightDescription": "계속하기 전에 일정과 실제 실행 환경을 확인하세요.",
+    "preflightIssue": "확인 항목: {{code}}",
     "project": "프로젝트",
+    "reloadLatest": "최신 버전 불러오기",
     "removeTarget": "대상 제거",
+    "revisionConflict": "이 작업이 다른 곳에서 변경되었습니다. 초안은 유지됩니다. 초안을 바꿀 준비가 되었을 때만 최신 버전을 불러오세요.",
     "resume": "재개",
     "runHistory": "실행 기록",
     "runNow": "지금 실행",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "실행 중",
     "runStatusSuccess": "성공",
     "schedule": "스케줄",
+    "scheduleSession": "이 채팅 예약",
+    "sessionTurnTarget": "대상 채팅",
+    "sessionTurnLiveHint": "실행할 때마다 이 채팅의 Agent, 프로젝트, 지식 공간, 작업 디렉터리, 권한 모드 및 샌드박스를 실시간으로 읽습니다.",
     "scheduleAt": "일회성",
     "scheduleCron": "예약 실행",
     "scheduleEvery": "고정 간격",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "무제한 실행",
+      "unlimitedModeWarning": "평가의 비용, 시간, Token, 호출, Agent 및 동시 실행 제한을 해제합니다. 실행이 무기한 계속되어 Provider 비용이 통제되지 않을 수 있습니다. 권한, 보안, 격리, 취소 및 정리 보호는 계속 적용됩니다.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "미리보기",
-    "resizePanel": "미리보기 패널 크기 조정"
+    "resizePanel": "미리보기 패널 크기 조정",
+    "pathBreadcrumb": "파일 경로",
+    "revealFolder": "파일 패널에서 이 폴더 표시",
+    "copyPath": "전체 경로 복사"
   },
   "fileBrowser": {
     "panelTitle": "파일",
+    "primaryFolder": "기본 폴더",
+    "defaultProjectFolder": "기본 프로젝트 폴더",
     "jumpToFile": "파일 브라우저에서 표시",
     "copied": "복사됨",
     "copyFailed": "복사 실패",
@@ -2733,7 +2850,10 @@
     "zoomOut": "축소",
     "zoomIn": "확대",
     "fitWidth": "너비 맞춤",
-    "officeNoContent": "이 파일에서 콘텐츠를 추출할 수 없습니다"
+    "officeNoContent": "이 파일에서 콘텐츠를 추출할 수 없습니다",
+    "openInNewTab": "새 탭에서 열기",
+    "collapseTree": "파일 목록 숨기기",
+    "expandTree": "파일 목록 표시"
   },
   "diffPanel": {
     "fileTooLarge": "파일이 너무 커 처음 256KB만 표시합니다",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "높음",
     "low": "낮음",
+    "max": "최대",
     "medium": "중간",
     "minimal": "최소",
     "none": "끄기",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "처리됨"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "Agent {{count}}개 종료",
+          "close_other": "Agent {{count}}개 종료",
+          "closeAll": "모든 Agent 종료",
+          "message_one": "Agent {{count}}개에 메시지 보내기",
+          "message_other": "Agent {{count}}개에 메시지 보내기",
+          "observe_one": "Agent {{count}}개 확인",
+          "observe_other": "Agent {{count}}개 확인",
+          "resume_one": "Agent {{count}}개 재개",
+          "resume_other": "Agent {{count}}개 재개"
+        },
+        "cron": {
+          "pause_one": "일정 {{count}}개 일시 중지",
+          "pause_other": "일정 {{count}}개 일시 중지",
+          "resume_one": "일정 {{count}}개 재개",
+          "resume_other": "일정 {{count}}개 재개"
+        },
+        "job": {
+          "cancel_one": "작업 {{count}}개 취소",
+          "cancel_other": "작업 {{count}}개 취소"
+        },
+        "process": {
+          "close_one": "프로세스 {{count}}개 종료",
+          "close_other": "프로세스 {{count}}개 종료"
+        },
+        "team": {
+          "pause_one": "팀 {{count}}개 일시 중지",
+          "pause_other": "팀 {{count}}개 일시 중지",
+          "resume_one": "팀 {{count}}개 재개",
+          "resume_other": "팀 {{count}}개 재개"
+        },
+        "workflow": {
+          "cancel_one": "워크플로 {{count}}개 취소",
+          "cancel_other": "워크플로 {{count}}개 취소",
+          "pause_one": "워크플로 {{count}}개 일시 중지",
+          "pause_other": "워크플로 {{count}}개 일시 중지",
+          "resume_one": "워크플로 {{count}}개 재개",
+          "resume_other": "워크플로 {{count}}개 재개"
+        }
+      },
+      "aggregate": {
+        "failed_one": "실패 {{count}}개",
+        "failed_other": "실패 {{count}}개",
+        "pending_one": "대기 {{count}}개",
+        "pending_other": "대기 {{count}}개",
+        "refused_one": "거부 {{count}}개",
+        "refused_other": "거부 {{count}}개",
+        "requested_one": "종료 요청 {{count}}개",
+        "requested_other": "종료 요청 {{count}}개",
+        "resumed_one": "재개 {{count}}개",
+        "resumed_other": "재개 {{count}}개",
+        "terminal_one": "종료 {{count}}개",
+        "terminal_other": "종료 {{count}}개"
+      },
+      "allTargets": "모든 Agent",
+      "badge": {
+        "alreadyTerminal_one": "{{count}}개 이미 종료됨",
+        "alreadyTerminal_other": "{{count}}개 이미 종료됨",
+        "refused_one": "{{count}}개 거부됨",
+        "refused_other": "{{count}}개 거부됨"
+      },
+      "failureDetails": "재개 실패",
+      "state": {
+        "accepted": "요청됨 · {{action}}",
+        "alreadyTerminal_one": "대상 {{count}}개가 이미 종료됨",
+        "alreadyTerminal_other": "대상 {{count}}개가 이미 종료됨",
+        "completed": "완료 · {{action}}",
+        "failed": "실패 · {{action}}",
+        "noAgentsToClose": "종료할 Agent가 없습니다",
+        "noResumeNeeded": "팀 완료됨 · 재개 불필요",
+        "partial": "부분 완료 · {{action}}",
+        "refused": "거부됨 · {{action}}",
+        "running": "진행 중 · {{action}}"
+      }
     },
     "skill": {
       "completed": "로드된 스킬: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "{{name}} 완료됨",
           "failed": "{{name}} 실패",
           "running": "{{name}} 실행 중"
+        },
+        "sessions_create": {
+          "completed": "{{name}} 생성됨",
+          "failed": "{{name}} 생성 실패",
+          "running": "{{name}} 생성 중"
         },
         "sessions_list": {
           "completed": "{{name}} 완료됨",
@@ -3587,13 +3790,16 @@
     "popOutActive": "별도 창에서 열림",
     "question": {
       "answered": "답변 완료",
+      "customAnswer": "추가 입력",
       "customPlaceholder": "사용자 지정 답변 입력...",
       "customRequired": "사용자 지정 답변을 입력하거나 다른 옵션을 선택하세요.",
       "default": "기본값",
       "multiSelect": "다중 선택",
+      "options": "원래 선택지",
       "pending": "답변을 기다리는 중…",
       "preview": "미리보기",
       "recommended": "권장",
+      "response": "내 답변",
       "retry": "재시도",
       "submit": "답변 제출",
       "timedOut": "시간 초과",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "아카이브 해제",
     "unassigned": "미할당",
     "uploadLogo": "로고 업로드",
+    "linkedDirs": {
+      "add": "폴더 추가",
+      "defaultPrimary": "기본 프로젝트 폴더(자동 생성)",
+      "empty": "연결된 추가 폴더가 없습니다",
+      "folderActions": "폴더 작업",
+      "hint": "프로젝트에 필요한 폴더를 연결합니다. 새 채팅, 상대 경로, Git 및 프로젝트 지침은 기본 폴더를 사용합니다.",
+      "invalid": "잘못된 연결 폴더",
+      "label": "소스 폴더",
+      "makePrimary": "기본 폴더로 설정",
+      "primary": "기본 폴더",
+      "remove": "{{path}} 제거",
+      "removeFolder": "폴더 제거"
+    },
     "workingDir": {
       "clear": "지우기",
       "hint": "이 프로젝트의 세션은 기본적으로 이 디렉터리를 사용합니다. 세션 수준 설정이 이를 재정의합니다.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "ACP 백엔드",
     "acpBinary": "바이너리",
+    "acpDistribution": "배포 설명자",
+    "acpDistributionPackage": "패키지 또는 제품",
+    "acpDistributionRequired": "이 레거시 백엔드는 실행 배포 정보가 명시될 때까지 차단됩니다.",
+    "acpDistributionVersion": "고정 버전",
+    "acpLaunchArgs": "실행 인수",
+    "acpProtocol": "프로토콜",
+    "acpTrustDistribution": "배포 정보 정의",
     "acpControl": "ACP 컨트롤 플레인",
     "acpControlDesc": "외부 ACP Agent (Claude Code, Codex CLI, Gemini CLI 등) 관리",
     "acpEnabled": "ACP 컨트롤 플레인 활성화",
@@ -4194,6 +4420,7 @@
         "send_attachment": "IM 채널로 파일 첨부 전송",
         "session_status": "세션의 현재 상태 조회",
         "sessions_history": "다른 세션의 메시지 기록 읽기",
+        "sessions_create": "새 일반 채팅 세션 만들기",
         "sessions_list": "모든 세션 메타데이터 나열",
         "sessions_send": "다른 세션에 메시지를 보내 작업 트리거",
         "update_settings": "AppConfig 설정 수정",
@@ -4213,6 +4440,7 @@
         "send_attachment": "첨부 파일 보내기",
         "session_status": "세션 상태",
         "sessions_history": "세션 기록",
+        "sessions_create": "세션 만들기",
         "sessions_list": "세션 목록",
         "sessions_send": "세션 간 전송",
         "update_settings": "설정 업데이트",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Telegram, WeChat, Feishu, Discord, Slack 등 IM 채널 통합 관리",
     "charLimitExceeded": "제한 초과, 초과 내용은 잘립니다",
     "chat": "대화",
+    "chatEnterToSend": "Enter로 보내기",
+    "chatEnterToSendDesc": "켜면 Enter로 보내고 Shift+Enter로 줄을 바꿉니다. 끄면 Enter로 줄을 바꾸고 Ctrl+Enter로 보냅니다.",
     "chatAutoExpandThinking": "사고 과정 자동 확장",
     "chatAutoExpandThinkingDesc": "채팅 버블의 사고 블록을 자동으로 확장합니다. 끄면 클릭하여 수동으로 확장.",
     "chatAutoCollapseCompletedTurns": "완료된 턴 접기",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "단일 도구 결과가 차지할 수 있는 컨텍스트 윈도우 최대 비중 (10%–60%). 더 큰 파일 읽기와 웹 가져오기를 보존하려면 늘리세요",
     "contextCompactMicrocompact": "마이크로 압축",
     "contextCompactMicrocompactEnabled": "마이크로 압축 활성화",
-    "contextCompactMicrocompactEnabledDesc": "오래된 임시 도구 결과 (ls/grep/find 등) 를 무비용으로 지웁니다. 다른 압축 계층보다 먼저 실행",
+    "contextCompactMicrocompactEnabledDesc": "추가 모델 호출 없이 오래된 임시 도구 결과(ls/grep/find 등)를 지우며, 다른 압축 계층보다 먼저 실행합니다",
     "contextCompactMicrocompactTools": "마이크로 압축 도구 목록",
     "contextCompactMicrocompactToolsDesc": "선택한 도구의 오래된 결과가 자동으로 지워집니다",
     "contextCompactMinPrunableChars": "최소 다듬기 가능 합계",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "최근 N개 메시지 라운드를 보호하고 해당 사용자 턴 시작까지 확장합니다",
     "contextCompactPruning": "도구 결과 다듬기",
     "contextCompactReactiveMicrocompact": "반응형 마이크로 압축",
-    "contextCompactReactiveMicrocompactDesc": "도구 루프 라운드 사이에 사용량이 임계값을 넘으면 임시 tool_results(ls/grep/find/…)를 제거합니다. Tier 0 — 비용 없이 프롬프트 캐시를 유지합니다.",
+    "contextCompactReactiveMicrocompactDesc": "도구 루프 라운드 사이에 사용량이 임계값을 넘으면 임시 tool_results(ls/grep/find/…)를 제거합니다. 제0계층은 추가 모델 호출을 하지 않지만 요청 기록을 변경하면 변경 지점 이후의 프롬프트 캐시가 무효화될 수 있습니다.",
     "contextCompactReactiveTriggerRatio": "트리거 비율",
     "contextCompactReactiveTriggerRatioDesc": "반응형 마이크로 압축을 트리거하는 사용률 (기본 75%).",
     "contextCompactSaved": "설정 저장됨",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "기본 Agent",
     "defaultModel": "기본 모델",
     "defaultModelDesc": "주로 사용하는 모델",
-    "deferredToolsEnabled": "도구 지연 로딩",
-    "deferredToolsEnabledDesc": "tool_search 기반 로딩을 활성화합니다. 도구는 아래에서 연기할 때까지 삽입된 상태로 유지됩니다. 다음 대화에 적용됩니다.",
-    "deferredToolsPerToolDesc": "먼저 전송하는 대신 tool_search를 통해 스키마를 검색해야 하는 도구만 활성화하세요.",
+    "deferredToolsEnabled": "도구 스키마 로딩 정책",
+    "deferredToolsEnabledDesc": "권장 모드는 필수적이지 않은 내장 도구와 모든 동적 MCP 도구를 tool_search로 필요할 때 로드합니다. 내장 도구 직접 로드는 각 MCP 서버의 자체 지연 설정을 계속 따릅니다.",
+    "deferredToolsModeCustom": "사용자 지정",
+    "deferredToolsModeDisabled": "내장 도구 직접 로드",
+    "deferredToolsModeRecommended": "권장",
+    "deferredToolsPerToolDesc": "이 내장 도구들은 tool_search를 통해 로드됩니다. 스위치를 변경하면 사용자 지정 모드로 전환됩니다.",
     "deferredToolsPerToolTitle": "지연된 내장 도구",
     "devClearAll": "모두 지우기",
     "devClearAllDesc": "모든 데이터를 지우고 기본값으로 재설정",
@@ -5253,8 +5486,12 @@
       "intro": "수명 주기 이벤트에서 사용자 정의 명령 / HTTP / 프롬프트 / 서브에이전트를 실행합니다. Claude Code hooks와 필드 수준 호환.",
       "disableAll": "모든 hooks 비활성화",
       "disableAllDesc": "마스터 스위치 — 모든 scope의 hook을 끕니다.",
-      "allowProjectScope": "프로젝트 & 로컬 Hook 허용",
-      "allowProjectScopeDesc": "작업 디렉터리의 .hope-agent/hooks.json 및 hooks.local.json에서 Hook을 추가할 수 있습니다(팀과 공유하기 편리). 스스로 명령을 실행할 수 있어 기본은 꺼짐 — 신뢰하는 프로젝트에서만 켜세요.",
+      "trustedProjectScopes": "신뢰하는 Hook 작업 공간",
+      "trustedProjectScopesDesc": "프로젝트 및 로컬 Hook 파일을 작업 공간별로 승인합니다. 정확한 절대 경로를 입력하세요. 별칭과 심볼릭 링크는 거부됩니다.",
+      "workspacePath": "작업 공간 절대 경로",
+      "trustWorkspace": "현재 내용 신뢰",
+      "noTrustedWorkspaces": "신뢰하는 작업 공간 Hook 파일이 없습니다.",
+      "trustContentBound": "워크스페이스를 추가할 때의 Hook 파일 내용에 신뢰가 바인딩됩니다. 내용 변경, 이동 또는 경로 별칭이 있으면 비활성화됩니다. 재승인하려면 워크스페이스를 제거하고 저장한 뒤 다시 추가하고 저장하세요.",
       "scopeNote": "이 패널은 user 범위 hooks를 편집합니다. project(.hope-agent/hooks.json, 저장소 공유), local(hooks.local.json), managed(/etc/hope-agent/hooks.json)는 파일 기반이며 위에 병합됩니다.",
       "pickEvent": "이벤트 선택…",
       "addHook": "hook 추가",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "이 핸들러는 LLM / 서브에이전트를 인라인으로 실행하므로 이 차단 이벤트가 발생할 때마다 지연됩니다. 여기서는 command / http를 권장하거나 관찰 이벤트(PostToolUse 등)로 옮기세요.",
       "invalidJson": "잘못된 JSON입니다",
       "modelInheritDefault": "자동화 기본값 따르기",
-      "defaultShell": "기본"
+      "defaultShell": "기본",
+      "allowProjectScope": "프로젝트 & 로컬 Hook 허용",
+      "allowProjectScopeDesc": "작업 디렉터리의 .hope-agent/hooks.json 및 hooks.local.json에서 Hook을 추가할 수 있습니다(팀과 공유하기 편리). 스스로 명령을 실행할 수 있어 기본은 꺼짐 — 신뢰하는 프로젝트에서만 켜세요."
     },
     "hours": "시간",
     "inheritGlobal": "글로벌 설정 상속",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "서버 '{{name}}'을 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
       "confirmDeleteTitle": "'{{name}}'을 삭제하시겠습니까?",
       "connectTimeout": "연결 시간 초과(초)",
+      "connectionSettings": "연결 전략",
       "cwdLabel": "작업 디렉터리(선택 사항)",
       "cwdPlaceholder": "앱 cwd 상속",
       "deferredToolsLabel": "도구 스키마 지연 로드",
+      "directToolsLabel": "도구 스키마 직접 로드",
       "deleted": "서버 \"{{name}}\"가 삭제되었습니다.",
       "deniedTools": "도구 거부 목록",
       "descriptionLabel": "설명(선택사항)",
       "descriptionPlaceholder": "이 서버는 무엇을 하는가",
       "disabled": "비활성화",
       "eagerLabel": "시작 시 연결",
+      "effectiveDeferredByGlobal": "전역 권장 정책에 따라 이 서버의 도구는 이미 지연 로드됩니다.",
       "edit": "편집",
       "editTitle": "MCP 서버 편집 — {{name}}",
       "emptyDesc": "MCP 서버를 추가하거나 Claude Desktop 설정에서 가져오세요. 현재는 stdio 서버를 사용할 수 있으며, 원격 HTTP/SSE/WebSocket 전송은 추후 지원될 예정입니다.",
@@ -5749,11 +5991,13 @@
       "importJson": "JSON 가져오기",
       "invalidName": "이름은 ^[a-z0-9_-]{1,32}$(소문자, 숫자, 밑줄, 하이픈)과 일치해야 합니다.",
       "loadFailed": "서버를 로드하지 못했습니다.",
+      "lazyLabel": "필요할 때 연결",
       "nameImmutable": "생성 후에는 이름을 변경할 수 없습니다. 이름을 바꾸려면 삭제하고 다시 추가하세요.",
       "nameLabel": "이름",
       "reconnect": "다시 연결",
       "remoteTransportPhase4": "HTTP / SSE / WebSocket 수송선은 4단계에 착륙합니다.",
       "saved": "저장됨",
+      "securitySettings": "보안 및 승인",
       "signOut": "로그아웃",
       "signOutSuccess": "\"{{name}}\" 자격 증명이 삭제되었습니다",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "안전한 명령 실행을 위해 Docker 컨테이너 샌드박스 격리 구성",
     "sandboxDockerAvailable": "Docker 사용 가능",
     "sandboxDockerChecking": "확인 중...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Docker Desktop 받기",
     "sandboxDockerNotInstalled": "Docker 가 감지되지 않습니다. 먼저 Docker Desktop 을 설치하세요",
     "sandboxDockerNotRunning": "Docker 가 설치되었지만 실행되지 않습니다. Docker Desktop 을 시작하세요",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker 사용 불가",
     "sandboxImage": "이미지",
     "sandboxImageDesc": "샌드박스 컨테이너에 사용되는 Docker 이미지",
+    "sandboxImageDigestRequired": "이미지를 name@sha256:<64자리 다이제스트>로 고정해야 합니다. 변경 가능한 태그는 거부됩니다.",
     "sandboxMemoryLimit": "메모리 제한",
     "sandboxNetworkBridge": "브리지",
     "sandboxNetworkHost": "호스트",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "컨테이너",
     "sandboxSectionResources": "리소스 제한",
     "sandboxSectionSecurity": "보안 강화",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "초",
     "security": "보안 정책",
     "selectDefaultModel": "기본 모델 선택",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "이 부모 세션에서 동시에 실행될 수 있는 자식 Agent 의 최대 수입니다. 초과분은 큐에서 기다립니다.",
     "subagentMaxDepth": "최대 중첩 깊이",
     "subagentMaxDepthDesc": "이 Agent 아래에서 허용되는 sub-agent 위임 단계 수입니다. 값이 높으면 자식 Agent 가 다시 자식을 만들 수 있습니다.",
+    "subagentProviderRetryAttempts": "게이트웨이 복구 재시도",
+    "subagentProviderRetryAttemptsDesc": "모든 공급자와 모델 대체 경로가 실패한 뒤 추가로 계속 시도할 횟수입니다. 0이면 비활성화됩니다.",
+    "subagentProviderRetryBackoff": "게이트웨이 재시도 기본 대기",
+    "subagentProviderRetryBackoffDesc": "게이트웨이 소진 후 첫 재시도 대기 시간이며 이후 지수적으로 증가합니다.",
     "subagentTimeout": "기본 시간 초과",
     "subagentTimeoutDesc": "생성된 자식 Agent 의 최대 실행 시간입니다. 0 은 시간 제한 없음입니다. 호출이 자체 timeout_secs 를 지정하지 않았을 때 사용됩니다.",
     "subagentTimeoutUnit": "초",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "패치 적용",
     "toolAskUserQuestionDesc": "사용자에게 구조화된 객관식/주관식 질문 보내기 (단일/다중 선택, 자유 입력)",
     "toolAskUserQuestionName": "사용자 질문",
+    "toolAudioGenerateDesc": "텍스트로 음성, 음악 또는 효과음 생성",
     "toolBrowserDesc": "브라우저를 제어하여 작업 수행",
     "toolBrowserName": "브라우저",
     "toolCallNarration": "진행 상황 업데이트",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "프로세스 관리",
     "toolProjectReadFileDesc": "현재 세션이 속한 프로젝트의 업로드 파일 읽기",
     "toolProjectReadFileName": "프로젝트 파일 읽기",
+    "toolReadContextResourceDesc": "현재 턴에 바인딩된 변경 불가능한 @file 또는 @plan 스냅샷 읽기",
     "toolReadDesc": "파일 내용 읽기, 페이지네이션 및 이미지 감지 지원",
     "toolReadName": "파일 읽기",
     "toolRecallMemoryDesc": "저장된 기억을 검색하고 가져오기",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "첨부 전송",
     "toolSendNotificationDesc": "데스크톱 알림 메시지 보내기",
     "toolSendNotificationName": "알림 보내기",
+    "toolSessionContinueDesc": "사용자가 명시적으로 요청한 경우에만 일시 중지된 대화 재개",
     "toolSessionStatusDesc": "특정 세션의 Agent / 모델 / 메시지 수 / 타임스탬프 조회",
     "toolSessionStatusName": "세션 상태",
     "toolSessionToNoteDesc": "현재 대화를 구조화된 노트로 정제합니다.",
     "toolSessionToNoteName": "대화를 노트로",
     "toolSessionsHistoryDesc": "특정 세션의 메시지 기록을 페이지 단위로 읽기",
     "toolSessionsHistoryName": "세션 기록",
+    "toolSessionsCreateDesc": "새 일반 채팅 세션을 만들고 선택적으로 Project에 연결한 뒤 첫 메시지나 첨부 파일로 Agent 실행",
     "toolSessionsListDesc": "현재 세션 외 다른 세션 나열 (제목 / Agent / 모델 / 메시지 수)",
     "toolSessionsListName": "세션 목록",
     "toolSessionsSearchDesc": "저장된 채팅 메시지를 검색하고 일치한 주변 컨텍스트를 반환",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "세션 간 전송",
     "toolSubagentDesc": "실행을 위해 서브 Agent 에 작업 위임",
     "toolSubagentName": "서브 Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "현재 세션의 추적 가능한 작업 만들기",
     "toolTaskCreateName": "작업 만들기",
     "toolTaskListDesc": "현재 세션의 모든 작업 나열",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "업데이트",
     "weatherWind": "바람",
     "webFetch": "웹 가져오기",
+    "webFetchMaxTokensCap": "최대 토큰 예산",
+    "webFetchMaxTokensCapDesc": "도구 호출의 max_tokens 하드 한도",
+    "webFetchMaxConcurrentPerHost": "호스트별 동시 요청 수",
+    "webFetchMinHostDelay": "동일 호스트 최소 지연(ms)",
+    "webFetchSectionRendering": "동적 렌더링",
+    "webFetchRenderMode": "기본 렌더링 모드",
+    "webFetchRenderNever": "사용 안 함(직접 가져오기)",
+    "webFetchRenderAuto": "자동(필요할 때)",
+    "webFetchRenderAlways": "항상",
+    "webFetchRenderModeDesc": "쿠키나 계정 상태가 없는 새 격리 브라우저를 사용합니다",
+    "webFetchRenderTimeout": "렌더링 타임아웃(초)",
+    "webFetchCacheEntries": "캐시 스냅샷 수",
     "webFetchCacheTtl": "캐시 TTL (분)",
     "webFetchCacheTtlDesc": "가져온 페이지를 캐시하는 시간. 0 으로 설정하면 캐싱 비활성화.",
     "webFetchDesc": "web_fetch 도구가 URL 에서 콘텐츠를 추출하는 방식 (캐싱, 보안, 콘텐츠 한도 등) 을 구성합니다.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "엔드포인트 누락",
     "memoryExternalProviderBlockPolicyUnsupported": "지원되지 않는 정책",
     "memoryExternalProviderBlockAdapterUnavailable": "어댑터를 사용할 수 없음",
+    "memoryExternalProviderBlockCompatibilityUnverified": "호환성 미확인",
+    "memoryExternalProviderBlockCompatibilityBlocked": "안전하지 않은 공급자 버전",
     "memoryExternalProviderBlockLastError": "마지막 오류",
     "memoryExternalProviderErrors": {
       "load": "외부 메모리 공급자를 로드하지 못했습니다.",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "외부 메모리 공급자 연결을 로드하지 못했습니다.",
       "saveCredentials": "외부 메모리 공급자 연결을 저장하지 못했습니다.",
       "clearCredentials": "외부 메모리 공급자 연결을 지우지 못했습니다.",
+      "testConnection": "외부 메모리 공급자 연결을 테스트하지 못했습니다.",
       "copyPreflightDiagnostics": "외부 메모리 공급자 실행 전 복사에 실패했습니다.",
       "copySyncDiagnostics": "외부 메모리 공급자 동기화 보고서를 복사하지 못했습니다.",
       "detail": "세부정보: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "자격 증명은 제한된 파일 권한으로 별도로 저장됩니다.",
     "memoryExternalProviderConnectionSaved": "연결이 저장되었습니다.",
     "memoryExternalProviderConnectionCleared": "연결이 지워졌습니다.",
+    "memoryExternalProviderConnectionTest": "연결 테스트",
+    "memoryExternalProviderCompatibilityPassed": "연결 및 호환성 검사를 통과했습니다.",
+    "memoryExternalProviderCompatibilityUnverified": "연결되었지만 공급자 버전을 확인할 수 없습니다.",
+    "memoryExternalProviderCompatibilityBlocked": "공급자 버전이 안전한 최소 버전보다 낮습니다.",
+    "memoryExternalProviderCompatibilitySummary": "상태: {{status}} · 감지 {{detected}} · 최소 {{minimum}}",
     "memoryExternalProviderEndpoint": "엔드포인트",
     "memoryExternalProviderEndpointKeep": "저장됨: {{origin}} · 보관하려면 비워 두세요.",
     "memoryExternalProviderSubjectId": "원격 범위 ID",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "기본 길이",
       "durationOption": "{{seconds}}초"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "기억 삭제"
     },
+    "fork": {
+      "description": "새 세션에서 계속"
+    },
     "handover": {
       "description": "세션을 IM 채팅으로 인계"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "새 채팅 시작"
+    },
+    "side": {
+      "description": "메인 채팅을 중단하지 않고 사이드 채팅 시작"
     },
     "noResults": "일치하는 명령이 없습니다",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "일시정지됨",
     "progress": "진행",
     "resume": "재개",
+    "resumeFeedback": {
+      "counts": "{{resumed}}개 재개 · {{failed}}개 실패",
+      "noOpDescription": "모든 팀원이 이미 완료되어 새 시도를 시작하지 않았습니다.",
+      "noOpTitle": "재개할 필요 없음",
+      "partialTitle": "팀이 부분적으로 재개됨",
+      "refusedTitle": "팀 재개가 거부됨",
+      "resumedTitle": "팀 재개됨",
+      "resuming": "재개 중…"
+    },
     "review": "검토",
     "reviewer": "검토자",
     "send": "보내기",
@@ -9282,6 +9572,7 @@
       "timed_out": "시간 초과 — 기본값 적용됨"
     },
     "ask_user_question": "사용자에게 질문",
+    "audio_generate": "오디오 생성",
     "browser": "브라우저",
     "canvas": "캔버스",
     "delete_memory": "기억 삭제",
@@ -9313,13 +9604,16 @@
     "process": "프로세스 관리자",
     "rawCall": "원시 호출 보기",
     "read": "파일 읽기",
+    "read_context_resource": "컨텍스트 리소스 읽기",
     "recall_memory": "기억 호출",
     "restore_settings_backup": "설정 백업 복원",
     "save_memory": "기억 저장",
     "send_attachment": "첨부 전송",
     "send_notification": "알림 보내기",
+    "session_continue": "세션 계속",
     "session_status": "세션 상태",
     "sessions_history": "세션 기록",
+    "sessions_create": "세션 만들기",
     "sessions_list": "세션 목록",
     "sessions_send": "세션으로 보내기",
     "skill": "스킬 로드",
@@ -9329,6 +9623,8 @@
     "task_list": "작업 목록",
     "task_update": "작업 업데이트",
     "team": "Agent 팀",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "도구 검색",
     "update_core_memory": "핵심 기억 업데이트",
     "update_memory": "기억 업데이트",
@@ -9589,6 +9885,9 @@
     "openPanel": "워크스페이스 열기",
     "resizePanel": "워크스페이스 패널 크기 조정",
     "sourceFromSearch": "검색",
+    "sourceFetchDirect": "가져오기",
+    "sourceFetchRendered": "렌더링",
+    "sourceFetchCache": "캐시",
     "sourceFromUser": "사용자",
     "sourceFromAttachment": "첨부",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "경비원",
     "defaultName": "산출물"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "백그라운드 작업",
     "openPanel": "백그라운드 작업",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "AI로 수정",
       "fixStarted": "AI가 수정을 시작했습니다",
       "fixBusy": "대화가 진행 중입니다. 잠시 후 다시 시도하세요",
-      "fixPrompt": "디자인 자체 점검에서 발견된 문제를 수정해 주세요: {{detail}}. 디자인 시스템 토큰(var(--ds-*))으로 색상을 정리하고 하드코딩된 스타일을 교체하세요. 꼭 필요한 최소한의 변경만 하고 나머지 디자인은 그대로 유지하세요."
+      "fixPrompt": "디자인 자체 점검에서 발견된 문제를 수정해 주세요: {{detail}}. 디자인 시스템 토큰(var(--ds-*))으로 색상을 정리하고 하드코딩된 스타일을 교체하세요. 꼭 필요한 최소한의 변경만 하고 나머지 디자인은 그대로 유지하세요.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "디자인 시스템 키트",
@@ -12533,7 +12836,15 @@
       "copyLink": "링크 복사",
       "copied2": "복사됨",
       "loadErr": "공유 상태 불러오기 실패",
-      "shareTo": "공유 대상"
+      "shareTo": "공유 대상",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Cloudflare Pages에 배포",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "모든 산출물가 코드와 일치합니다",
       "checkStale": "{{n}}개 산출물에 코드 업데이트가 있습니다",
       "chatPrompt": "구현된 코드가 이 디자인과 달라졌습니다. 참조된 코드 변경에 맞춰 현재 디자인을 업데이트하되, 디자인 의도와 나머지 내용은 그대로 유지하세요."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "이름",
       "shortDescription": "짧은 설명(선택 사항)",
       "prompt": "펫이 어떤 모습이면 좋을까요?",
+      "version": "스프라이트 버전",
+      "versionV2": "v2 · 권장",
+      "versionV1": "v1 · 레거시",
+      "versionV2Description": "Codex v2의 시계 방향 16개 시선 방향을 포함합니다.",
+      "versionV1Description": "이전 클라이언트용 기존 9행 아틀라스를 만듭니다.",
       "generate": "미리보기 생성",
       "generating": "미리보기 만드는 중…",
       "failed": "이 펫을 만들 수 없습니다"
+    },
+    "upgrade": {
+      "action": "v2로 업그레이드",
+      "upgraded": "v2 복사본을 만들었습니다. 원본 v1 펫도 유지됩니다.",
+      "alreadyExists": "이 v2 업그레이드는 이미 라이브러리에 있습니다.",
+      "failed": "이 펫을 v2로 업그레이드할 수 없습니다"
     },
     "export": {
       "action": "Codex용으로 내보내기",
@@ -12848,7 +13218,7 @@
       "failed": "이 펫을 내보낼 수 없습니다"
     },
     "window": {
-      "interact": "Hope 펫과 상호작용",
+      "interact": "{{name}}와 상호작용",
       "tuckAway": "펫 숨기기"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "구성",
       "user": "사용자 설정"
     }
+  },
+  "toolchainDoctor": {
+    "title": "도구 체인 진단",
+    "description": "호스트 런타임과 선택적 개발 도구를 읽기 전용으로 확인합니다. Hope Agent는 설치, 업그레이드, 시작 또는 재구성을 하지 않습니다.",
+    "refresh": "다시 확인",
+    "loading": "로컬 도구 체인 확인 중…",
+    "loadFailed": "도구 체인 확인 실패",
+    "readOnlyNotice": "호스트 경로나 자격 증명을 노출하지 않고 버전, 가용성, Docker 연결성, 컨텍스트 유형, 소켓 소유권 유형 및 임시 래퍼만 보고합니다.",
+    "detectedVersion": "감지됨 {{version}}",
+    "notDetected": "감지되지 않음",
+    "minimumVersion": "최소 {{version}}",
+    "diagnosticFacts": "진단 코드",
+    "status": {
+      "detected": "감지됨",
+      "supported": "지원됨",
+      "degraded": "제한됨",
+      "blocked": "차단됨"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "답변 필요",
+      "detail": "대화 중에 {{count}}개의 질문이 대기 중",
+      "detail_one": "대화 중에 1개의 질문이 대기 중",
+      "openAction": "지금 답변"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

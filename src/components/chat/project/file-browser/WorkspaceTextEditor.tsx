@@ -26,7 +26,11 @@ import { Input } from "@/components/ui/input"
 import { IconTip } from "@/components/ui/tooltip"
 import { useTransport } from "@/lib/transport-provider"
 import type { FileTextContent, FileWriteOutcome, WorkspaceEntry } from "@/lib/transport"
-import type { ProjectFsApi } from "../hooks/useProjectFs"
+import {
+  projectFsChangeMatchesScope,
+  type ProjectFsApi,
+  type ProjectFsChangeEvent,
+} from "../hooks/useProjectFs"
 import { MEBIBYTE_BYTES, useFilesystemConfig } from "@/lib/filesystemConfig"
 import {
   clearFileEditorDirty,
@@ -60,6 +64,7 @@ export function WorkspaceTextEditor({
   onClose,
   onSavedAs,
   onGuidedWrite,
+  dirtyOwnerId,
 }: {
   fs: ProjectFsApi
   entry: WorkspaceEntry
@@ -67,6 +72,9 @@ export function WorkspaceTextEditor({
   onClose: () => void
   onSavedAs: (entry: WorkspaceEntry) => void
   onGuidedWrite?: () => void
+  /** Surface that owns this editor (a workbench file tab), so closing that one
+   *  surface only guards its own unsaved buffer. */
+  dirtyOwnerId?: string
 }) {
   const { t } = useTranslation()
   const transport = useTransport()
@@ -116,9 +124,9 @@ export function WorkspaceTextEditor({
   useEffect(() => setMarkdownPreview(false), [entry.relPath])
 
   useEffect(() => {
-    setFileEditorDirty(dirtyRegistryId, dirty)
+    setFileEditorDirty(dirtyRegistryId, dirty, dirtyOwnerId)
     return () => clearFileEditorDirty(dirtyRegistryId)
-  }, [dirty, dirtyRegistryId])
+  }, [dirty, dirtyOwnerId, dirtyRegistryId])
 
   useEffect(
     () =>
@@ -291,13 +299,14 @@ export function WorkspaceTextEditor({
   useEffect(
     () =>
       transport.listen("project:fs_changed", (payload: unknown) => {
-        const changed = payload as {
-          scope?: string
-          scopeId?: string
-          dir?: string
-          path?: string
-        } | null
-        if (!changed || changed.scope !== fs.scope.scope || changed.scopeId !== fs.scope.scopeId)
+        const changed = payload as ProjectFsChangeEvent | null
+        if (
+          !changed ||
+          !projectFsChangeMatchesScope(changed, {
+            scope: fs.scope.scope,
+            scopeId: fs.scope.scopeId,
+          })
+        )
           return
         if (changed.path != null) {
           const changedPath = changed.path.replace(/^\/+/, "")

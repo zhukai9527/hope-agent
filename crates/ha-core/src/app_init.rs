@@ -1,11 +1,10 @@
-use crate::acp_control;
 use crate::channel;
 use crate::cron;
 use crate::globals::AppState;
 use crate::globals::{
-    ACP_MANAGER, APP_LOGGER, CACHED_AGENT, CHANNEL_CANCELS, CHANNEL_DB, CHANNEL_REGISTRY,
-    CODEX_TOKEN_CACHE, CRON_DB, EVENT_BUS, IDLE_EXTRACT_HANDLES, KNOWLEDGE_DB, LOG_DB,
-    MEMORY_BACKEND, PROJECT_DB, REASONING_EFFORT, SESSION_DB, SUBAGENT_CANCELS, TERMINAL_MANAGER,
+    APP_LOGGER, CACHED_AGENT, CHANNEL_CANCELS, CHANNEL_DB, CHANNEL_REGISTRY, CODEX_TOKEN_CACHE,
+    CRON_DB, EVENT_BUS, IDLE_EXTRACT_HANDLES, KNOWLEDGE_DB, LOG_DB, MEMORY_BACKEND, PROJECT_DB,
+    REASONING_EFFORT, SESSION_DB, SUBAGENT_CANCELS, TERMINAL_MANAGER,
 };
 use crate::knowledge::KnowledgeRegistry;
 use crate::logging::{self, AppLogger, LogDB};
@@ -25,60 +24,140 @@ use tokio::sync::Mutex;
 /// distinguishable from a successful first run.
 static INIT_DONE: OnceLock<()> = OnceLock::new();
 
-/// Records the runtime role passed to `init_runtime("desktop"|"server"|"acp"|"test")`.
-/// First-write-wins. Tests in the same binary share this `OnceLock` — once
-/// `init_runtime("test")` runs, `is_desktop()` stays `false` for every test.
-static RUNTIME_ROLE: OnceLock<&'static str> = OnceLock::new();
+/// ha-base 配置钩子的一次性注册闸。**不能复用 `INIT_DONE`**——那个 OnceLock 直到
+/// `init_runtime` 末尾才置位，函数开头的早退检查并非互斥，并发调用会双双穿过。
+static REGISTER_BASE_HOOKS: std::sync::Once = std::sync::Once::new();
 
-/// User-facing app version, set by each binary entrypoint via
-/// [`set_app_version`]. Distinct from `env!("CARGO_PKG_VERSION")` in
-/// ha-core — `pnpm sync:version` syncs `package.json` → `src-tauri/Cargo.toml`
-/// + `tauri.conf.json`, but does NOT touch this library crate. So
-/// `ha-core`'s own crate version drifts behind the app version and must
-/// not be used for "current version" comparisons in the updater path.
-static APP_VERSION: OnceLock<&'static str> = OnceLock::new();
-
-/// Register the calling binary's `CARGO_PKG_VERSION` so [`app_version`]
-/// returns the user-facing app version. Idempotent; first call wins.
-pub fn set_app_version(version: &'static str) {
-    let _ = APP_VERSION.set(version);
+/// 特征 crate 启动任务的执行档位。两个消费点都在 `start_background_tasks`
+/// 内（即只有 desktop-GUI / server 形态会跑；acp / mcp / eval 注册了也不
+/// 消费），差别只在 Primary 门：
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupStage {
+    /// 每个跑 `start_background_tasks` 的进程都执行（原 weather 刷新调用位，
+    /// desktop 等更细的门由任务自己判）。
+    EveryProcess,
+    /// 仅 Primary 进程执行（原 `spawn_auto_update_loop` 调用位）。
+    PrimaryOnly,
 }
 
-/// Returns the version registered by the binary entrypoint via
-/// [`set_app_version`]. Falls back to `ha-core`'s own crate version when
-/// no entrypoint registered (test harnesses, library consumers). Self-update
-/// callers MUST use this — never `env!("CARGO_PKG_VERSION")` directly.
-pub fn app_version() -> &'static str {
-    APP_VERSION
-        .get()
-        .copied()
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
+/// 特征 crate 装配期登记的启动任务队列。`None` = 已被消费——与工具注册表
+/// 同款「开闸判定与队列消费同一把锁」语义（见
+/// `tools/registry.rs::PENDING_EXTERNAL` 的 TOCTOU 说明）。
+type StartupQueue = std::sync::Mutex<Option<Vec<fn()>>>;
+static PENDING_STARTUP_EVERY: StartupQueue = std::sync::Mutex::new(Some(Vec::new()));
+static PENDING_STARTUP_PRIMARY: StartupQueue = std::sync::Mutex::new(Some(Vec::new()));
+static PENDING_INIT_TASKS: StartupQueue = std::sync::Mutex::new(Some(Vec::new()));
+
+/// 特征 crate 的 **init 期**装配任务：在 `init_runtime` 主体内、子系统装配
+/// 段消费（cached_config / 各 DB 全局已就绪，tokio runtime **不保证**存在，
+/// 任务内禁 spawn——需要后台循环用 [`register_startup_task`]）。与 startup
+/// 两档的差别：**所有 role**（含 acp / mcp / eval）都执行——原 ACP manager
+/// 创建等「无条件装配」类代码的原时序点。同款同锁消费语义。
+pub fn register_init_task(task: fn()) -> Result<(), crate::AlreadyRegistered> {
+    let mut pending = PENDING_INIT_TASKS.lock().unwrap_or_else(|p| p.into_inner());
+    match pending.as_mut() {
+        Some(queue) => {
+            queue.push(task);
+            Ok(())
+        }
+        None => Err(crate::AlreadyRegistered(
+            "init tasks (already consumed — register before init_runtime)",
+        )),
+    }
 }
 
-/// Returns the role string from the first `init_runtime()` call, or `None`
-/// if `init_runtime` hasn't run yet. Most callers want [`is_desktop`] for
-/// readable mode checks instead of comparing the string directly.
-pub fn runtime_role() -> Option<&'static str> {
-    RUNTIME_ROLE.get().copied()
+fn run_registered_init_tasks() {
+    let tasks = PENDING_INIT_TASKS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+        .unwrap_or_default();
+    for task in tasks {
+        task();
+    }
 }
 
-/// True iff the process started as the desktop (Tauri) shell. Used by paths
-/// that need to vary behavior by runtime mode without threading a parameter
-/// through the call stack (e.g. `system_prompt::build` injecting
-/// desktop-only guidance for clickable file paths).
-pub fn is_desktop() -> bool {
-    runtime_role() == Some("desktop")
+/// 特征 crate（如 ha-updater / ha-weather）在装配期登记启动任务（后台循环
+/// 等）。消费点**不在 `init_runtime` 内**，而在 `start_background_tasks` 的
+/// 对应档位调用位（tokio runtime 内、核心子系统已初始化），时序与各特征
+/// 迁出前的原调用点逐位一致。消费后再注册返回 `Err`：fail-loud，静默丢弃
+/// ＝该特征的后台行为在运行期直接消失。
+pub fn register_startup_task(
+    stage: StartupStage,
+    task: fn(),
+) -> Result<(), crate::AlreadyRegistered> {
+    let queue = match stage {
+        StartupStage::EveryProcess => &PENDING_STARTUP_EVERY,
+        StartupStage::PrimaryOnly => &PENDING_STARTUP_PRIMARY,
+    };
+    let mut pending = queue.lock().unwrap_or_else(|p| p.into_inner());
+    match pending.as_mut() {
+        Some(queue) => {
+            queue.push(task);
+            Ok(())
+        }
+        None => Err(crate::AlreadyRegistered(
+            "startup tasks (already consumed — register before start_background_tasks)",
+        )),
+    }
 }
 
-/// True iff the process started as the ACP stdio bridge (`hope-agent acp`).
-/// ACP runs over stdio for an editor client (Zed etc.); approvals can only
-/// reach a human if that client declared a permission capability (Epic D7).
-/// **Must use this, not `ChatSource`** — ACP turns reuse `ChatSource::Http`
-/// ([`crate::acp`]), so source alone can't distinguish ACP from a real HTTP
-/// client (D1 risk note).
-pub fn is_acp() -> bool {
-    runtime_role() == Some("acp")
+/// 消费并执行指定档位全部登记的启动任务（按注册序）。take() 置 `None`：
+/// 从这一刻起该档位注册通道关闭。
+fn run_registered_startup_tasks(stage: StartupStage) {
+    let queue = match stage {
+        StartupStage::EveryProcess => &PENDING_STARTUP_EVERY,
+        StartupStage::PrimaryOnly => &PENDING_STARTUP_PRIMARY,
+    };
+    let tasks = queue
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+        .unwrap_or_default();
+    for task in tasks {
+        task();
+    }
 }
+
+/// config 写路径副作用的生产装配（backup 快照 / 写原因作用域 / 保存后
+/// 广播 / ConfigChange hook）。`init_runtime` 与需要真实快照行为的
+/// persistence 测试共用这一份，防止两处漂移。
+pub(crate) fn default_config_side_effects() -> crate::config::ConfigSideEffects {
+    crate::config::ConfigSideEffects {
+        post_save: |config, change_category, change_source| {
+            // `allowRemoteWrites` is a live capability: publishing a
+            // disabled value must immediately revoke remote-created
+            // shells, not merely reject the next HTTP request.
+            if let Some(manager) = crate::globals::get_terminal_manager() {
+                manager.set_remote_access_allowed(config.filesystem.allow_remote_writes);
+            }
+            if let Some(bus) = crate::globals::get_event_bus() {
+                let mut payload = serde_json::json!({ "category": change_category });
+                if let Some(source) = change_source {
+                    payload["source"] = serde_json::json!(source);
+                }
+                bus.emit("config:changed", payload);
+            }
+        },
+        post_reload: |config| {
+            if let Some(manager) = crate::globals::get_terminal_manager() {
+                manager.set_remote_access_allowed(config.filesystem.allow_remote_writes);
+            }
+            if let Some(bus) = crate::globals::get_event_bus() {
+                bus.emit(
+                    "config:changed",
+                    serde_json::json!({ "category": "app", "source": "reload" }),
+                );
+            }
+        },
+        config_changed: |category, source| crate::hooks::fire_config_change(category, source),
+    }
+}
+
+// 运行模式与版本号原语已下沉 ha-base::runtime_role（模式判定是全仓通用
+// 查询，不该背 →app_init 边）；原地再导出保持 `app_init::is_desktop()` 等
+// 既有路径。角色仍由本模块的 `init_runtime` 写入（装配职责不动）。
+pub use ha_base::runtime_role::{app_version, is_acp, is_desktop, runtime_role, set_app_version};
 
 /// Whether an interactive, approval-capable client is attached to this
 /// process. Drives the unattended-approval surface check (Epic D): a headless
@@ -104,12 +183,107 @@ pub fn desktop_client_present() -> bool {
 /// `AppState` and stop here.
 pub fn init_runtime(role: &'static str) {
     // Record role before the idempotent early-return so the first caller's
-    // role wins. Subsequent `OnceLock::set` returns Err and is dropped.
-    let _ = RUNTIME_ROLE.set(role);
+    // role wins. Subsequent sets are dropped (first-write-wins).
+    ha_base::runtime_role::set_runtime_role(role);
 
     if INIT_DONE.get().is_some() {
         return;
     }
+
+    // 装配钩子必须在**任何**业务代码跑之前注册，共六组，两类去向：
+    //
+    //   · ha-base 反向依赖钩子（base 不能 `use AppConfig`）：plans 目录来源、
+    //     Dangerous Mode 配置源、process_registry 通知回调
+    //   · ha-core 内部切边钩子（防止 config / filesystem 焊进大环）：config
+    //     写路径副作用（保存后广播 / ConfigChange hook）、WorkspaceScope 四个
+    //     上下文根解析器、slash 命令分发三槽（channel 不得反向 use 装配层）。
+    //     注意 autosave 快照**不走钩子**——它必须无条件执行
+    //     （server setup 等入口在 init_runtime 之前/之外写 config），persistence
+    //     直调 `config::autosave`
+    //
+    // 冲突处置分两级，刻意不对称：
+    //   · 功能级（plans 目录 / 进程通知 / 根解析器 / slash 三槽）——被顶替
+    //     只是对应功能退化（根解析器 fail-closed；slash 未装配只是命令不可
+    //     用、无权限语义），记 error 继续
+    //   · 安全级（Dangerous Mode 配置源、config 副作用——post_save 携带
+    //     `allowRemoteWrites` 的远程 shell 即时撤销）——来源被顶替不可接受，
+    //     宁可起不来（panic 在各 register 内/此处触发）
+    //
+    // 放在 `INIT_DONE` 早退之后、其余初始化之前。必须走 `Once` 而不是靠
+    // `INIT_DONE` 早退：`INIT_DONE` 直到本函数**末尾**才置位，两个并发调用者
+    // 会双双穿过那道守卫（测试 harness 多线程并行跑 `init_runtime("test")`），
+    // 没有 `Once` 的话安全级的 panic 会被这种良性竞态误触发。
+    REGISTER_BASE_HOOKS.call_once(|| {
+        // 此处 APP_LOGGER 尚未初始化（logger 在 init_runtime 后段才 set），
+        // app_error! 会静默 no-op——stderr 兜底保住冲突分支的可观测性。
+        fn warn_dup(source: &str, e: impl std::fmt::Display) {
+            eprintln!("[app_init] {source}: {e}; keeping first registration");
+            app_error!(
+                "app_init",
+                "register_hooks",
+                "{source}: {e}; keeping first registration"
+            );
+        }
+
+        if let Err(e) = ha_base::paths::register_plans_dir_source(|| {
+            crate::config::cached_config().plans_directory.clone()
+        }) {
+            warn_dup(
+                "plans_dir_source (custom plansDirectory will be ignored)",
+                e,
+            );
+        }
+        crate::config::register_side_effects(default_config_side_effects());
+        if let Err(e) = ha_base::process_registry::register_notifiers(
+            crate::process_notification::on_process_exited,
+            crate::process_notification::emit_output,
+        ) {
+            warn_dup("process_notifiers", e);
+        }
+        if let Err(e) = crate::filesystem::register_root_resolvers(
+            crate::knowledge::workspace_root,
+            crate::session::workspace_root,
+            crate::project::workspace_root,
+            crate::project::workspace_linked_root,
+        ) {
+            warn_dup("workspace_root_resolvers", e);
+        }
+        if let Err(e) = ha_base::security::dangerous::register_config_flag_source(|| {
+            crate::config::cached_config().permission.global_yolo
+        }) {
+            eprintln!("[FATAL] dangerous-mode config source already registered: {e}");
+            panic!("dangerous-mode config source already registered: {e}");
+        }
+        // slash 分发三槽（装配层 → kernel / IM 渠道的唯一回调面）。功能级：
+        // 被顶替只会让 slash 命令走到另一份装配，记 error 继续。
+        if let Err(e) = crate::slash_hooks::register_slash_hooks(crate::slash_hooks::SlashHooks {
+            dispatch: |session_id, agent_id, command, args| {
+                Box::pin(crate::slash_commands::handlers::dispatch(
+                    session_id, agent_id, command, args,
+                ))
+            },
+            menu_entries: || Box::pin(crate::slash_commands::im_menu_entries()),
+            skill_command_help: |name| {
+                let store = crate::config::cached_config();
+                let skill = crate::skills_hooks::invocable_skills(
+                    &store.extra_skills_dirs,
+                    &store.disabled_skills,
+                    None,
+                )
+                .into_iter()
+                .find(|s| crate::skills::normalize_skill_command_name(&s.name) == name)?;
+                Some(crate::slash_hooks::SkillCommandHelp {
+                    arg_placeholder: skill.command_arg_placeholder,
+                    arg_options: skill.command_arg_options,
+                })
+            },
+        }) {
+            warn_dup(
+                "slash_hooks (slash commands may dispatch to a stale assembly)",
+                e,
+            );
+        }
+    });
 
     /// Unwrap a Result or print a fatal error to stderr and panic.
     fn fatal<T>(result: anyhow::Result<T>, msg: &str) -> T {
@@ -139,6 +313,10 @@ pub fn init_runtime(role: &'static str) {
     // initialised; commit C8 wires the cleanup + single-owner loop
     // gating against `runtime_lock::is_primary()`.
     let tier = crate::runtime_lock::acquire_or_secondary_for(role);
+    crate::channel_hooks::configure_im_delivery_ownership(
+        crate::runtime_role(),
+        tier == crate::runtime_lock::Tier::Primary,
+    );
 
     // Bootstrap a default EventBus if no caller pre-installed one. Tauri
     // shell installs its own bridged bus before `.manage(...)`; the HTTP
@@ -187,9 +365,7 @@ pub fn init_runtime(role: &'static str) {
 
     // Open the knowledge index cache (index.db) + install the note embedder.
     // Non-fatal: notes degrade to FTS-only / no search if this fails.
-    if let Err(e) = crate::knowledge::index::init_index_db() {
-        eprintln!("[runtime] knowledge index init failed: {e}");
-    }
+    crate::knowledge_hooks::init_index_db();
 
     // Initialize the LogDB and AppLogger. `LogDB` captures the db path
     // internally so we don't need to keep it around in this scope.
@@ -215,7 +391,7 @@ pub fn init_runtime(role: &'static str) {
     // check isn't atomic across instances, so a Secondary booting a fresh shared
     // data dir could otherwise race the Primary and seed a duplicate space.
     if crate::runtime_lock::is_primary() {
-        crate::knowledge::service::ensure_default_knowledge_base();
+        crate::knowledge_hooks::ensure_default_knowledge_base();
     }
 
     recover_startup_session_state(&session_db, tier);
@@ -373,7 +549,11 @@ pub fn init_runtime(role: &'static str) {
     // also has a per-row updated_at < now-60s SQL guard added in this
     // commit (see purge_orphan_incognito_sessions).
     if crate::runtime_lock::is_primary() {
-        // Clean up orphan sub-agent runs from previous app session
+        // Clean up orphan sub-agent runs and converge their durable delivery
+        // states. Ordinary pending ParentInjection dispatch is deliberately
+        // deferred to background ownership/readiness; armed
+        // `injecting_no_replay` rows remain fail-closed because process
+        // liveness cannot be inferred without a durable owner token.
         subagent::cleanup_orphan_runs(&session_db);
 
         // Clean up orphan team members from previous app session
@@ -411,19 +591,10 @@ pub fn init_runtime(role: &'static str) {
         // non-Message variants log-only so per-event work is < 1ms.
         let (mut registry, inbound_rx) = channel::ChannelRegistry::new(1024);
 
-        // Register built-in channel plugins
-        registry.register_plugin(Arc::new(channel::telegram::TelegramPlugin::new()));
-        registry.register_plugin(Arc::new(channel::wechat::WeChatPlugin::new()));
-        registry.register_plugin(Arc::new(channel::slack::SlackPlugin::new()));
-        registry.register_plugin(Arc::new(channel::feishu::FeishuPlugin::new()));
-        registry.register_plugin(Arc::new(channel::discord::DiscordPlugin::new()));
-        registry.register_plugin(Arc::new(channel::qqbot::QqBotPlugin::new()));
-        registry.register_plugin(Arc::new(channel::irc::IrcPlugin::new()));
-        registry.register_plugin(Arc::new(channel::signal::SignalPlugin::new()));
-        registry.register_plugin(Arc::new(channel::imessage::IMessagePlugin::new()));
-        registry.register_plugin(Arc::new(channel::whatsapp::WhatsAppPlugin::new()));
-        registry.register_plugin(Arc::new(channel::googlechat::GoogleChatPlugin::new()));
-        registry.register_plugin(Arc::new(channel::line::LinePlugin::new()));
+        // 12 个内置插件的实现随 ha-channel 上浮，由它在 `wire()` 注册的
+        // 装配槽装入——registry 本体与 `ChannelId` 键仍是 kernel 契约，
+        // 故 `CHANNEL_REGISTRY` 全局与 `AppState` 字段一处未改。
+        crate::channel_hooks::install_plugins(&mut registry);
 
         let registry = Arc::new(registry);
         let channel_db = Arc::new(channel::ChannelDB::new(session_db.clone()));
@@ -442,7 +613,7 @@ pub fn init_runtime(role: &'static str) {
         // OS thread with its own tokio runtime, so it's safe to call from
         // sync init regardless of which mode (desktop / server / acp) is
         // bringing up the runtime.
-        channel::worker::spawn_dispatcher(registry.clone(), channel_db.clone(), inbound_rx);
+        crate::channel_hooks::spawn_dispatcher(registry.clone(), channel_db.clone(), inbound_rx);
 
         // NOTE: approval / ask_user listeners use bare `tokio::spawn` and
         // require an ambient tokio runtime. They moved to
@@ -463,11 +634,18 @@ pub fn init_runtime(role: &'static str) {
         if let Some(manager) = TERMINAL_MANAGER.get() {
             manager.set_remote_access_allowed(store.filesystem.allow_remote_writes);
         }
-        if store.acp_control.enabled {
-            let registry = Arc::new(acp_control::AcpRuntimeRegistry::new());
-            let manager = Arc::new(acp_control::AcpSessionManager::new(registry));
-            let _ = ACP_MANAGER.set(manager);
-        }
+        // 特征 crate 的 init 期装配任务（如 ha-acp 的 SessionManager 创建
+        // ——原 ACP manager 创建位，所有 role 执行）。
+        run_registered_init_tasks();
+    }
+
+    if let Err(error) = crate::cache_routing::init() {
+        app_warn!(
+            "provider",
+            "cache_routing",
+            "persistent prompt-cache routing affinity unavailable; using a process-local key: {}",
+            error
+        );
     }
 
     // Install a panic hook that flushes any in-flight stream persisters
@@ -479,6 +657,10 @@ pub fn init_runtime(role: &'static str) {
 
     // Mark init complete only after every fallible step has succeeded. Any
     // earlier `fatal()` panic kills the process before this set runs.
+    // 工具注册表在装配收尾时主动冻结：外部条目（特征 crate）必须已在上面
+    // 注册完毕；重名等装配 bug 现在就 panic，不留到首次工具分发。
+    crate::tools::registry::freeze_now();
+
     let _ = INIT_DONE.set(());
 }
 
@@ -598,21 +780,15 @@ fn ptr_eq_lock<T>(lock: &std::sync::OnceLock<Arc<T>>, field: &Arc<T>) -> bool {
 /// channel registry isn't initialised yet.
 fn spawn_channel_listeners() {
     if let (Some(channel_db), Some(registry)) = (CHANNEL_DB.get(), CHANNEL_REGISTRY.get()) {
-        channel::worker::approval::spawn_channel_approval_listener(
-            channel_db.clone(),
-            registry.clone(),
-        );
-        channel::worker::ask_user::spawn_channel_ask_user_listener(
-            channel_db.clone(),
-            registry.clone(),
-        );
-        channel::worker::spawn_channel_eviction_watcher(registry.clone());
+        // approval / ask_user / eviction 随 ha-channel 上浮。
+        crate::channel_hooks::spawn_listeners(channel_db.clone(), registry.clone());
+        // 菜单重同步**留 kernel**：它只用 registry 的公开 `sync_commands_for_all()`
+        // 与 EventBus，订阅的是 skills / config 事件，不碰任何插件实现。
         spawn_channel_menu_resync_listener(registry.clone());
-        // Send a single "back online" notice to recently-active IM
-        // conversations after a fresh process boot. Self-gates on
-        // runtime_lock::is_primary() + AppConfig.startup_notification.enabled
-        // and is a no-op otherwise.
-        channel::worker::spawn_startup_notifier(registry.clone());
+        // startup notifier 排在菜单重同步**之后**——与迁移前逐位一致，故它
+        // 单独占一槽而不并进 `spawn_listeners`。自带 is_primary +
+        // startup_notification.enabled 双重自门控，语义不变。
+        crate::channel_hooks::spawn_startup_notifier(registry.clone());
     }
 }
 
@@ -841,6 +1017,7 @@ fn spawn_embedding_init() {
         // New selector (memory_embedding) takes priority; legacy single
         // `embedding` config is the fallback — mirrors the old init_runtime
         // branch order exactly.
+        let mut signature_migration: Option<(String, String)> = None;
         let provider = if store.memory_embedding.enabled {
             match memory::resolve_memory_embedding_config(
                 &store.memory_embedding,
@@ -848,7 +1025,14 @@ fn spawn_embedding_init() {
             )
             .and_then(|resolved| {
                 resolved
-                    .map(|(_, config, _)| memory::create_embedding_provider(&config))
+                    .map(|(model, config, signature)| {
+                        if store.memory_embedding.last_reembedded_signature.as_deref()
+                            != Some(signature.as_str())
+                        {
+                            signature_migration = Some((model.id.clone(), signature));
+                        }
+                        memory::create_embedding_provider(&config)
+                    })
                     .transpose()
             }) {
                 Ok(p) => p,
@@ -873,8 +1057,238 @@ fn spawn_embedding_init() {
                 "embedding",
                 "Memory embedding provider initialized (deferred, off critical path)"
             );
+            // Signature v2 includes the document role and provider request
+            // semantics. Old vectors remain stored under v1 and are therefore
+            // immediately ineligible; Primary resumes an idempotent full
+            // re-embed rather than reinterpreting them in place.
+            if crate::runtime_lock::is_primary() {
+                if let Some((model_id, signature)) = signature_migration {
+                    let signature_for_store = signature.clone();
+                    if let Err(error) = crate::config::mutate_config(
+                        ("memory_embedding.signature_migration", "startup"),
+                        move |config| {
+                            config.memory_embedding.active_signature =
+                                Some(signature_for_store.clone());
+                            Ok(())
+                        },
+                    ) {
+                        app_warn!(
+                            "memory",
+                            "embedding_migration",
+                            "Failed to persist embedding signature migration: {}",
+                            error
+                        );
+                    } else if let Err(error) = memory::start_memory_reembed_job(
+                        &model_id,
+                        memory::ReembedMode::KeepExisting,
+                        None,
+                    ) {
+                        app_warn!(
+                            "memory",
+                            "embedding_migration",
+                            "Failed to resume embedding signature migration: {}",
+                            error
+                        );
+                    }
+                }
+            }
         }
     });
+}
+
+/// Run the two durable ParentInjection replay sources as an idempotent sweep.
+/// Each source resolves its own IM binding/readiness: no attach proceeds
+/// GUI-only, a running account mirrors normally, and an enabled-but-unavailable
+/// account leaves that source pending. Both functions are synchronous SQLite
+/// walkers that only spawn their actual injectors, so keep the walk itself off
+/// the async runtime worker.
+async fn replay_recovered_parent_injections(session_db: Arc<SessionDB>) {
+    crate::blocking::run_blocking(move || {
+        subagent::replay_pending_parent_deliveries(&session_db);
+        crate::async_jobs::JobManager::replay_pending_injections();
+    })
+    .await;
+}
+
+struct DurableReplaySweepPermit<'a>(&'a AtomicBool);
+
+impl Drop for DurableReplaySweepPermit<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+fn try_acquire_durable_replay_sweep(running: &AtomicBool) -> Option<DurableReplaySweepPermit<'_>> {
+    running
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .ok()
+        .map(|_| DurableReplaySweepPermit(running))
+}
+
+static DURABLE_PARENT_INJECTION_REPLAY_SWEEP_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Start one idempotent durable replay sweep without overlapping an earlier
+/// tick. Source-level CAS remains the correctness boundary; this process-local
+/// single-flight guard avoids unnecessary SQLite contention and log reordering
+/// when a walk takes longer than the five-second handoff interval.
+fn spawn_durable_parent_injection_replay_sweep() {
+    if crate::channel_hooks::im_delivery_ownership()
+        != crate::channel_hooks::ImDeliveryOwnership::LocalOwner
+    {
+        return;
+    }
+    let Some(_permit) =
+        try_acquire_durable_replay_sweep(&DURABLE_PARENT_INJECTION_REPLAY_SWEEP_RUNNING)
+    else {
+        return;
+    };
+    let Some(session_db) = SESSION_DB.get().cloned() else {
+        app_error!(
+            "channel",
+            "handoff",
+            "Session DB unavailable; durable ParentInjection handoff sweep deferred"
+        );
+        return;
+    };
+    tokio::spawn(async move {
+        let _permit = _permit;
+        replay_recovered_parent_injections(session_db).await;
+    });
+}
+
+static DELIVERY_SURFACE_REPLAY_LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Successful starts and persisted disable/removal mutations converge through
+/// one delivery-surface event. The one-shot startup DB sweep has already put
+/// unavailable sources into the unified per-session FIFO with a Channel gate,
+/// so later events only open matching gates. A low-frequency pure durable
+/// sweep is also retained as the cross-process Secondary→Primary handoff
+/// backstop; it never runs startup recovery/reset logic.
+fn spawn_delivery_surface_replay_listener() {
+    if crate::channel_hooks::im_delivery_ownership()
+        != crate::channel_hooks::ImDeliveryOwnership::LocalOwner
+        || DELIVERY_SURFACE_REPLAY_LISTENER_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    let Some(bus) = crate::globals::get_event_bus() else {
+        DELIVERY_SURFACE_REPLAY_LISTENER_STARTED.store(false, std::sync::atomic::Ordering::SeqCst);
+        app_error!(
+            "channel",
+            "startup",
+            "EventBus unavailable; delivery-surface parent injection sweeps disabled"
+        );
+        return;
+    };
+    let mut rx = bus.subscribe();
+    tokio::spawn(async move {
+        let mut durable_handoff = tokio::time::interval(std::time::Duration::from_secs(5));
+        durable_handoff.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        durable_handoff.tick().await; // consume the immediate first tick
+        loop {
+            tokio::select! {
+                _ = durable_handoff.tick() => {
+                    spawn_durable_parent_injection_replay_sweep();
+                }
+                received = rx.recv() => match received {
+                    Ok(event)
+                        if event.name == channel::registry::DELIVERY_SURFACE_STATE_CHANGED_EVENT =>
+                    {
+                        if let Some(account_id) = event
+                            .payload
+                            .get("accountId")
+                            .and_then(serde_json::Value::as_str)
+                        {
+                            crate::subagent::injection::flush_channel_pending_injections(Some(
+                                account_id,
+                            ));
+                        } else {
+                            app_warn!(
+                                "channel",
+                                "startup",
+                                "Ignoring delivery-surface event without accountId"
+                            );
+                        }
+                    }
+                    Ok(_) => {}
+                    // A missed delivery-surface event is indistinguishable from
+                    // other lag here. Open every in-memory Channel gate; each
+                    // retry re-resolves the live surface before mutation.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        crate::subagent::injection::flush_channel_pending_injections(None);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    });
+}
+
+/// Primary/full-runtime startup coordinator. Recover and sweep durable sources
+/// before starting accounts: GUI-only sources proceed immediately, while each
+/// enabled binding enters the unified FIFO behind its own Channel gate. Account
+/// starts then run concurrently and open their exact gates as soon as each one
+/// succeeds, so one slow/broken account cannot delay healthy peers.
+async fn start_channels_then_replay_parent_injections(
+    registry: Arc<channel::ChannelRegistry>,
+    session_db: Arc<SessionDB>,
+    accounts: Vec<channel::types::ChannelAccountConfig>,
+) {
+    if crate::channel_hooks::im_delivery_ownership()
+        != crate::channel_hooks::ImDeliveryOwnership::LocalOwner
+    {
+        app_error!(
+            "channel",
+            "startup",
+            "Refusing channel startup/durable replay without LocalOwner capability"
+        );
+        return;
+    }
+    // State convergence precedes replay so terminal jobs newly classified as
+    // interrupted participate in this process's single durable sweep.
+    crate::blocking::run_blocking(crate::async_jobs::JobManager::recover_interrupted).await;
+    replay_recovered_parent_injections(session_db).await;
+
+    let account_count = accounts.len();
+    let mut starts = tokio::task::JoinSet::new();
+    for account in accounts {
+        let registry = registry.clone();
+        starts.spawn(async move {
+            if registry.health(&account.id).await.is_running {
+                return;
+            }
+            if let Err(error) = registry.start_account(&account).await {
+                // A concurrent manual start can win between the health probe
+                // and start_account's worker check. The winning success already
+                // emitted the precise surface event.
+                if !registry.health(&account.id).await.is_running {
+                    crate::channel_hooks::start_watchdog_register_failure(&account, &error).await;
+                }
+            }
+        });
+    }
+    while let Some(result) = starts.join_next().await {
+        if let Err(error) = result {
+            app_error!(
+                "channel",
+                "startup",
+                "Channel account startup task failed: {}",
+                error
+            );
+        }
+    }
+
+    app_info!(
+        "channel",
+        "startup",
+        "Completed concurrent initial start attempts for {} enabled channel account(s)",
+        account_count
+    );
 }
 
 pub async fn start_background_tasks() {
@@ -882,10 +1296,11 @@ pub async fn start_background_tasks() {
 
     // Tier-agnostic: EventBus subscription is multi-subscriber-safe.
     spawn_channel_listeners();
+    spawn_delivery_surface_replay_listener();
 
-    // Tier-agnostic: local Chrome Extension broker. It only binds loopback and
-    // writes a rebuildable discovery file for the Native Messaging host.
-    crate::browser::BrowserExtensionBroker::spawn_global();
+    // Tier-agnostic: local Chrome Extension broker（特征钩子——未 wire 不起，
+    // 首次未命中 wrapper 内部打一次 warn 便于 headless 部署审计）。
+    crate::browser_hooks::spawn_broker();
 
     // Tier-agnostic: session-lifecycle cleanup fan-out (delete/purge → deny
     // pending approvals, cancel jobs, drop IM pending, clear rules). NOT inside
@@ -922,13 +1337,9 @@ pub async fn start_background_tasks() {
         }
     });
 
-    // Background weather cache refresh — desktop UI only. Moved here from
-    // src-tauri setup.rs so it shares the ambient runtime instead of spawning
-    // its own OS thread + tokio Runtime. Gated on desktop to skip the loop
-    // entirely in server / ACP (refresh also self-checks weather_enabled).
-    if is_desktop() {
-        crate::weather::start_background_refresh();
-    }
+    // 特征 crate 的 EveryProcess 档启动任务（原 weather 后台刷新调用位——
+    // 不设 Primary 门，desktop 等更细的门由任务闭包自己判）。
+    run_registered_startup_tasks(StartupStage::EveryProcess);
 
     // R7.1 background-job scheduler: promotes queued jobs (status `Queued`) into
     // free slots, per-session round-robin, as running jobs finish. Tier-agnostic
@@ -946,6 +1357,7 @@ pub async fn start_background_tasks() {
     // R8 follow-up: mirror background-subagent inner approvals onto their
     // projection label (running ⇄ awaiting_approval). Idempotent per process.
     crate::async_jobs::approval_projection_watcher::spawn_subagent_approval_projection_watcher();
+    crate::chat_engine::stop::spawn_session_autonomy_stop_fence_watcher();
 
     if primary {
         // Host-level sleep prevention (`prevent_sleep` setting). Primary-only so
@@ -957,15 +1369,27 @@ pub async fn start_background_tasks() {
         // tick's `claim_scheduled_job_for_execution` would double-claim
         // jobs across processes; manual run-now uses an atomic SQL claim
         // that's still safe in any tier.
+        // 调度器机器已随 ha-cron 迁出，但**调用位不动**——经 `cron_hooks` 转发，
+        // 迁移前后时序逐位相同。刻意不做成 startup task 也只是为了保持这个
+        // 时序，**不再是正确性要求**：这里曾经声称「调用序保护了启动清理与
+        // 下面 watcher 之间的竞态」，但 `start_scheduler` 起的是独立 OS 线程、
+        // 立即返回，清理与 watcher 实际并发，那条保护从未成立。竞态现已在
+        // 数据层消掉：`CronDB::clear_stale_running` / `recover_orphaned_runs`
+        // 按 **`running_owner != CronDB::owner_token` 的 owner 界**判断遗留
+        // （详见 `cron/db.rs:1499-1502`——刻意否决了 `< opened_at` 时间界，
+        // 因为 `Utc::now()` 不受 Rust happens-before 约束，clock rollback 会
+        // 让本进程写的 `running_at` 落到 `opened_at` 之前被误清）。owner
+        // token 与墙上时钟解耦。
         if let (Some(cron_db), Some(session_db)) = (CRON_DB.get(), SESSION_DB.get()) {
-            let _handle = cron::start_scheduler(cron_db.clone(), session_db.clone());
+            crate::cron_hooks::start_scheduler(cron_db.clone(), session_db.clone());
         }
         crate::loop_control::spawn_loop_event_trigger_watcher();
 
-        // Headless auto-update: periodic check + optional silent pre-download.
-        // Primary-only (avoids N processes racing to download/stage the same
-        // build) and a no-op on desktop (the JS plugin-updater owns that path).
-        crate::updater::auto_check::spawn_auto_update_loop();
+        // 特征 crate 的 PrimaryOnly 档启动任务（装配期经 `register_startup_task`
+        // 登记，如 ha-updater 的 headless 自动更新循环）。在此消费保持原调用
+        // 点的时序与条件（primary-gated、tokio runtime 内）；消费后注册通道
+        // 关闭。
+        run_registered_startup_tasks(StartupStage::PrimaryOnly);
 
         // One-time migration: legacy flat-layout plan files
         // (`<plans>/plan-{short_id}-...md`) → per-session subdirs
@@ -1075,40 +1499,49 @@ pub async fn start_background_tasks() {
             }
         });
 
-        // Auto-start enabled channel accounts. Two processes auto-starting
-        // the same Telegram bot would fight over its webhook; users still
-        // start accounts manually via the API/UI in any tier. Boot failures
-        // are picked up by `channel::start_watchdog` and retried in the
-        // background until success or user action.
-        if let Some(registry) = CHANNEL_REGISTRY.get() {
-            let registry = registry.clone();
-            channel::start_watchdog::spawn_loop(registry.clone());
-            let store = crate::config::cached_config();
-            tokio::spawn(async move {
-                for account in store.channels.enabled_accounts() {
-                    if let Err(e) = registry.start_account(account).await {
-                        channel::start_watchdog::register_failure(account, &e).await;
-                    }
-                }
-            });
+        // Sweep durable ParentInjection sources, then auto-start enabled
+        // channel accounts concurrently. Two processes
+        // auto-starting the same Telegram bot would fight over its webhook,
+        // hence the surrounding Primary gate. Failed handshakes stay in the
+        // watchdog; they defer only sources bound to that account, not healthy
+        // accounts or GUI-only sessions.
+        if crate::channel_hooks::im_delivery_ownership()
+            == crate::channel_hooks::ImDeliveryOwnership::LocalOwner
+        {
+            if let (Some(registry), Some(session_db)) = (CHANNEL_REGISTRY.get(), SESSION_DB.get()) {
+                let registry = registry.clone();
+                let session_db = session_db.clone();
+                crate::channel_hooks::spawn_start_watchdog_loop(registry.clone());
+                let store = crate::config::cached_config();
+                let accounts = store
+                    .channels
+                    .enabled_accounts()
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                tokio::spawn(start_channels_then_replay_parent_injections(
+                    registry, session_db, accounts,
+                ));
+            } else {
+                // init_runtime populates both globals. If that invariant
+                // breaks, fail closed rather than settling an IM-bound source
+                // through a non-owner process. Unrelated background services
+                // must still start.
+                app_error!(
+                    "channel",
+                    "startup",
+                    "Channel registry/session DB unavailable; durable parent injection replay deferred"
+                );
+            }
         }
 
-        // Replay async tool jobs left over from the previous process: mark
-        // `running` rows as interrupted (their host process is gone) and inject
-        // any terminal-but-not-injected results back into their parent sessions.
-        // Primary-only: a Secondary process running this would flip the
-        // Primary's still-running tools to Interrupted.
-        //
-        // **Ordering invariant**: `recover_startup_session_state` ran
-        // synchronously during `init_runtime` (before this background-task
-        // bring-up), so by the time `replay_pending_jobs` starts, every
-        // stale chat_turn has already been finalized (sentinel-aware
-        // Shutdown / Crash) and any `ParentInjection` turn that the
-        // replay schedules will see a coherent `context_json`.
-        tokio::spawn(async move {
-            crate::async_jobs::JobManager::replay_pending();
-        });
+        // Async-job process-state recovery + initial ParentInjection sweep now
+        // live in the Channel startup coordinator above. The coordinator also
+        // preserves the existing ordering invariant: synchronous
+        // `recover_startup_session_state` completed in `init_runtime` before
+        // this function can run, so replay sees coherent `context_json`.
         crate::workflow::spawn_startup_recovery_if_primary();
+        crate::chat_engine::stop::spawn_session_autonomy_resume_replay_loop();
         crate::local_model_jobs::replay_interrupted_jobs();
 
         // Re-arm agent self-scheduled wakeups (R10). Primary-only — the rows
@@ -1125,9 +1558,10 @@ pub async fn start_background_tasks() {
         // touching canonical messages/context.
         spawn_chat_stream_journal_gc(true);
 
-        // Retention sweep for recap session facets. Runs once at startup and
-        // then once per day. Disabled when `recap.cache_retention_days == 0`.
-        crate::recap::spawn_facet_retention_loop();
+        // recap facet 保留期清理已随 ha-dash 迁出：`wire()` 注册为 PrimaryOnly
+        // startup task（原位就在本 primary 块内，档位一致；执行点前移到本函数
+        // 中段的 run_registered_startup_tasks，该循环本就启动即扫一次再进 24h
+        // 周期，前移只是让首次清理更早）。
 
         // Retention sweep for the Dreaming pending-source queue + expired
         // locks (next-gen Dreaming Phase 0). Runs once at startup, then daily.
@@ -1180,23 +1614,7 @@ pub async fn start_background_tasks() {
                     });
                 }
                 // Knowledge maintenance idle trigger (WS6) — same idle clock.
-                let mcfg = crate::config::cached_config().knowledge_maintenance.clone();
-                if crate::knowledge::maintenance::check_idle_trigger(&mcfg) {
-                    tokio::spawn(async {
-                        let report = crate::knowledge::maintenance::manual_run(
-                            crate::knowledge::maintenance::MaintenanceTrigger::Idle,
-                        )
-                        .await;
-                        app_info!(
-                            "knowledge",
-                            "maintenance::idle_trigger",
-                            "idle-trigger cycle: generated={}, autoApplied={}, note={:?}",
-                            report.generated,
-                            report.auto_applied,
-                            report.note,
-                        );
-                    });
-                }
+                crate::knowledge_hooks::maintenance_idle_tick();
             }
         });
 
@@ -1212,41 +1630,20 @@ pub async fn start_background_tasks() {
 
         // Knowledge maintenance cron-trigger loop (WS6). Reads
         // `knowledge_maintenance.cron_trigger`; off unless the user enables it.
-        crate::knowledge::maintenance::spawn_maintenance_cron_loop();
+        crate::knowledge_hooks::spawn_maintenance_cron_loop();
 
         // Optional skill draft consolidation loop. Re-reads the
         // auto-review config after every interval or config change.
-        crate::skills::auto_review::curator::spawn_auto_curator_loop();
+        crate::skills_hooks::spawn_auto_curator_loop();
 
-        // STT streaming-session GC. Sweeps abandoned sessions every 5
-        // minutes — a front-end crash / lost connection between `start`
-        // and `finalize` would otherwise leak the upstream WS forever.
-        tokio::spawn(async {
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(300));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            ticker.tick().await;
-            loop {
-                ticker.tick().await;
-                let evicted = crate::stt::SttSessionManager::global().gc_idle();
-                if evicted > 0 {
-                    app_info!(
-                        "stt",
-                        "session-gc",
-                        "evicted {} idle STT session(s)",
-                        evicted
-                    );
-                }
-            }
-        });
+        // STT 流式会话 GC 已随 ha-media 迁出：wire() 注册为 PrimaryOnly
+        // startup task（本块原位在 primary 块内，档位语义一致）。
 
         // Knowledge base index: reconcile every KB against disk (catches edits
         // made while the app was off) and start a live watcher per KB root so
         // external-vault edits stay indexed (D6).
-        crate::knowledge::index::spawn_startup_reconcile();
-        crate::knowledge::watcher::start_all_watchers();
-
-        // 设计空间「关联代码仓库」落地文件监听：外部改动 → 产物标 stale（code→design 回灌）。
-        crate::design::code_watcher::start_all_watchers();
+        crate::knowledge_hooks::index_spawn_startup_reconcile();
+        crate::knowledge_hooks::watcher_start_all_watchers();
 
         // One-shot reconciler for orphan project-scoped memory rows. The
         // delete_project cascade touches both `session.db` and `memory.db` and
@@ -1255,36 +1652,31 @@ pub async fn start_background_tasks() {
         // low-frequency, so a startup sweep is enough — no periodic timer.
         crate::project::reconcile::spawn_startup_reconciler();
 
-        // Auto-discover ACP backends
-        if let Some(acp_mgr) = ACP_MANAGER.get() {
-            let store = crate::config::cached_config();
-            if store.acp_control.enabled {
-                let registry = acp_mgr.runtime_registry().clone();
-                let acp_config = store.acp_control.clone();
-                tokio::spawn(async move {
-                    acp_control::registry::auto_discover_and_register(&registry, &acp_config).await;
-                });
-            }
-        }
+        // ACP backend 自动发现已随 ha-acp 迁出：wire() 注册为 PrimaryOnly
+        // startup task（本块原位在 primary 块内，档位语义一致）。
     }
 
     // Initialize the MCP subsystem. `init_global` is idempotent and the
     // catalog snippet must be visible to every process so all tiers see
     // MCP-namespaced tools. Watchdog (long-running reconnect loop) is
-    // Primary-only — Secondary's idle catalog is enough.
+    // Primary-only; Secondary uses the same on-demand catalog bootstrap, and
+    // explicit eager servers are warmed directly by init in every tier.
     if init_mcp_subsystem() && primary {
-        crate::mcp::watchdog::spawn_watchdog_loop();
+        crate::mcp::spawn_watchdog();
     }
 
-    // Default-model auto-maintenance watchdog. Self-heals stale Ollama
-    // models (cold-started after `ollama stop`, OS reboot, daemon restart)
-    // and surfaces missing-file alerts via `local_model:missing_alert`.
-    // Primary-only because two processes preloading the same model would
-    // wastefully race; secondaries see the same `running` state through
-    // the shared Ollama daemon anyway.
-    if primary {
-        crate::local_llm::auto_maintainer::spawn_loop();
-    }
+    // 默认模型自维护 watchdog（自愈冷启的 Ollama 模型 + `local_model:missing_alert`）
+    // 已随 ha-local-llm 迁出：`wire()` 注册为 PrimaryOnly startup task。
+    //
+    // **与 ha-media / ha-acp 那两处不同**：它们原本就在上面那个 primary 块里，
+    // 位置没动；本块原是函数末尾**独立的一个** `if primary { … }`，改注册后
+    // 执行点前移到上面的 `run_registered_startup_tasks(PrimaryOnly)`。等价性
+    // 不靠「原位」，靠两条事实：① primary 门相同（消费点同在 primary 块内，
+    // 且 PrimaryOnly 档只此一处消费，ACP 路径不消费——与原先 ACP 不调
+    // `spawn_loop` 一致）；② `spawn_loop` 先 sleep 一个 `SWEEP_INTERVAL`（60s）
+    // 才跑第一轮，而这中间的二百多行在本函数自身层面无 `.await`（全是
+    // spawn），微秒级即走完。primary-only 的理由不变：两个进程同时预载同一
+    // 模型只会白白互抢，secondary 透过共享 Ollama 守护进程看到同一份 running。
 }
 
 /// ACP-shaped background tasks. ACP is a single-conversation-per-process
@@ -1305,12 +1697,15 @@ pub async fn start_background_tasks() {
 pub async fn start_minimal_background_tasks() {
     let primary = crate::runtime_lock::is_primary();
 
-    // EventBus listeners — multi-subscriber-safe, tier-agnostic.
+    // EventBus listeners — multi-subscriber-safe, tier-agnostic. ACP and other
+    // minimal roles never own local IM delivery, so they intentionally do not
+    // install the delivery-surface queue listener.
     spawn_channel_listeners();
 
-    // Local Chrome Extension broker. Short-lived ACP processes may not need it,
-    // but starting it here keeps browser owner-plane diagnostics consistent.
-    crate::browser::BrowserExtensionBroker::spawn_global();
+    // Local Chrome Extension broker（特征钩子；minimal/ACP 也起，保持
+    // owner-plane 诊断一致——故不走 startup 档位而走本钩子）。首次未命中
+    // wrapper 内部会打一次 warn。
+    crate::browser_hooks::spawn_broker();
 
     // Session-lifecycle cleanup fan-out — tier-agnostic, required in
     // server / ACP too (they delete sessions but have no channel registry).
@@ -1338,6 +1733,7 @@ pub async fn start_minimal_background_tasks() {
     // R8 follow-up: mirror background-subagent inner approvals onto their
     // projection label (running ⇄ awaiting_approval). Idempotent per process.
     crate::async_jobs::approval_projection_watcher::spawn_subagent_approval_projection_watcher();
+    crate::chat_engine::stop::spawn_session_autonomy_stop_fence_watcher();
 
     if primary {
         // Manual mirror for the `ha-manual` skill — same as the full-tier
@@ -1377,13 +1773,15 @@ pub async fn start_minimal_background_tasks() {
             }
         });
 
-        // Replay leftover async tool jobs. Primary-only: a Secondary ACP
-        // booting alongside an active desktop would flip the desktop's
-        // running tools to Interrupted.
+        // Minimal/ACP roles have `ImDeliveryOwnership::Disabled`: they may
+        // converge interrupted job state, but must not claim/consume durable
+        // ParentInjection rows because an IM-bound source would look Absent and
+        // be incorrectly settled GUI-only. A future LocalOwner performs replay.
         tokio::spawn(async move {
-            crate::async_jobs::JobManager::replay_pending();
+            crate::blocking::run_blocking(crate::async_jobs::JobManager::recover_interrupted).await;
         });
         crate::workflow::spawn_startup_recovery_if_primary();
+        crate::chat_engine::stop::spawn_session_autonomy_resume_replay_loop();
         crate::local_model_jobs::replay_interrupted_jobs();
         crate::loop_control::spawn_loop_event_trigger_watcher();
         // ACP processes are intentionally short-lived: run one retention
@@ -1396,9 +1794,9 @@ pub async fn start_minimal_background_tasks() {
 
     // MCP init (no watchdog). Tier-agnostic — ACP tool dispatch may hit
     // MCP-namespaced tools regardless of tier and `init_global` is
-    // idempotent. Watchdog (long-running reconnect loop) skipped here
-    // even when ACP is Primary because the process is short-lived; the
-    // next process start re-runs init_global.
+    // idempotent. Watchdog (long-running reconnect loop) is skipped here
+    // even when ACP is Primary because the process is short-lived; eager
+    // warm-up and tool_search lazy discovery are both independent of it.
     let _ = init_mcp_subsystem();
 }
 
@@ -1407,33 +1805,83 @@ pub async fn start_minimal_background_tasks() {
 /// and `init_global` was called — the caller decides whether to also
 /// spawn the long-running watchdog.
 fn init_mcp_subsystem() -> bool {
-    let store = crate::config::cached_config();
-    let global = store.mcp_global.clone();
-    let servers = store.mcp_servers.clone();
-    if global.enabled {
-        let enabled_count = servers.iter().filter(|s| s.enabled).count();
-        crate::mcp::McpManager::init_global(global, servers);
-        app_info!(
-            "mcp",
-            "init",
-            "MCP subsystem initialized ({} enabled server(s))",
-            enabled_count
-        );
-        true
-    } else {
-        app_info!(
-            "mcp",
-            "init",
-            "MCP subsystem disabled via mcpGlobal.enabled=false"
-        );
-        false
+    // 实现在 ha-mcp（读 cached_config + 幂等 init_global + 日志），经
+    // mcp_hooks 回调；未接线返 false 并留审计（观感等价于未启用）。
+    crate::mcp::init_subsystem()
+}
+
+const TYPED_RESOURCE_CLEANUP_BATCH: usize = 4_096;
+
+fn drain_pending_typed_resource_snapshots(session_db: &SessionDB) -> anyhow::Result<usize> {
+    drain_pending_typed_resource_snapshots_with_batch(session_db, TYPED_RESOURCE_CLEANUP_BATCH)
+}
+
+fn drain_pending_typed_resource_snapshots_with_batch(
+    session_db: &SessionDB,
+    batch_size: usize,
+) -> anyhow::Result<usize> {
+    let Some(through_row_id) = session_db.typed_resource_snapshot_cleanup_high_watermark()? else {
+        return Ok(0);
+    };
+    let mut acknowledged = 0usize;
+    let mut after_row_id = 0i64;
+    loop {
+        let pending = session_db.pending_typed_resource_snapshot_cleanups_through(
+            after_row_id,
+            through_row_id,
+            batch_size.max(1),
+        )?;
+        let Some(last_row_id) = pending.last().map(|cleanup| cleanup.ledger_row_id) else {
+            break;
+        };
+        for cleanup in pending {
+            if let Err(error) = crate::attachments::remove_pending_typed_resource_snapshot(&cleanup)
+            {
+                app_warn!(
+                    "session",
+                    "context_materialization_gc",
+                    "left pending typed-resource snapshot for run {} in place: {}",
+                    cleanup.run_id,
+                    error
+                );
+                continue;
+            }
+            if session_db.finish_typed_resource_snapshot_cleanup(&cleanup)? {
+                acknowledged += 1;
+            }
+        }
+        // Failed rows remain durable but are skipped for this bounded
+        // high-watermark pass, preventing one corrupt/unavailable path from
+        // starving later batches or creating an in-process retry loop. The
+        // next startup/daily pass retries them from rowid zero.
+        after_row_id = last_row_id;
     }
+    Ok(acknowledged)
 }
 
 fn recover_durable_chat_streams(
     session_db: &Arc<SessionDB>,
     cause: crate::chat_engine::finalize::sentinel::StartupCause,
 ) {
+    // A run deletion and its ownership transition are one SQLite transaction;
+    // the unlink/ack half is intentionally recoverable across process death.
+    // Unknown run-shaped files without a ledger row are never guessed away.
+    match drain_pending_typed_resource_snapshots(session_db) {
+        Ok(count) if count > 0 => app_info!(
+            "session",
+            "context_materialization_gc",
+            "removed {} expired typed-resource snapshot(s) during startup",
+            count
+        ),
+        Ok(_) => {}
+        Err(error) => app_warn!(
+            "session",
+            "context_materialization_gc",
+            "cannot drain pending typed-resource snapshots during startup: {}",
+            error
+        ),
+    }
+
     let mut spool_integrity_errors = std::collections::HashMap::<String, String>::new();
     // Import every complete emergency-spool frame first. The spool is only
     // deleted after the corresponding run converges transactionally below.
@@ -1532,6 +1980,32 @@ fn recover_durable_chat_streams(
         else {
             continue;
         };
+        if snapshot.run.run_id != run.run_id || snapshot.run.session_id != run.session_id {
+            app_warn!(
+                "session",
+                "context_materialization_recovery",
+                "stream snapshot identity mismatch for run {}; leaving materializations in place",
+                run.run_id
+            );
+            continue;
+        }
+        match crate::chat_engine::reconcile_typed_resource_snapshots(&snapshot) {
+            Ok(removed) if removed > 0 => app_info!(
+                "session",
+                "context_materialization_recovery",
+                "removed {} uncommitted typed-resource snapshot(s) for run {}",
+                removed,
+                run.run_id
+            ),
+            Ok(_) => {}
+            Err(error) => app_warn!(
+                "session",
+                "context_materialization_recovery",
+                "left typed-resource snapshots for run {} in place because reconciliation failed: {}",
+                run.run_id,
+                error
+            ),
+        }
 
         // One shared selector is used by live failure convergence, ACP, and
         // startup replay so attempt choice and corruption truncation cannot
@@ -1641,6 +2115,10 @@ fn recover_durable_chat_streams(
             }),
             error: recovery_error.clone(),
             recovery_event: Some(recovery_event),
+            // Scan the entire run, not only the journal attempt selected for
+            // visible recovery. A newer attempt may have crossed the Provider
+            // dispatch boundary without emitting a checksum-valid event.
+            request_plan: crate::session::RequestPlanCommit::RecoverAllForRun,
         };
         match session_db.commit_interrupted_turn(&commit) {
             Ok(_) => {
@@ -1680,6 +2158,83 @@ fn recover_durable_chat_streams(
                 error
             ),
         }
+    }
+
+    // A terminal DB commit can win the final race immediately before process
+    // death, preventing the engine's Drop guard from deleting an uncommitted
+    // run-owned materialization. Recoverable-run enumeration intentionally
+    // excludes terminal rows, so discover those exact UUID owners from the
+    // attachment namespace and reconcile them while their journal is retained.
+    match crate::attachments::run_owned_typed_resource_snapshot_owners() {
+        Ok(owners) => {
+            for (session_id, run_id) in owners {
+                let status = match session_db.stream_run_status(&run_id) {
+                    Ok(status) => status,
+                    Err(error) => {
+                        app_warn!(
+                            "session",
+                            "context_materialization_recovery",
+                            "cannot inspect typed-resource owner run {}: {}",
+                            run_id,
+                            error
+                        );
+                        continue;
+                    }
+                };
+                // A missing run is removable only through the durable cleanup
+                // ledger drained above. Without that proof this owner is
+                // unknown (for example after a DB restore), so preserve it.
+                if status.as_deref().is_none_or(|status| status == "running") {
+                    continue;
+                }
+                let snapshot = match session_db.stream_run_snapshot(&run_id) {
+                    Ok(Some(snapshot)) => snapshot,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        app_warn!(
+                            "session",
+                            "context_materialization_recovery",
+                            "cannot load terminal typed-resource owner run {}: {}",
+                            run_id,
+                            error
+                        );
+                        continue;
+                    }
+                };
+                if snapshot.run.session_id != session_id || snapshot.run.run_id != run_id {
+                    app_warn!(
+                        "session",
+                        "context_materialization_recovery",
+                        "terminal typed-resource owner identity mismatch for run {}; leaving files in place",
+                        run_id
+                    );
+                    continue;
+                }
+                match crate::chat_engine::reconcile_typed_resource_snapshots(&snapshot) {
+                    Ok(removed) if removed > 0 => app_info!(
+                        "session",
+                        "context_materialization_recovery",
+                        "removed {} terminal-run uncommitted typed-resource snapshot(s) for run {}",
+                        removed,
+                        run_id
+                    ),
+                    Ok(_) => {}
+                    Err(error) => app_warn!(
+                        "session",
+                        "context_materialization_recovery",
+                        "left terminal-run typed-resource snapshots for run {} in place because reconciliation failed: {}",
+                        run_id,
+                        error
+                    ),
+                }
+            }
+        }
+        Err(error) => app_warn!(
+            "session",
+            "context_materialization_recovery",
+            "cannot enumerate run-owned typed-resource snapshots: {}",
+            error
+        ),
     }
 
     // Crash window: the final DB transaction may have committed immediately
@@ -1752,6 +2307,64 @@ fn spawn_chat_stream_journal_gc(repeat_daily: bool) {
                     error
                 ),
             }
+            let cleanup_db = db.clone();
+            match crate::blocking::run_blocking(move || {
+                drain_pending_typed_resource_snapshots(&cleanup_db)
+            })
+            .await
+            {
+                Ok(count) if count > 0 => app_info!(
+                    "session",
+                    "context_materialization_gc",
+                    "removed {} expired typed-resource snapshot(s)",
+                    count
+                ),
+                Ok(_) => {}
+                Err(error) => app_warn!(
+                    "session",
+                    "context_materialization_gc",
+                    "typed-resource snapshot retention sweep failed: {}",
+                    error
+                ),
+            }
+            let payload_db = db.clone();
+            match crate::blocking::run_blocking(move || {
+                payload_db.reconcile_exact_request_payloads()
+            })
+            .await
+            {
+                Ok(report)
+                    if report.capability_available
+                        && (report.tombstones_claimed != 0
+                            || report.terminal_payloads_claimed != 0
+                            || report.orphan_payloads_claimed != 0
+                            || report.expired_claimed != 0
+                            || report.payloads_scrubbed != 0
+                            || report.payloads_marked_lost != 0
+                            || report.stale_reservations_released != 0
+                            || report.orphan_blobs_removed != 0) =>
+                {
+                    app_info!(
+                        "request_payload",
+                        "retention_gc",
+                        "reconciled exact request payloads: tombstones={} terminal={} orphan={} expired={} scrubbed={} lost={} reservations={} blobs={}",
+                        report.tombstones_claimed,
+                        report.terminal_payloads_claimed,
+                        report.orphan_payloads_claimed,
+                        report.expired_claimed,
+                        report.payloads_scrubbed,
+                        report.payloads_marked_lost,
+                        report.stale_reservations_released,
+                        report.orphan_blobs_removed,
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => app_warn!(
+                    "request_payload",
+                    "retention_gc",
+                    "exact request payload retention sweep failed: {error:#}"
+                ),
+            }
             match crate::blocking::run_blocking(|| {
                 crate::chat_engine::spool::gc_quarantined(std::time::Duration::from_secs(
                     24 * 60 * 60,
@@ -1786,6 +2399,32 @@ fn recover_startup_session_state(session_db: &Arc<SessionDB>, tier: crate::runti
         return;
     }
 
+    // Exact request bodies live in a separate encrypted object lifecycle. Run
+    // its reconciliation before request-plan/stream recovery so terminal or
+    // orphaned holds are claimed and scrubbed, while SendUnknown remains
+    // deliberately retained for explicit resolution.
+    match session_db.reconcile_exact_request_payloads() {
+        Ok(report) if report.capability_available => app_info!(
+            "request_payload",
+            "startup_recovery",
+            "reconciled exact request payloads: tombstones={} terminal={} orphan={} expired={} scrubbed={} lost={} reservations={} blobs={}",
+            report.tombstones_claimed,
+            report.terminal_payloads_claimed,
+            report.orphan_payloads_claimed,
+            report.expired_claimed,
+            report.payloads_scrubbed,
+            report.payloads_marked_lost,
+            report.stale_reservations_released,
+            report.orphan_blobs_removed,
+        ),
+        Ok(_) => {}
+        Err(error) => app_warn!(
+            "request_payload",
+            "startup_recovery",
+            "failed to reconcile exact request payloads: {error:#}"
+        ),
+    }
+
     match session_db.reconcile_interrupted_project_bootstraps() {
         Ok(0) => {}
         Ok(count) => app_info!(
@@ -1801,18 +2440,29 @@ fn recover_startup_session_state(session_db: &Arc<SessionDB>, tier: crate::runti
         ),
     }
 
-    match session_db.reconcile_interrupted_git_operations() {
-        Ok(0) => {}
-        Ok(count) => app_info!(
+    // git 操作对账在 ha-vcs（handoff 回滚需要 git 机器），经 vcs_hooks 同步
+    // 内联回调——本函数的 ordering invariant（先于 replay_pending_jobs）对
+    // 它同样成立，不得改为后台任务。未接线：簿记行保持 running 原状（接线
+    // 进程接手时补账），但 handoff 中断的源 checkout 不会被恢复，故 warn。
+    match crate::vcs_hooks::vcs_hooks() {
+        Some(hooks) => match (hooks.git_ops_reconciler)(session_db) {
+            Ok(0) => {}
+            Ok(count) => app_info!(
+                "git_control",
+                "startup_recovery",
+                "reconciled {} interrupted Git operation(s)",
+                count
+            ),
+            Err(error) => app_warn!(
+                "git_control",
+                "startup_recovery",
+                "failed to reconcile interrupted Git operations: {error:#}"
+            ),
+        },
+        None => app_warn!(
             "git_control",
             "startup_recovery",
-            "reconciled {} interrupted Git operation(s)",
-            count
-        ),
-        Err(error) => app_warn!(
-            "git_control",
-            "startup_recovery",
-            "failed to reconcile interrupted Git operations: {error:#}"
+            "ha-vcs not wired; skipping interrupted Git operation reconciliation"
         ),
     }
 
@@ -1849,6 +2499,17 @@ fn recover_startup_session_state(session_db: &Arc<SessionDB>, tier: crate::runti
     // the legacy sweep sees those turns already terminal and cannot overwrite
     // the richer durable reconstruction.
     recover_durable_chat_streams(session_db, cause);
+    // Stream recovery above creates fresh terminal/superseded request-plan
+    // outcomes. Run the object reconciler again in this startup pass so their
+    // encrypted holds do not wait until the next process launch. SendUnknown
+    // owners were retained atomically by the turn recovery transaction.
+    if let Err(error) = session_db.reconcile_exact_request_payloads() {
+        app_warn!(
+            "request_payload",
+            "startup_recovery",
+            "post-stream exact request payload reconciliation failed: {error:#}"
+        );
+    }
 
     // 2. Collect every chat_turn left in `running` / `cancelling` state.
     //    finalize will set the terminal status itself; we don't UPDATE
@@ -1900,7 +2561,7 @@ fn recover_startup_session_state(session_db: &Arc<SessionDB>, tier: crate::runti
         covered_sessions.insert(turn.session_id.clone());
     }
 
-    // IM / Cron / Subagent entry points run with `turn_id = None`, so
+    // IM / Subagent and legacy Cron entry points run with `turn_id = None`, so
     // they leave no `chat_turns` row for the sweep above to act on.
     // Their partial output still ends up in `messages` with
     // `stream_status='orphaned'` after the previous step's promotion,
@@ -2026,6 +2687,122 @@ mod tests {
             let db = Arc::new(SessionDB::open(&path).expect("open session db"));
             f(db)
         })
+    }
+
+    #[test]
+    fn durable_replay_sweep_is_process_local_single_flight() {
+        let running = AtomicBool::new(false);
+        let first = try_acquire_durable_replay_sweep(&running).expect("first sweep owns permit");
+        assert!(
+            try_acquire_durable_replay_sweep(&running).is_none(),
+            "a slow sweep must suppress overlapping ticker work"
+        );
+        drop(first);
+        assert!(
+            try_acquire_durable_replay_sweep(&running).is_some(),
+            "normal completion/drop must re-arm the next ticker"
+        );
+    }
+
+    #[test]
+    fn typed_resource_cleanup_drains_every_high_watermark_batch() {
+        with_temp_data_dir(|db| {
+            let session = db
+                .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+                .expect("session");
+            let run_id = uuid::Uuid::new_v4().to_string();
+            db.create_stream_run(&crate::session::CreateStreamRun {
+                run_id: run_id.clone(),
+                session_id: session.id.clone(),
+                source: "desktop".to_string(),
+                stream_id: None,
+                turn_id: None,
+                provider_shape: None,
+            })
+            .expect("run");
+            let owner = uuid::Uuid::parse_str(&run_id).expect("run UUID").simple();
+            let snapshot_names = (0..3)
+                .map(|_| {
+                    format!(
+                        "context-snapshot-run_{owner}-resource_ref_{}",
+                        uuid::Uuid::new_v4().simple()
+                    )
+                })
+                .collect::<Vec<_>>();
+            db.register_typed_resource_snapshots(&run_id, &session.id, &snapshot_names)
+                .expect("register owners");
+            db.mark_stream_run_recovered(&run_id, 0, None)
+                .expect("terminal run");
+            assert_eq!(
+                db.gc_stream_journals("9999-12-31T23:59:59Z").expect("gc"),
+                1
+            );
+
+            assert_eq!(
+                drain_pending_typed_resource_snapshots_with_batch(&db, 1).expect("drain all pages"),
+                3
+            );
+            assert!(db
+                .typed_resource_snapshot_cleanup_high_watermark()
+                .expect("high watermark")
+                .is_none());
+        });
+    }
+
+    #[test]
+    fn typed_resource_cleanup_failure_does_not_starve_later_batches() {
+        with_temp_data_dir(|db| {
+            let session = db
+                .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+                .expect("session");
+            let run_id = uuid::Uuid::new_v4().to_string();
+            db.create_stream_run(&crate::session::CreateStreamRun {
+                run_id: run_id.clone(),
+                session_id: session.id.clone(),
+                source: "desktop".to_string(),
+                stream_id: None,
+                turn_id: None,
+                provider_shape: None,
+            })
+            .expect("run");
+            let owner = uuid::Uuid::parse_str(&run_id).expect("run UUID").simple();
+            let snapshot_names = (0..3)
+                .map(|_| {
+                    format!(
+                        "context-snapshot-run_{owner}-resource_ref_{}",
+                        uuid::Uuid::new_v4().simple()
+                    )
+                })
+                .collect::<Vec<_>>();
+            db.register_typed_resource_snapshots(&run_id, &session.id, &snapshot_names)
+                .expect("register owners");
+            db.mark_stream_run_recovered(&run_id, 0, None)
+                .expect("terminal run");
+            db.gc_stream_journals("9999-12-31T23:59:59Z").expect("gc");
+            db.conn
+                .lock()
+                .expect("db lock")
+                .execute(
+                    "UPDATE chat_stream_typed_snapshots SET snapshot_name = 'malformed'
+                     WHERE rowid = (
+                         SELECT MIN(rowid) FROM chat_stream_typed_snapshots
+                         WHERE cleanup_pending = 1
+                     )",
+                    [],
+                )
+                .expect("corrupt one cleanup row");
+
+            assert_eq!(
+                drain_pending_typed_resource_snapshots_with_batch(&db, 1)
+                    .expect("drain around failed row"),
+                2
+            );
+            let remaining = db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("failed row remains retryable");
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(remaining[0].snapshot_name, "malformed");
+        });
     }
 
     #[test]

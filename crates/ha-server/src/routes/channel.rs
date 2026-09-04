@@ -3,7 +3,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use ha_core::channel::accounts::{self, UpdateAccountParams};
+use ha_channel::channel::accounts::{self, UpdateAccountParams};
 use ha_core::channel::types::*;
 
 use crate::error::AppError;
@@ -183,7 +183,7 @@ pub async fn health(Path(account_id): Path<String>) -> Result<Json<ChannelHealth
 
 /// `GET /api/channel/health`
 pub async fn health_all() -> Result<Json<Vec<(String, ChannelHealth)>>, AppError> {
-    Ok(Json(registry()?.list_running().await))
+    Ok(Json(registry()?.list_health_with_probes().await))
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,9 +285,9 @@ pub struct WeChatStartLoginBody {
 /// `POST /api/channel/wechat/login/start`
 pub async fn wechat_start_login(
     Json(body): Json<WeChatStartLoginBody>,
-) -> Result<Json<ha_core::channel::wechat::login::WeChatLoginStart>, AppError> {
+) -> Result<Json<ha_channel::channel::wechat::login::WeChatLoginStart>, AppError> {
     Ok(Json(
-        ha_core::channel::wechat::login::start_login(body.account_id.as_deref()).await?,
+        ha_channel::channel::wechat::login::start_login(body.account_id.as_deref()).await?,
     ))
 }
 
@@ -301,9 +301,9 @@ pub struct WeChatWaitLoginBody {
 /// `POST /api/channel/wechat/login/wait`
 pub async fn wechat_wait_login(
     Json(body): Json<WeChatWaitLoginBody>,
-) -> Result<Json<ha_core::channel::wechat::login::WeChatLoginWait>, AppError> {
+) -> Result<Json<ha_channel::channel::wechat::login::WeChatLoginWait>, AppError> {
     Ok(Json(
-        ha_core::channel::wechat::login::wait_login(&body.session_key, body.timeout_ms).await?,
+        ha_channel::channel::wechat::login::wait_login(&body.session_key, body.timeout_ms).await?,
     ))
 }
 
@@ -332,25 +332,22 @@ pub async fn handover(Json(body): Json<HandoverBody>) -> Result<Json<Value>, App
         .unwrap_or(ChatType::Dm);
 
     let body = std::sync::Arc::new(body);
-    {
+    let catchup = ha_channel::channel::attach_sync::prepare_attach_catchup(
+        &body.session_id,
+        &body.channel_id,
+        &body.account_id,
+        &body.chat_id,
+        body.thread_id.as_deref(),
+    );
+    let catchup = {
         let db = channel_db()?;
-        let body = body.clone();
+        let source = ha_core::channel::db::ATTACH_SOURCE_HANDOVER;
         ha_core::blocking::run_blocking(move || {
-            db.attach_session(
-                &body.channel_id,
-                &body.account_id,
-                &body.chat_id,
-                body.thread_id.as_deref(),
-                &body.session_id,
-                ha_core::channel::db::ATTACH_SOURCE_HANDOVER,
-                None,
-                None,
-                &resolved_chat_type,
-            )
+            catchup.attach(&db, source, None, None, None, &resolved_chat_type)
         })
         .await
-        .map_err(|e| AppError::internal(format!("Handover failed: {}", e)))?;
-    }
+        .map_err(|e| AppError::internal(format!("Handover failed: {}", e)))?
+    };
 
     // Replay the latest assistant turn (text + media) so the receiving IM
     // chat isn't left with zero context — same catch-up the IM-side
@@ -361,6 +358,7 @@ pub async fn handover(Json(body): Json<HandoverBody>) -> Result<Json<Value>, App
         &body.account_id,
         &body.chat_id,
         body.thread_id.as_deref(),
+        catchup,
     )
     .await;
 
@@ -377,6 +375,7 @@ async fn deliver_handover_catchup(
     account_id: &str,
     chat_id: &str,
     thread_id: Option<&str>,
+    catchup: ha_channel::channel::attach_sync::AttachedCatchupReservation,
 ) {
     let registry = match registry() {
         Ok(r) => r,
@@ -405,8 +404,8 @@ async fn deliver_handover_catchup(
         Some(a) => a.clone(),
         None => return,
     };
-    ha_core::channel::attach_sync::deliver_handover_catchup(
-        &plugin, &account, session_id, chat_id, thread_id,
+    ha_channel::channel::attach_sync::deliver_handover_catchup(
+        &plugin, &account, session_id, chat_id, thread_id, catchup,
     )
     .await;
 }

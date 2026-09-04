@@ -64,8 +64,8 @@ const TOOL_DESC_EXEC: &str = "\
   - For independent commands, make separate parallel exec calls";
 
 const TOOL_DESC_PROCESS: &str = "\
-- process: Manage legacy exec process sessions.\n\
-  - Actions: list, poll (get new output), log (full output), write (stdin), kill, clear, remove\n\
+- process: Manage current-chat-owned legacy exec process sessions.\n\
+  - Actions: list, poll (get new output), log (full output), kill, clear, remove\n\
   - Use only for process-session commands created with exec(background=true) or yield_ms; ordinary async exec jobs use job_status instead\n\
   - Running process output is streamed to the UI, and completed background processes can notify the conversation with <process-notification>\n\
   - Do not poll in a loop with sleep — use process(log) only when you need more detail";
@@ -164,8 +164,9 @@ const TOOL_DESC_UPDATE_CORE_MEMORY: &str = "\
   - Params: content (required), section (optional)";
 
 const TOOL_DESC_MANAGE_CRON: &str = "\
-- manage_cron: Create, list, update, or delete scheduled tasks.\n\
-  - Actions: create, list, get, update, delete, run_now\n\
+- manage_cron: Create, list, update, pause, resume, or delete scheduled tasks.\n\
+  - Actions: create, list, get, update, pause, resume, delete, run_now\n\
+  - pause/resume control the schedule lifecycle and future dispatches; they do not freeze or revive a currently executing run\n\
   - Use for reminders, scheduled follow-ups, and recurring nudges over time\n\
   - For requests like \"remind me in 10 minutes\" or \"every 10 minutes for an hour\", create a scheduled task instead of simulating time with exec/date\n\
   - Cron expressions follow standard format (minute hour day month weekday)";
@@ -186,7 +187,9 @@ const TOOL_DESC_SUBAGENT: &str = "\
 - subagent: Spawn and manage sub-agents to delegate tasks.\n\
   - Actions: spawn, send, check, list, result, kill, kill_all, batch_spawn, wait_all, spawn_and_wait; resume/steer are compatibility aliases\n\
   - Sub-agents run asynchronously — results are auto-pushed as `<subagent-result>` user messages when complete\n\
-  - send: canonical thread follow-up; steer the active attempt or create a fresh immutable attempt after terminal completion while preserving prior conversation/workdir\n\
+  - send steers an active attempt or continues an eligible terminal thread\n\
+  - kill/kill_all request shutdown, not pause; confirm terminal state before reporting completion\n\
+  - Stopped, denied, or cancelled work requires a fresh spawn after an explicit user request\n\
   - spawn/batch_spawn `timeout_secs`: omit by default to use the parent Agent default (default 0/no timeout); set positive values only for explicitly bounded child tasks; 0 = no timeout; positives cap at 1800s\n\
   - spawn_and_wait: spawn + wait up to foreground_timeout (default 30s, max 120s). If completes in time, returns result inline. Otherwise auto-backgrounds — result injected later\n\
   - Inspect terminal_reason and partial side effects before resuming failures; never retry user-stopped or approval-denied attempts automatically";
@@ -198,6 +201,12 @@ const TOOL_DESC_MEMORY_GET: &str = "\
 const TOOL_DESC_AGENTS_LIST: &str = "\
 - agents_list: List all available agents with their descriptions and capabilities.\n\
   - Useful for choosing which agent to delegate tasks to via subagent";
+
+const TOOL_DESC_SESSIONS_CREATE: &str = "\
+- sessions_create: Create a new regular chat session.\n\
+  - Params: agent_id/title/project_id (optional), message/attachments (optional), wait (default false)\n\
+  - Without agent_id, a resolved Project uses its default-agent chain; otherwise the current Agent is used\n\
+  - A message or attachment starts a durable target-agent turn immediately; returns session_id + turn_id";
 
 const TOOL_DESC_SESSIONS_LIST: &str = "\
 - sessions_list: List all chat sessions with metadata (title, agent, model, message count).\n\
@@ -218,9 +227,9 @@ const TOOL_DESC_SESSIONS_HISTORY: &str = "\
   - Use to understand context from another session before sending messages";
 
 const TOOL_DESC_SESSIONS_SEND: &str = "\
-- sessions_send: Send a message to another session for cross-session communication.\n\
-  - Params: session_id, message (required), wait (default false), timeout_secs (default 60)\n\
-  - Use wait=true to block until the other session responds";
+- sessions_send: Start a durable agent turn in another regular session.\n\
+  - Params: session_id, message and/or attachments, wait (default false), timeout_secs (default 60)\n\
+  - The target always runs; wait only controls whether this tool waits for the reply";
 
 const TOOL_DESC_IMAGE: &str = "\
 - image: Attach local/URL/clipboard/screenshot images as visual input for the next model round.\n\
@@ -315,7 +324,7 @@ Mention local files as clickable markdown links: `[file.ext](/absolute/path/file
 /// Current per-session permission-mode guidance. This is intentionally short:
 /// the permission engine remains the source of truth, while the prompt gives
 /// the model enough state to choose how boldly to call tools.
-pub(super) fn build_permission_mode_guidance(mode: crate::permission::SessionMode) -> String {
+pub(crate) fn build_permission_mode_guidance(mode: crate::permission::SessionMode) -> String {
     let (label, behavior, boundary) = match mode {
         crate::permission::SessionMode::Default => (
             "`default` (standard approvals)",
@@ -409,6 +418,7 @@ pub(super) const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ("subagent", TOOL_DESC_SUBAGENT),
     ("memory_get", TOOL_DESC_MEMORY_GET),
     ("agents_list", TOOL_DESC_AGENTS_LIST),
+    ("sessions_create", TOOL_DESC_SESSIONS_CREATE),
     ("sessions_list", TOOL_DESC_SESSIONS_LIST),
     ("session_status", TOOL_DESC_SESSION_STATUS),
     ("sessions_search", TOOL_DESC_SESSIONS_SEARCH),
@@ -426,3 +436,31 @@ pub(super) const TOOL_DESCRIPTIONS: &[(&str, &str)] = &[
     ("task_update", TOOL_DESC_TASK_UPDATE),
     ("task_list", TOOL_DESC_TASK_LIST),
 ];
+
+#[cfg(test)]
+mod runtime_control_contract_tests {
+    #[test]
+    fn subagent_prompt_description_matches_terminal_control_boundaries() {
+        let description = super::TOOL_DESC_SUBAGENT;
+        for contract in [
+            "continues an eligible terminal thread",
+            "shutdown, not pause",
+            "confirm terminal state",
+            "fresh spawn after an explicit user request",
+        ] {
+            assert!(description.contains(contract), "{contract}");
+        }
+    }
+
+    #[test]
+    fn cron_prompt_description_distinguishes_schedule_from_running_attempt() {
+        let description = super::TOOL_DESC_MANAGE_CRON;
+        for contract in [
+            "pause, resume",
+            "schedule lifecycle and future dispatches",
+            "do not freeze or revive a currently executing run",
+        ] {
+            assert!(description.contains(contract), "{contract}");
+        }
+    }
+}

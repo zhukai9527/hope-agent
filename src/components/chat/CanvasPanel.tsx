@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react"
 import { getTransport } from "@/lib/transport-provider"
 import { parsePayload, isTauriMode } from "@/lib/transport"
 import { MAIN_WINDOW_MIN_HEIGHT, MAIN_WINDOW_MIN_WIDTH } from "@/lib/mainWindowSize"
@@ -11,7 +11,8 @@ import { IconTip } from "@/components/ui/tooltip"
 import { WindowModeIcon } from "@/components/common/WindowModeIcon"
 import { useFullscreenTransition } from "@/hooks/useFullscreenTransition"
 import { RightPanelShell } from "./right-panel/RightPanelShell"
-import ArtifactViewer from "@/components/artifacts/ArtifactViewer"
+import ArtifactViewer, { type ArtifactTextSelection } from "@/components/artifacts/ArtifactViewer"
+import type { PendingFileQuote } from "@/types/chat"
 
 interface CanvasInfo {
   projectId: string
@@ -49,36 +50,32 @@ function toCanvasInfo(
 }
 
 interface CanvasPanelProps {
-  panelWidth?: number
-  onPanelWidthChange?: (width: number) => void
-  reservedMainWidth?: number
   currentSessionId?: string | null
   onOpenChange?: (open: boolean) => void
+  /** Stages a selected Canvas excerpt in the owning composer; never sends it. */
+  onQuote?: (quote: PendingFileQuote) => void
   visible?: boolean
   collapsed?: boolean
-  overlay?: boolean
   /** Kept for the shared panel call site; iframe panels intentionally ignore
    * zero-width mount animation so WebView hit testing is valid immediately. */
   animateOnMount?: boolean
+  integrated?: boolean
 }
 
 export const CLOSE_CANVAS_PANEL_EVENT = "hope-agent:close-canvas"
 
 export default function CanvasPanel({
-  panelWidth = 480,
-  onPanelWidthChange,
-  reservedMainWidth,
   currentSessionId = null,
   onOpenChange,
+  onQuote,
   visible = true,
   collapsed = false,
-  overlay = false,
+  integrated = false,
 }: CanvasPanelProps) {
   const { t } = useTranslation()
   const [canvas, setCanvas] = useState<CanvasInfo | null>(null)
   const [maximized, setMaximized] = useState(false)
   const {
-    ref: fullscreenTransitionRef,
     animating: fullscreenAnimating,
     toggle: toggleFullscreen,
     reset: resetFullscreen,
@@ -94,7 +91,7 @@ export default function CanvasPanel({
   // (e.g. cron/channel/subagent tool calls that emit canvas_show globally).
   // ref so the listener is not re-subscribed on every session switch.
   const currentSessionIdRef = useRef<string | null>(currentSessionId)
-  useEffect(() => {
+  useLayoutEffect(() => {
     currentSessionIdRef.current = currentSessionId
   }, [currentSessionId])
 
@@ -154,6 +151,17 @@ export default function CanvasPanel({
       win.setMinSize(new LogicalSize(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT))
     }
   }, [canvas, detached])
+
+  // The width bump is a canvas-only constraint: hand the window its real
+  // minimum back on unmount, or it stays pinned for the rest of the session.
+  useEffect(() => {
+    if (!isTauriMode()) return
+    return () => {
+      getCurrentWindow()
+        .setMinSize(new LogicalSize(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT))
+        .catch(() => {})
+    }
+  }, [])
 
   useEffect(() => {
     onOpenChange?.(!!canvas)
@@ -309,6 +317,11 @@ export default function CanvasPanel({
   // Handle messages from iframe (eval results, snapshot results)
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      // The sandboxed frame has an opaque origin, so `event.origin` is not a
+      // usable discriminator. Accept responses only from this panel's live
+      // iframe; unrelated/forged window messages must never resolve a backend
+      // Canvas request.
+      if (event.source !== iframeRef.current?.contentWindow) return
       if (!event.data || typeof event.data !== "object") return
 
       if (event.data.type === "canvas_eval_result") {
@@ -355,6 +368,21 @@ export default function CanvasPanel({
     resetFullscreen()
     setDetached(false)
   }, [resetFullscreen])
+
+  const handleQuoteSelection = useCallback(
+    (selection: ArtifactTextSelection) => {
+      if (!canvas || !onQuote) return
+      onQuote({
+        path: `artifact:${canvas.projectId}`,
+        name: canvas.title,
+        startLine: 0,
+        endLine: 0,
+        content: selection.text,
+        revealable: false,
+      })
+    },
+    [canvas, onQuote],
+  )
 
   const handleDetach = useCallback(async () => {
     if (!canvas?.projectPath) return
@@ -431,12 +459,7 @@ export default function CanvasPanel({
   if (detached) {
     return (
       <RightPanelShell
-        width={panelWidth}
-        onWidthChange={onPanelWidthChange}
-        resizeLabel={t("canvas.resizePanel", "Resize canvas panel")}
-        reservedMainWidth={reservedMainWidth}
         collapsed={collapsed}
-        overlay={overlay}
         contentKey="canvas-detached"
       >
         {/* Title Bar */}
@@ -454,14 +477,16 @@ export default function CanvasPanel({
                 <WindowModeIcon action="reattach" className="h-3.5 w-3.5" />
               </button>
             </IconTip>
-            <IconTip label={t("canvas.close")}>
-              <button
-                onClick={handleClose}
-                className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </IconTip>
+            {!integrated && (
+              <IconTip label={t("canvas.close")}>
+                <button
+                  onClick={handleClose}
+                  className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </IconTip>
+            )}
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
@@ -473,14 +498,7 @@ export default function CanvasPanel({
 
   return (
     <RightPanelShell
-      width={panelWidth}
-      onWidthChange={onPanelWidthChange}
-      resizeLabel={t("canvas.resizePanel", "Resize canvas panel")}
-      maximized={maximized}
-      fullscreenTransitionRef={fullscreenTransitionRef}
-      reservedMainWidth={reservedMainWidth}
       collapsed={collapsed}
-      overlay={overlay}
       contentKey="canvas"
     >
       {/* Title Bar */}
@@ -520,28 +538,32 @@ export default function CanvasPanel({
             </IconTip>
           )}
 
-          <IconTip label={maximized ? t("canvas.minimize") : t("canvas.maximize")}>
-            <button
-              onClick={toggleFullscreen}
-              disabled={fullscreenAnimating}
-              className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-            >
-              {maximized ? (
-                <Minimize2 className="h-3.5 w-3.5" />
-              ) : (
-                <Maximize2 className="h-3.5 w-3.5" />
-              )}
-            </button>
-          </IconTip>
+          {!integrated && (
+            <>
+              <IconTip label={maximized ? t("canvas.minimize") : t("canvas.maximize")}>
+                <button
+                  onClick={toggleFullscreen}
+                  disabled={fullscreenAnimating}
+                  className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                >
+                  {maximized ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </IconTip>
 
-          <IconTip label={t("canvas.close")}>
-            <button
-              onClick={handleClose}
-              className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </IconTip>
+              <IconTip label={t("canvas.close")}>
+                <button
+                  onClick={handleClose}
+                  className="p-1 rounded hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </IconTip>
+            </>
+          )}
         </div>
       </div>
 
@@ -555,6 +577,7 @@ export default function CanvasPanel({
           projectPath={canvas.projectPath}
           refreshKey={`${canvas.projectId}-${refreshKey}`}
           title={canvas.title}
+          onQuoteSelection={onQuote ? handleQuoteSelection : undefined}
         />
       </div>
     </RightPanelShell>

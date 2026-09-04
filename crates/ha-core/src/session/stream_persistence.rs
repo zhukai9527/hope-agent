@@ -5,7 +5,7 @@
 //! kept readable during the compatibility window.
 
 use anyhow::{Context, Result};
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 use crate::model_usage::ModelUsageEvent;
@@ -29,6 +29,12 @@ pub struct StreamRunRegistration {
     pub context_revision: i64,
     pub initial_context_json: Option<String>,
     pub persistent: bool,
+    /// Lineage Stop generation captured atomically with stream admission.
+    pub admitted_stop_epoch: u64,
+    /// Session-free emergency Stop generation captured by the same admission.
+    pub admitted_global_stop_epoch: u64,
+    /// Receipts attributed to that or an earlier global generation.
+    pub admitted_global_stop_receipt_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +143,17 @@ pub struct StreamRunSnapshot {
     pub through_seq: u64,
 }
 
+/// Filesystem cleanup work that must survive deletion of its owning stream
+/// journal. Rows are backend-minted before publication and become pending via
+/// a DB trigger in the same transaction that removes `chat_stream_runs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TypedResourceSnapshotCleanup {
+    pub ledger_row_id: i64,
+    pub run_id: String,
+    pub session_id: String,
+    pub snapshot_name: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CommitAssistantTurn {
     pub run_id: Option<String>,
@@ -149,6 +166,11 @@ pub struct CommitAssistantTurn {
     pub turn_id: Option<String>,
     pub usage: Option<ModelUsageEvent>,
     pub final_seq: u64,
+    pub tier3_recovery: super::Tier3RecoveryCommit,
+    /// Request-WAL transition that must commit with the assistant/context
+    /// materialization. A successful Provider response is not terminal until
+    /// this transaction wins.
+    pub request_plan: RequestPlanCommit,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +187,64 @@ pub struct CommitInterruptedTurn {
     pub interrupt_reason: Option<String>,
     pub error: Option<String>,
     pub recovery_event: Option<NewMessage>,
+    /// Request-WAL convergence owned by this same terminal transaction.
+    pub request_plan: RequestPlanCommit,
+}
+
+/// Known terminal interpretation of a request for which response headers were
+/// durably observed. `SendUnknown` is deliberately absent: an ambiguous send
+/// can only be preserved here and requires a separate explicit resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestPlanResponseOutcome {
+    CancelledAfterResponse,
+    ResponseIncomplete,
+}
+
+impl RequestPlanResponseOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::CancelledAfterResponse => "cancelled_after_response",
+            Self::ResponseIncomplete => "response_incomplete",
+        }
+    }
+}
+
+/// Exact state the live coordinator observed before an interrupted turn is
+/// committed. The SQLite transaction re-checks this expectation so a stale
+/// runtime snapshot cannot silently terminalize or replay a different request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptedRequestPlanState {
+    Unsent,
+    Dispatching,
+    ResponseStarted,
+    SendUnknown,
+}
+
+/// Typed request-plan work folded into a turn terminal transaction.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RequestPlanCommit {
+    /// Valid only when the run owns no nonterminal main request plan. Used by
+    /// local/synthetic replies and compatibility runs which never dispatched.
+    #[default]
+    None,
+    /// Successful assistant materialization. The named main plan must be the
+    /// response-started plan for the selected attempt.
+    CompleteResponseStarted {
+        request_plan_id: String,
+        attempt_no: u32,
+    },
+    /// Stop/failure convergence for the one live main request. The expected
+    /// state is checked and mapped forward only; no transition can enable an
+    /// automatic retry.
+    ConvergeInterrupted {
+        request_plan_id: String,
+        attempt_no: u32,
+        expected_state: InterruptedRequestPlanState,
+        response_outcome: RequestPlanResponseOutcome,
+    },
+    /// Startup recovery scans the entire run, including attempts other than
+    /// the journal prefix chosen for visible recovery.
+    RecoverAllForRun,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +254,381 @@ pub struct CommittedTurn {
     pub context_revision: i64,
     pub committed_seq: u64,
     pub persistence_status: String,
+}
+
+fn mark_typed_resource_snapshots_pending(
+    conn: &rusqlite::Connection,
+    run_id: &str,
+    session_id: &str,
+) -> Result<usize> {
+    conn.execute(
+        "UPDATE chat_stream_typed_snapshots
+            SET cleanup_pending = 1
+          WHERE run_id = ?1 AND session_id = ?2",
+        params![run_id, session_id],
+    )
+    .map_err(Into::into)
+}
+
+fn request_plan_row(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    run_id: &str,
+    request_plan_id: &str,
+    attempt_no: u32,
+) -> Result<(String, Option<String>)> {
+    tx.query_row(
+        "SELECT state, terminal_outcome
+           FROM request_projection_plans
+          WHERE session_id = ?1 AND run_id = ?2 AND request_plan_id = ?3
+            AND attempt_no = ?4 AND request_role = 'main_continuation'",
+        params![session_id, run_id, request_plan_id, i64::from(attempt_no)],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()?
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "request plan {request_plan_id} does not belong to run {run_id} attempt {attempt_no}"
+        )
+    })
+}
+
+fn revoke_terminal_request_epoch_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    request_plan_id: &str,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE context_projection_epochs
+            SET state = 'revoked'
+          WHERE session_id = ?1 AND scope = 'request_local'
+            AND owner_request_plan_id = ?2 AND state = 'active'",
+        params![session_id, request_plan_id],
+    )?;
+    Ok(())
+}
+
+fn claim_request_payload_scrub_tx(
+    tx: &Transaction<'_>,
+    request_plan_id: &str,
+    reason: &str,
+    now: &str,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE request_payload_objects
+            SET object_state = 'scrub_pending', retention_state = 'release_pending',
+                scrub_reason = ?2, updated_at = ?3
+          WHERE owner_id = ?1 AND object_state = 'live'",
+        params![request_plan_id, reason, now],
+    )?;
+    Ok(())
+}
+
+fn hold_request_payload_send_unknown_tx(
+    tx: &Transaction<'_>,
+    request_plan_id: &str,
+    now: &str,
+) -> Result<()> {
+    tx.execute(
+        "UPDATE request_payload_owners
+            SET owner_state = 'send_unknown', updated_at = ?2
+          WHERE owner_id = ?1 AND owner_state IN ('active', 'send_unknown')",
+        params![request_plan_id, now],
+    )?;
+    Ok(())
+}
+
+fn require_no_other_nonterminal_main_plan(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    run_id: &str,
+    except_request_plan_id: Option<&str>,
+) -> Result<()> {
+    let count = tx.query_row(
+        "SELECT COUNT(*)
+           FROM request_projection_plans
+          WHERE session_id = ?1 AND run_id = ?2
+            AND request_role = 'main_continuation'
+            AND state NOT IN ('terminal', 'superseded')
+            AND (?3 IS NULL OR request_plan_id != ?3)",
+        params![session_id, run_id, except_request_plan_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+    if count != 0 {
+        anyhow::bail!("run {run_id} has {count} additional nonterminal main request plan(s)");
+    }
+    Ok(())
+}
+
+/// Fold request-WAL convergence into the surrounding turn transaction. Every
+/// transition is forward-only and the trigger-backed state machine remains the
+/// final guard. This helper is intentionally transaction-scoped: using the
+/// public standalone request-plan APIs here would recreate the crash window
+/// between Provider terminal state and assistant/context materialization.
+fn apply_request_plan_commit_tx(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    run_id: Option<&str>,
+    selected_attempt_no: u32,
+    request_plan: &RequestPlanCommit,
+    now: &str,
+) -> Result<()> {
+    let Some(run_id) = run_id else {
+        if !matches!(request_plan, RequestPlanCommit::None) {
+            anyhow::bail!("nonpersistent turn cannot commit a persistent request plan");
+        }
+        return Ok(());
+    };
+
+    match request_plan {
+        RequestPlanCommit::None => {
+            require_no_other_nonterminal_main_plan(tx, session_id, run_id, None)?;
+        }
+        RequestPlanCommit::CompleteResponseStarted {
+            request_plan_id,
+            attempt_no,
+        } => {
+            if *attempt_no != selected_attempt_no {
+                anyhow::bail!(
+                    "successful request plan attempt {} does not match selected attempt {}",
+                    attempt_no,
+                    selected_attempt_no
+                );
+            }
+            let (state, terminal_outcome) =
+                request_plan_row(tx, session_id, run_id, request_plan_id, *attempt_no)?;
+            match state.as_str() {
+                "response_started" => {
+                    let changed = tx.execute(
+                        "UPDATE request_projection_plans
+                            SET state = 'terminal', terminal_outcome = 'success', updated_at = ?1
+                          WHERE session_id = ?2 AND run_id = ?3 AND request_plan_id = ?4
+                            AND attempt_no = ?5 AND request_role = 'main_continuation'
+                            AND state = 'response_started'",
+                        params![
+                            now,
+                            session_id,
+                            run_id,
+                            request_plan_id,
+                            i64::from(*attempt_no)
+                        ],
+                    )?;
+                    if changed != 1 {
+                        anyhow::bail!("successful request plan transition lost its state CAS");
+                    }
+                    revoke_terminal_request_epoch_tx(tx, session_id, request_plan_id)?;
+                    claim_request_payload_scrub_tx(tx, request_plan_id, "request_terminal", now)?;
+                }
+                "terminal" if terminal_outcome.as_deref() == Some("success") => {}
+                _ => anyhow::bail!(
+                    "successful request plan requires response_started proof; found {state}"
+                ),
+            }
+            require_no_other_nonterminal_main_plan(tx, session_id, run_id, Some(request_plan_id))?;
+        }
+        RequestPlanCommit::ConvergeInterrupted {
+            request_plan_id,
+            attempt_no,
+            expected_state,
+            response_outcome,
+        } => {
+            // The selected journal prefix may intentionally come from an
+            // earlier attempt when the current attempt crossed dispatch but
+            // emitted no durable event. Validate the request's own attempt
+            // identity, but do not equate it with the visible-prefix attempt.
+            let (state, terminal_outcome) =
+                request_plan_row(tx, session_id, run_id, request_plan_id, *attempt_no)?;
+            match expected_state {
+                InterruptedRequestPlanState::Unsent => match state.as_str() {
+                    "prepared" | "context_committed" => {
+                        let changed = tx.execute(
+                            "UPDATE request_projection_plans
+                                SET state = 'superseded',
+                                    terminal_outcome = 'interrupted_before_dispatch', updated_at = ?1
+                              WHERE session_id = ?2 AND run_id = ?3 AND request_plan_id = ?4
+                                AND attempt_no = ?5 AND request_role = 'main_continuation'
+                                AND state IN ('prepared', 'context_committed')",
+                            params![
+                                now,
+                                session_id,
+                                run_id,
+                                request_plan_id,
+                                i64::from(*attempt_no)
+                            ],
+                        )?;
+                        if changed != 1 {
+                            anyhow::bail!("unsent request plan transition lost its state CAS");
+                        }
+                        revoke_terminal_request_epoch_tx(tx, session_id, request_plan_id)?;
+                        claim_request_payload_scrub_tx(
+                            tx,
+                            request_plan_id,
+                            "request_superseded",
+                            now,
+                        )?;
+                    }
+                    "superseded"
+                        if terminal_outcome.as_deref() == Some("interrupted_before_dispatch") => {}
+                    _ => anyhow::bail!(
+                        "interrupted request plan expected an unsent state; found {state}"
+                    ),
+                },
+                InterruptedRequestPlanState::Dispatching => match state.as_str() {
+                    "dispatching" => {
+                        let changed = tx.execute(
+                            "UPDATE request_projection_plans
+                                SET state = 'send_unknown',
+                                    terminal_outcome = 'dispatch_result_unknown', updated_at = ?1
+                              WHERE session_id = ?2 AND run_id = ?3 AND request_plan_id = ?4
+                                AND attempt_no = ?5 AND request_role = 'main_continuation'
+                                AND state = 'dispatching'",
+                            params![
+                                now,
+                                session_id,
+                                run_id,
+                                request_plan_id,
+                                i64::from(*attempt_no)
+                            ],
+                        )?;
+                        if changed != 1 {
+                            anyhow::bail!("dispatch-unknown transition lost its state CAS");
+                        }
+                        hold_request_payload_send_unknown_tx(tx, request_plan_id, now)?;
+                    }
+                    "send_unknown"
+                        if terminal_outcome.as_deref() == Some("dispatch_result_unknown") => {}
+                    _ => anyhow::bail!(
+                        "interrupted request plan expected dispatching; found {state}"
+                    ),
+                },
+                InterruptedRequestPlanState::ResponseStarted => {
+                    let outcome = response_outcome.as_str();
+                    match state.as_str() {
+                        "response_started" => {
+                            let changed = tx.execute(
+                                "UPDATE request_projection_plans
+                                    SET state = 'terminal', terminal_outcome = ?1, updated_at = ?2
+                                  WHERE session_id = ?3 AND run_id = ?4 AND request_plan_id = ?5
+                                    AND attempt_no = ?6 AND request_role = 'main_continuation'
+                                    AND state = 'response_started'",
+                                params![
+                                    outcome,
+                                    now,
+                                    session_id,
+                                    run_id,
+                                    request_plan_id,
+                                    i64::from(*attempt_no)
+                                ],
+                            )?;
+                            if changed != 1 {
+                                anyhow::bail!(
+                                    "interrupted response terminal transition lost its state CAS"
+                                );
+                            }
+                            revoke_terminal_request_epoch_tx(tx, session_id, request_plan_id)?;
+                            claim_request_payload_scrub_tx(
+                                tx,
+                                request_plan_id,
+                                "request_terminal",
+                                now,
+                            )?;
+                        }
+                        "terminal" if terminal_outcome.as_deref() == Some(outcome) => {}
+                        _ => anyhow::bail!(
+                            "interrupted request plan expected response_started; found {state}"
+                        ),
+                    }
+                }
+                InterruptedRequestPlanState::SendUnknown => {
+                    if state != "send_unknown" || terminal_outcome.is_none() {
+                        anyhow::bail!("ambiguous request must remain send_unknown; found {state}");
+                    }
+                }
+            }
+            require_no_other_nonterminal_main_plan(tx, session_id, run_id, Some(request_plan_id))?;
+        }
+        RequestPlanCommit::RecoverAllForRun => {
+            // Each statement follows an allowed edge in the trigger-backed
+            // state machine. SendUnknown is retained as an explicit manual
+            // resolution boundary and can never be replayed automatically.
+            tx.execute(
+                "UPDATE request_projection_plans
+                    SET state = 'superseded',
+                        terminal_outcome = 'crash_recovered_unsent', updated_at = ?1
+                  WHERE session_id = ?2 AND run_id = ?3
+                    AND state IN ('prepared', 'context_committed')",
+                params![now, session_id, run_id],
+            )?;
+            tx.execute(
+                "UPDATE request_projection_plans
+                    SET state = 'send_unknown',
+                        terminal_outcome = 'crash_recovery_dispatch_unknown', updated_at = ?1
+                  WHERE session_id = ?2 AND run_id = ?3 AND state = 'dispatching'",
+                params![now, session_id, run_id],
+            )?;
+            tx.execute(
+                "UPDATE request_projection_plans
+                    SET state = 'terminal',
+                        terminal_outcome = 'response_incomplete_crash_recovered', updated_at = ?1
+                  WHERE session_id = ?2 AND run_id = ?3 AND state = 'response_started'",
+                params![now, session_id, run_id],
+            )?;
+            tx.execute(
+                "UPDATE request_payload_objects
+                    SET object_state = 'scrub_pending', retention_state = 'release_pending',
+                        scrub_reason = CASE
+                            WHEN EXISTS (
+                                SELECT 1 FROM request_projection_plans plan
+                                 WHERE plan.request_plan_id = request_payload_objects.owner_id
+                                   AND plan.state = 'superseded'
+                            ) THEN 'request_superseded'
+                            ELSE 'request_terminal'
+                        END,
+                        updated_at = ?1
+                  WHERE object_state = 'live'
+                    AND owner_id IN (
+                        SELECT request_plan_id FROM request_projection_plans
+                         WHERE session_id = ?2 AND run_id = ?3
+                           AND state IN ('terminal', 'superseded')
+                    )",
+                params![now, session_id, run_id],
+            )?;
+            tx.execute(
+                "UPDATE request_payload_owners
+                    SET owner_state = 'send_unknown', updated_at = ?1
+                  WHERE owner_id IN (
+                      SELECT request_plan_id FROM request_projection_plans
+                       WHERE session_id = ?2 AND run_id = ?3 AND state = 'send_unknown'
+                  )
+                    AND owner_state IN ('active', 'send_unknown')",
+                params![now, session_id, run_id],
+            )?;
+            tx.execute(
+                "UPDATE context_projection_epochs
+                    SET state = 'revoked'
+                  WHERE session_id = ?1 AND scope = 'request_local' AND state = 'active'
+                    AND owner_request_plan_id IN (
+                        SELECT request_plan_id FROM request_projection_plans
+                         WHERE session_id = ?1 AND run_id = ?2
+                           AND state IN ('terminal', 'superseded')
+                    )",
+                params![session_id, run_id],
+            )?;
+            let unsafe_count = tx.query_row(
+                "SELECT COUNT(*) FROM request_projection_plans
+                  WHERE session_id = ?1 AND run_id = ?2
+                    AND state IN ('prepared', 'context_committed', 'dispatching', 'response_started')",
+                params![session_id, run_id],
+                |row| row.get::<_, i64>(0),
+            )?;
+            if unsafe_count != 0 {
+                anyhow::bail!(
+                    "startup recovery left {unsafe_count} request plan(s) unconverged for run {run_id}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 impl SessionDB {
@@ -251,8 +706,76 @@ impl SessionDB {
                     REFERENCES chat_stream_attempts(run_id, attempt_no) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_chat_stream_context_checkpoint_recovery
-                ON chat_stream_context_checkpoints(run_id, attempt_no, through_seq DESC);",
+                ON chat_stream_context_checkpoints(run_id, attempt_no, through_seq DESC);
+
+            CREATE TABLE IF NOT EXISTS chat_stream_typed_snapshots (
+                run_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                snapshot_name TEXT NOT NULL,
+                cleanup_pending INTEGER NOT NULL DEFAULT 0
+                    CHECK (cleanup_pending IN (0, 1)),
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (run_id, snapshot_name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_stream_typed_snapshots_cleanup
+                ON chat_stream_typed_snapshots(cleanup_pending, created_at);
+            CREATE TRIGGER IF NOT EXISTS chat_stream_runs_typed_snapshots_bd
+            BEFORE DELETE ON chat_stream_runs
+            BEGIN
+                UPDATE chat_stream_typed_snapshots
+                   SET cleanup_pending = 1
+                 WHERE run_id = OLD.run_id;
+            END;",
         )?;
+        // A short-lived prerelease schema cascaded this ledger from sessions.
+        // That loses the only retry proof when `delete_session` removes the
+        // attachment directory best-effort and the filesystem operation fails.
+        // Rebuild transactionally without the FK; the run-delete trigger marks
+        // rows pending before either explicit or session-cascade run deletion.
+        let typed_snapshot_has_session_fk = {
+            let mut stmt = conn.prepare("PRAGMA foreign_key_list(chat_stream_typed_snapshots)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(2))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+                .iter()
+                .any(|table| table == "sessions")
+        };
+        if typed_snapshot_has_session_fk {
+            if let Err(error) = conn.execute_batch(
+                "BEGIN IMMEDIATE;
+                 DROP TRIGGER IF EXISTS chat_stream_runs_typed_snapshots_bd;
+                 DROP INDEX IF EXISTS idx_chat_stream_typed_snapshots_cleanup;
+                 ALTER TABLE chat_stream_typed_snapshots
+                    RENAME TO chat_stream_typed_snapshots_prerelease;
+                 CREATE TABLE chat_stream_typed_snapshots (
+                    run_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    snapshot_name TEXT NOT NULL,
+                    cleanup_pending INTEGER NOT NULL DEFAULT 0
+                        CHECK (cleanup_pending IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, snapshot_name)
+                 );
+                 INSERT INTO chat_stream_typed_snapshots (
+                    run_id, session_id, snapshot_name, cleanup_pending, created_at
+                 )
+                 SELECT run_id, session_id, snapshot_name, cleanup_pending, created_at
+                   FROM chat_stream_typed_snapshots_prerelease;
+                 DROP TABLE chat_stream_typed_snapshots_prerelease;
+                 CREATE INDEX idx_chat_stream_typed_snapshots_cleanup
+                    ON chat_stream_typed_snapshots(cleanup_pending, created_at);
+                 CREATE TRIGGER chat_stream_runs_typed_snapshots_bd
+                 BEFORE DELETE ON chat_stream_runs
+                 BEGIN
+                    UPDATE chat_stream_typed_snapshots
+                       SET cleanup_pending = 1
+                     WHERE run_id = OLD.run_id;
+                 END;
+                 COMMIT;",
+            ) {
+                let _ = conn.execute_batch("ROLLBACK;");
+                return Err(error.into());
+            }
+        }
         // These columns were added after the first additive journal migration.
         // Keep startup compatible with databases created by that prerelease.
         if conn
@@ -288,11 +811,45 @@ impl SessionDB {
     /// Register one durability run. Incognito sessions return an in-memory
     /// registration and deliberately leave no row in any journal table.
     pub fn create_stream_run(&self, input: &CreateStreamRun) -> Result<StreamRunRegistration> {
-        let conn = self
+        self.create_stream_run_with_stop_admission(input, None)
+    }
+
+    pub fn create_stream_run_with_stop_admission(
+        &self,
+        input: &CreateStreamRun,
+        stop_admission: Option<super::ForegroundStopAdmission>,
+    ) -> Result<StreamRunRegistration> {
+        let mut conn = self
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-        let session = conn
+        // Serialize admission with Stop receipt writes. If Stop wins first,
+        // the turn captures the new generation; if admission wins first, the
+        // later Stop observes the running stream and advances beyond this
+        // immutable epoch.
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let registration = Self::create_stream_run_with_tx(&tx, input, stop_admission)?;
+        tx.commit()?;
+        Ok(registration)
+    }
+
+    /// Add a stream run to an existing kernel-owned admission transaction.
+    /// The Stop proof is checked in that same transaction as the user message
+    /// and visible turn, closing the admission/Stop race across processes.
+    pub(crate) fn create_stream_run_in_transaction(
+        tx: &Transaction<'_>,
+        input: &CreateStreamRun,
+        stop_admission: Option<super::ForegroundStopAdmission>,
+    ) -> Result<StreamRunRegistration> {
+        Self::create_stream_run_with_tx(tx, input, stop_admission)
+    }
+
+    fn create_stream_run_with_tx(
+        tx: &Transaction<'_>,
+        input: &CreateStreamRun,
+        stop_admission: Option<super::ForegroundStopAdmission>,
+    ) -> Result<StreamRunRegistration> {
+        let session = tx
             .query_row(
                 "SELECT incognito, context_revision, context_json
                  FROM sessions WHERE id = ?1",
@@ -312,16 +869,57 @@ impl SessionDB {
                 input.session_id
             );
         };
+        // `chat_turns` covers Desktop/HTTP/SessionTool while sources such as
+        // ACP own only this durable stream row. Check both tables under the
+        // same IMMEDIATE transaction so either admission order is serialized
+        // across processes. A regular run may see its own pre-created turn.
+        super::turns::ensure_no_competing_durable_chat_work(
+            &tx,
+            &input.session_id,
+            input.turn_id.as_deref(),
+        )?;
+        if input.source == crate::chat_engine::ChatSource::SessionTool.as_str()
+            && tx.query_row(
+                super::autonomy_pause::SESSION_LINEAGE_PAUSE_EXISTS_SQL,
+                params![input.session_id],
+                |row| row.get::<_, i64>(0),
+            )? != 0
+        {
+            anyhow::bail!(
+                "Target session '{}' is paused; use Continue before starting its delegated stream",
+                input.session_id
+            );
+        }
+        let (admitted_stop_epoch, admitted_global_stop_epoch, admitted_global_stop_receipt_count) =
+            if let Some(admission) = stop_admission {
+                if !super::autonomy_pause::foreground_stop_admission_is_current_with_conn(
+                    &tx,
+                    &input.session_id,
+                    admission,
+                )? {
+                    anyhow::bail!("{}", super::FOREGROUND_STOP_FENCE_ERROR);
+                }
+                admission.resolved_for(&input.session_id)
+            } else {
+                let admission = super::autonomy_pause::foreground_stop_admission_with_conn(
+                    &tx,
+                    Some(&input.session_id),
+                )?;
+                admission.resolved_for(&input.session_id)
+            };
         if incognito {
             return Ok(StreamRunRegistration {
                 run_id: input.run_id.clone(),
                 context_revision,
                 initial_context_json,
                 persistent: false,
+                admitted_stop_epoch,
+                admitted_global_stop_epoch,
+                admitted_global_stop_receipt_count,
             });
         }
         let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
+        tx.execute(
             "INSERT INTO chat_stream_runs (
                 run_id, session_id, source, stream_id, turn_id, status,
                 accepted_seq, durable_seq, checkpoint_seq, committed_seq, provider_shape,
@@ -343,6 +941,9 @@ impl SessionDB {
             context_revision,
             initial_context_json,
             persistent: true,
+            admitted_stop_epoch,
+            admitted_global_stop_epoch,
+            admitted_global_stop_receipt_count,
         })
     }
 
@@ -425,7 +1026,11 @@ impl SessionDB {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-        let tx = conn.transaction()?;
+        // The request send-state fence and the attempt/context rollback must
+        // share one writer transaction. A read-then-write sequence here would
+        // allow a dispatch claim to land between the two operations and make
+        // a possibly-sent request eligible for blind failover.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let now = chrono::Utc::now().to_rfc3339();
         let session_id: String = tx.query_row(
             "SELECT session_id FROM chat_stream_runs
@@ -433,6 +1038,17 @@ impl SessionDB {
             params![run_id],
             |row| row.get(0),
         )?;
+        if !super::context_projection::supersede_unsent_run_attempt_in_tx(
+            &tx,
+            &session_id,
+            run_id,
+            attempt_no,
+            "provider_attempt_superseded",
+        )? {
+            anyhow::bail!(
+                "cannot supersede stream attempt {attempt_no}: a Provider request may have been sent"
+            );
+        }
         let changed = tx.execute(
             "UPDATE chat_stream_attempts
              SET status = 'superseded', ended_at = ?1, error = ?2
@@ -487,6 +1103,7 @@ impl SessionDB {
         expected_revision: i64,
         context_json: &str,
         through_seq: u64,
+        tier3_recovery: super::Tier3RecoveryCommit,
     ) -> Result<i64> {
         let mut conn = self
             .conn
@@ -561,6 +1178,7 @@ impl SessionDB {
         if changed_run != 1 {
             anyhow::bail!("run checkpoint update affected {changed_run} rows");
         }
+        Self::apply_tier3_recovery_commit(&tx, &session_id, tier3_recovery)?;
         tx.commit()?;
         Ok(expected_revision.saturating_add(1))
     }
@@ -568,6 +1186,29 @@ impl SessionDB {
     /// Atomically materialize the successful assistant and every durable
     /// terminal fact. No success event may be emitted before this returns.
     pub fn commit_assistant_turn(&self, input: &CommitAssistantTurn) -> Result<CommittedTurn> {
+        self.commit_assistant_turn_inner(input, false)
+    }
+
+    /// Kernel-only completion for a deterministic local reply which owns a
+    /// durable run but deliberately issued no Provider attempt.
+    pub(crate) fn commit_kernel_local_assistant_turn(
+        &self,
+        input: &CommitAssistantTurn,
+    ) -> Result<CommittedTurn> {
+        if input.attempt_no != 0 {
+            anyhow::bail!("kernel-local assistant commit requires attempt zero");
+        }
+        self.commit_assistant_turn_inner(input, true)
+    }
+
+    fn commit_assistant_turn_inner(
+        &self,
+        input: &CommitAssistantTurn,
+        allow_attemptless_run: bool,
+    ) -> Result<CommittedTurn> {
+        if input.run_id.is_some() && input.attempt_no == 0 && !allow_attemptless_run {
+            anyhow::bail!("persistent assistant commit requires a Provider attempt");
+        }
         let mut conn = self
             .conn
             .lock()
@@ -585,6 +1226,18 @@ impl SessionDB {
                 anyhow::bail!("persistence run belongs to another session");
             }
             if status == "committed" {
+                // Idempotent replay must still verify that the request WAL
+                // converged with the original successful transaction. This
+                // also repairs the only safe legacy edge (response_started ->
+                // terminal) without touching assistant/context state.
+                apply_request_plan_commit_tx(
+                    &tx,
+                    &input.session_id,
+                    input.run_id.as_deref(),
+                    input.attempt_no,
+                    &input.request_plan,
+                    &now,
+                )?;
                 let assistant_message_id = tx.query_row(
                     "SELECT id FROM messages
                      WHERE persistence_run_id = ?1 AND role = 'assistant'
@@ -673,7 +1326,8 @@ impl SessionDB {
             let changed_turn = tx.execute(
                 "UPDATE chat_turns
                  SET status = 'completed', interrupt_reason = NULL, error = NULL,
-                     assistant_message_id = ?1, ended_at = ?2, updated_at = ?2
+                     assistant_message_id = ?1, terminal_message_id = ?1,
+                     ended_at = ?2, updated_at = ?2
                  WHERE id = ?3 AND session_id = ?4
                    AND status = 'running'",
                 params![assistant_id, now, turn_id, input.session_id],
@@ -687,17 +1341,36 @@ impl SessionDB {
             insert_usage_tx(&tx, usage, assistant_id, &input.session_id, &now)?;
         }
 
+        // The recovery state changes with the same provider-native context
+        // that proves it. A Tier 3 summary therefore cannot clear the marker
+        // before its history is durable, and a Tier 4 recovery cannot leave a
+        // completed turn without scheduling its semantic follow-up.
+        Self::apply_tier3_recovery_commit(&tx, &input.session_id, input.tier3_recovery)?;
+
+        apply_request_plan_commit_tx(
+            &tx,
+            &input.session_id,
+            input.run_id.as_deref(),
+            input.attempt_no,
+            &input.request_plan,
+            &now,
+        )?;
+
         if let Some(run_id) = input.run_id.as_deref() {
-            let changed_attempt = tx.execute(
-                "UPDATE chat_stream_attempts
-                 SET status = 'succeeded', accepted_seq = ?1, durable_seq = ?1,
-                     checkpoint_seq = ?1,
-                     ended_at = ?2, error = NULL
-                 WHERE run_id = ?3 AND attempt_no = ?4 AND status = 'running'",
-                params![input.final_seq as i64, now, run_id, input.attempt_no],
-            )?;
-            if changed_attempt != 1 {
-                anyhow::bail!("successful attempt update affected {changed_attempt} rows");
+            // Kernel-local replies never issue a Provider request and
+            // therefore deliberately own no attempt row.
+            if !allow_attemptless_run {
+                let changed_attempt = tx.execute(
+                    "UPDATE chat_stream_attempts
+                     SET status = 'succeeded', accepted_seq = ?1, durable_seq = ?1,
+                         checkpoint_seq = ?1,
+                         ended_at = ?2, error = NULL
+                     WHERE run_id = ?3 AND attempt_no = ?4 AND status = 'running'",
+                    params![input.final_seq as i64, now, run_id, input.attempt_no],
+                )?;
+                if changed_attempt != 1 {
+                    anyhow::bail!("successful attempt update affected {changed_attempt} rows");
+                }
             }
             let changed_run = tx.execute(
                 "UPDATE chat_stream_runs
@@ -763,6 +1436,9 @@ impl SessionDB {
         tx.execute(
             "UPDATE chat_turns
              SET status = ?1, interrupt_reason = COALESCE(interrupt_reason, ?2),
+                 terminal_message_id = COALESCE(
+                     (SELECT MAX(m.id) FROM messages m WHERE m.session_id = chat_turns.session_id),
+                     assistant_message_id, user_message_id),
                  error = ?3, ended_at = COALESCE(ended_at, ?4), updated_at = ?4
              WHERE id = (SELECT turn_id FROM chat_stream_runs WHERE run_id = ?5)
                AND status NOT IN ('completed','interrupted','failed')",
@@ -797,6 +1473,18 @@ impl SessionDB {
             )?;
             if run_status != "running" {
                 if matches!(run_status.as_str(), "interrupted" | "failed" | "recovered") {
+                    // A prior turn transaction may have committed while its
+                    // caller crashed before observing the result. Never let
+                    // this idempotent fast path skip request-WAL validation or
+                    // startup-wide convergence.
+                    apply_request_plan_commit_tx(
+                        &tx,
+                        &input.session_id,
+                        input.run_id.as_deref(),
+                        input.attempt_no,
+                        &input.request_plan,
+                        &now,
+                    )?;
                     let assistant_message_id = tx
                         .query_row(
                             "SELECT id FROM messages
@@ -863,8 +1551,8 @@ impl SessionDB {
         } else {
             None
         };
-        if let Some(event) = input.recovery_event.as_ref() {
-            insert_message_tx(
+        let recovery_event_id = if let Some(event) = input.recovery_event.as_ref() {
+            Some(insert_message_tx(
                 &tx,
                 &input.session_id,
                 event,
@@ -873,8 +1561,10 @@ impl SessionDB {
                     .run_id
                     .as_ref()
                     .map(|_| i64::try_from(input.final_seq.saturating_add(2)).unwrap_or(i64::MAX)),
-            )?;
-        }
+            )?)
+        } else {
+            None
+        };
         let changed_context = tx.execute(
             "UPDATE sessions
              SET context_json = ?1, context_revision = context_revision + 1,
@@ -901,6 +1591,8 @@ impl SessionDB {
                      interrupt_reason = COALESCE(interrupt_reason, ?2),
                      error = COALESCE(error, ?3),
                      assistant_message_id = COALESCE(?4, assistant_message_id),
+                     terminal_message_id = COALESCE(?8, ?4, terminal_message_id,
+                         assistant_message_id, user_message_id),
                      ended_at = COALESCE(ended_at, ?5), updated_at = ?5
                  WHERE id = ?6 AND session_id = ?7
                    AND (
@@ -915,12 +1607,21 @@ impl SessionDB {
                     now,
                     turn_id,
                     input.session_id,
+                    recovery_event_id,
                 ],
             )?;
             if changed != 1 {
                 anyhow::bail!("interrupted chat turn update affected {changed} rows");
             }
         }
+        apply_request_plan_commit_tx(
+            &tx,
+            &input.session_id,
+            input.run_id.as_deref(),
+            input.attempt_no,
+            &input.request_plan,
+            &now,
+        )?;
         if let Some(run_id) = input.run_id.as_deref() {
             let recovered = matches!(
                 input.interrupt_reason.as_deref(),
@@ -1243,18 +1944,398 @@ impl SessionDB {
         Ok(())
     }
 
-    pub fn gc_stream_journals(&self, older_than: &str) -> Result<usize> {
+    /// Persist backend-minted ownership before any typed snapshot file is
+    /// published. The row intentionally does not reference `chat_stream_runs`:
+    /// it must survive journal deletion long enough to drive recoverable
+    /// filesystem cleanup. It also intentionally has no session foreign key:
+    /// session-directory removal is best-effort, so the ledger must survive a
+    /// failed delete and retry the exact owner-scoped basename later.
+    #[doc(hidden)]
+    pub fn register_typed_resource_snapshots(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        snapshot_names: &[String],
+    ) -> Result<()> {
+        if snapshot_names.is_empty() {
+            return Ok(());
+        }
+        if snapshot_names
+            .iter()
+            .any(|name| name.is_empty() || name.len() > 255)
+        {
+            anyhow::bail!("typed-resource snapshot ownership has an invalid basename");
+        }
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        let tx = conn.transaction()?;
+        let owner: Option<String> = tx
+            .query_row(
+                "SELECT session_id FROM chat_stream_runs
+                 WHERE run_id = ?1 AND status = 'running'",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if owner.as_deref() != Some(session_id) {
+            anyhow::bail!("typed-resource snapshot owner run is unavailable or mismatched");
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        for snapshot_name in snapshot_names {
+            tx.execute(
+                "INSERT INTO chat_stream_typed_snapshots (
+                    run_id, session_id, snapshot_name, cleanup_pending, created_at
+                 ) VALUES (?1, ?2, ?3, 0, ?4)
+                 ON CONFLICT(run_id, snapshot_name) DO NOTHING",
+                params![run_id, session_id, snapshot_name, now],
+            )?;
+            let registered_session: String = tx.query_row(
+                "SELECT session_id FROM chat_stream_typed_snapshots
+                 WHERE run_id = ?1 AND snapshot_name = ?2 AND cleanup_pending = 0",
+                params![run_id, snapshot_name],
+                |row| row.get(0),
+            )?;
+            if registered_session != session_id {
+                anyhow::bail!("typed-resource snapshot ownership conflicts with another session");
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Publish a previously registered durable typed-resource batch while an
+    /// IMMEDIATE writer transaction protects the ownership rows. The
+    /// filesystem callback deliberately runs inside that transaction: run or
+    /// session deletion (and the cleanup writer it enables) cannot overtake a
+    /// validated publication and acknowledge its ledger rows before the files
+    /// appear.
+    ///
+    /// Registration remains a separate committed phase so a crash before this
+    /// gate leaves durable cleanup proof. At the gate we require the exact
+    /// registered set to still belong to a live run/session and every row to
+    /// remain active. A delete+drain that wins before `BEGIN IMMEDIATE` thus
+    /// makes a late publisher fail before invoking `publish`.
+    #[doc(hidden)]
+    pub fn publish_registered_typed_resource_snapshots<T>(
+        &self,
+        run_id: &str,
+        session_id: &str,
+        snapshot_names: &[String],
+        publish: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if snapshot_names.is_empty() {
+            anyhow::bail!("durable typed-resource publication has no ownership rows");
+        }
+        let expected_names = snapshot_names
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        if expected_names.len() != snapshot_names.len() {
+            anyhow::bail!("durable typed-resource publication has duplicate ownership rows");
+        }
+
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let live_owner: Option<String> = tx
+            .query_row(
+                "SELECT runs.session_id
+                   FROM chat_stream_runs AS runs
+                   JOIN sessions ON sessions.id = runs.session_id
+                  WHERE runs.run_id = ?1
+                    AND runs.session_id = ?2
+                    AND runs.status = 'running'",
+                params![run_id, session_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if live_owner.as_deref() != Some(session_id) {
+            anyhow::bail!(
+                "typed-resource snapshot publication owner run is unavailable or mismatched"
+            );
+        }
+
+        let registered_rows = {
+            let mut stmt = tx.prepare(
+                "SELECT session_id, snapshot_name, cleanup_pending
+                   FROM chat_stream_typed_snapshots
+                  WHERE run_id = ?1",
+            )?;
+            let rows = stmt.query_map(params![run_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let registered_names = registered_rows
+            .iter()
+            .map(|(_, name, _)| name.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if registered_rows.len() != snapshot_names.len()
+            || registered_names != expected_names
+            || registered_rows
+                .iter()
+                .any(|(owner, _, cleanup_pending)| owner != session_id || *cleanup_pending != 0)
+        {
+            anyhow::bail!(
+                "typed-resource snapshot publication ownership is missing, pending, or mismatched"
+            );
+        }
+
+        match publish() {
+            Ok(output) => match tx.commit() {
+                Ok(()) => Ok(output),
+                Err(commit_error) => {
+                    // The files may already exist while the gate transaction
+                    // failed to commit. Persist recoverable cleanup work on
+                    // the writer connection before returning the failure.
+                    let cleanup_result =
+                        mark_typed_resource_snapshots_pending(&conn, run_id, session_id);
+                    match cleanup_result {
+                        Ok(_) => Err(anyhow::anyhow!(
+                            "commit typed-resource snapshot publication gate: {commit_error}"
+                        )),
+                        Err(cleanup_error) => Err(anyhow::anyhow!(
+                            "commit typed-resource snapshot publication gate: {commit_error}; \
+                             additionally failed to mark ownership pending: {cleanup_error}"
+                        )),
+                    }
+                }
+            },
+            Err(publish_error) => {
+                // Publication cleans any successfully-created prefix itself,
+                // but a failed unlink must remain retryable. Mark the complete
+                // batch pending in this same writer transaction.
+                if let Err(mark_error) = tx.execute(
+                    "UPDATE chat_stream_typed_snapshots
+                        SET cleanup_pending = 1
+                      WHERE run_id = ?1 AND session_id = ?2",
+                    params![run_id, session_id],
+                ) {
+                    drop(tx);
+                    let fallback_error =
+                        mark_typed_resource_snapshots_pending(&conn, run_id, session_id).err();
+                    return Err(match fallback_error {
+                        Some(fallback_error) => anyhow::anyhow!(
+                            "publish typed-resource snapshots: {publish_error}; failed to mark \
+                             ownership pending: {mark_error}; fallback also failed: {fallback_error}"
+                        ),
+                        None => anyhow::anyhow!(
+                            "publish typed-resource snapshots: {publish_error}; initial pending \
+                             mark failed: {mark_error}"
+                        ),
+                    });
+                }
+                if let Err(commit_error) = tx.commit() {
+                    let cleanup_result =
+                        mark_typed_resource_snapshots_pending(&conn, run_id, session_id);
+                    return Err(match cleanup_result {
+                        Ok(_) => anyhow::anyhow!(
+                            "publish typed-resource snapshots: {publish_error}; commit pending \
+                             ownership failed: {commit_error}"
+                        ),
+                        Err(cleanup_error) => anyhow::anyhow!(
+                            "publish typed-resource snapshots: {publish_error}; commit pending \
+                             ownership failed: {commit_error}; fallback also failed: {cleanup_error}"
+                        ),
+                    });
+                }
+                Err(publish_error
+                    .context("publish typed-resource snapshots; ownership was marked for cleanup"))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_typed_resource_snapshot_cleanups(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TypedResourceSnapshotCleanup>> {
+        let through_row_id = self
+            .typed_resource_snapshot_cleanup_high_watermark()?
+            .unwrap_or(0);
+        self.pending_typed_resource_snapshot_cleanups_through(0, through_row_id, limit)
+    }
+
+    pub(crate) fn typed_resource_snapshot_cleanup_high_watermark(&self) -> Result<Option<i64>> {
+        let conn = self.read_conn()?;
+        conn.query_row(
+            "SELECT MAX(rowid) FROM chat_stream_typed_snapshots
+             WHERE cleanup_pending = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    }
+
+    pub(crate) fn pending_typed_resource_snapshot_cleanups_through(
+        &self,
+        after_row_id: i64,
+        through_row_id: i64,
+        limit: usize,
+    ) -> Result<Vec<TypedResourceSnapshotCleanup>> {
+        let conn = self.read_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT rowid, run_id, session_id, snapshot_name
+             FROM chat_stream_typed_snapshots
+             WHERE cleanup_pending = 1 AND rowid > ?1 AND rowid <= ?2
+             ORDER BY rowid
+             LIMIT ?3",
+        )?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt.query_map(params![after_row_id, through_row_id, limit], |row| {
+            Ok(TypedResourceSnapshotCleanup {
+                ledger_row_id: row.get(0)?,
+                run_id: row.get(1)?,
+                session_id: row.get(2)?,
+                snapshot_name: row.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Acknowledge only the exact pending row whose file was removed (or was
+    /// already absent). A failed filesystem operation leaves the durable work
+    /// item intact for startup/daily retry.
+    pub(crate) fn finish_typed_resource_snapshot_cleanup(
+        &self,
+        cleanup: &TypedResourceSnapshotCleanup,
+    ) -> Result<bool> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
-        conn.execute(
-            "DELETE FROM chat_stream_runs
-             WHERE status IN ('committed','recovered','interrupted','failed')
-               AND ended_at IS NOT NULL AND ended_at < ?1",
-            params![older_than],
-        )
-        .map_err(Into::into)
+        Ok(conn.execute(
+            "DELETE FROM chat_stream_typed_snapshots
+             WHERE run_id = ?1 AND session_id = ?2 AND snapshot_name = ?3
+               AND cleanup_pending = 1",
+            params![cleanup.run_id, cleanup.session_id, cleanup.snapshot_name],
+        )? > 0)
+    }
+
+    pub fn gc_stream_journals(&self, older_than: &str) -> Result<usize> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Lock error: {e}"))?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let run_ids = {
+            let mut stmt = tx.prepare(
+                "SELECT run.run_id FROM chat_stream_runs run
+                  WHERE run.status IN ('committed','recovered','interrupted','failed')
+                    AND run.ended_at IS NOT NULL AND run.ended_at < ?1
+                    -- Possibly-sent/ambiguous plans retain the run identity,
+                    -- journal and user-visible recovery evidence until an
+                    -- owner explicitly resolves them.
+                    AND NOT EXISTS (
+                        SELECT 1 FROM request_projection_plans plan
+                         WHERE plan.run_id = run.run_id
+                           AND plan.state NOT IN ('terminal', 'superseded')
+                    )
+                    -- A stored exact body must finish physical scrub before
+                    -- its plan/run locator can be removed. Unavailable plans
+                    -- have no payload owner and need no extra hold.
+                    AND NOT EXISTS (
+                        SELECT 1 FROM request_projection_plans plan
+                         WHERE plan.run_id = run.run_id
+                           AND plan.payload_availability = 'stored'
+                           AND NOT EXISTS (
+                               SELECT 1
+                                 FROM request_payload_objects object
+                                 JOIN request_payload_owners owner
+                                   ON owner.owner_id = object.owner_id
+                                WHERE object.owner_id = plan.request_plan_id
+                                  AND object.object_state IN ('scrubbed', 'lost')
+                                  AND owner.owner_state = 'released'
+                           )
+                    )
+                  ORDER BY run.ended_at, run.run_id",
+            )?;
+            let rows = stmt.query_map(params![older_than], |row| row.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut deleted_runs = 0usize;
+        for run_id in run_ids {
+            let plans = {
+                let mut stmt = tx.prepare(
+                    "SELECT request_plan_id, projection_epoch_id
+                       FROM request_projection_plans
+                      WHERE run_id = ?1 AND state IN ('terminal', 'superseded')",
+                )?;
+                let rows = stmt.query_map(params![run_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (request_plan_id, _) in &plans {
+                tx.execute(
+                    "DELETE FROM request_payload_objects
+                      WHERE owner_id = ?1 AND object_state IN ('scrubbed', 'lost')",
+                    params![request_plan_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM request_payload_reservations
+                      WHERE owner_id = ?1 AND quota_state = 'released'",
+                    params![request_plan_id],
+                )?;
+                tx.execute(
+                    "DELETE FROM request_payload_owners
+                      WHERE owner_id = ?1 AND owner_state = 'released'
+                        AND NOT EXISTS (
+                            SELECT 1 FROM request_payload_objects object
+                             WHERE object.owner_id = ?1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM request_payload_reservations reservation
+                             WHERE reservation.owner_id = ?1
+                        )",
+                    params![request_plan_id],
+                )?;
+            }
+            tx.execute(
+                "DELETE FROM request_projection_plans
+                  WHERE run_id = ?1 AND state IN ('terminal', 'superseded')",
+                params![run_id],
+            )?;
+            for (_, epoch_id) in plans {
+                let Some(epoch_id) = epoch_id else {
+                    continue;
+                };
+                tx.execute(
+                    "DELETE FROM context_projection_epochs
+                      WHERE epoch_id = ?1 AND scope = 'request_local'
+                        AND NOT EXISTS (
+                            SELECT 1 FROM request_projection_plans plan
+                             WHERE plan.projection_epoch_id = ?1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM session_projection_heads head
+                             WHERE head.epoch_id = ?1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM context_projection_epochs child
+                             WHERE child.parent_epoch_id = ?1
+                        )",
+                    params![epoch_id],
+                )?;
+            }
+            deleted_runs += tx.execute(
+                "DELETE FROM chat_stream_runs WHERE run_id = ?1",
+                params![run_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(deleted_runs)
     }
 
     pub fn assistant_message_id_for_run(&self, run_id: &str) -> Result<Option<i64>> {
@@ -2036,6 +3117,7 @@ mod tests {
 
     struct RunFixture {
         _dir: tempfile::TempDir,
+        db_path: std::path::PathBuf,
         db: SessionDB,
         session_id: String,
         turn_id: String,
@@ -2046,7 +3128,8 @@ mod tests {
 
     fn fixture(tag: &str) -> RunFixture {
         let dir = tempfile::tempdir().expect("tempdir");
-        let db = SessionDB::open(&dir.path().join(format!("{tag}.db"))).expect("open db");
+        let db_path = dir.path().join(format!("{tag}.db"));
+        let db = SessionDB::open(&db_path).expect("open db");
         let session = db
             .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
             .expect("create session");
@@ -2114,6 +3197,7 @@ mod tests {
         .expect("append journal");
         RunFixture {
             _dir: dir,
+            db_path,
             db,
             session_id: session.id,
             turn_id: turn.id,
@@ -2121,6 +3205,30 @@ mod tests {
             context_revision: registration.context_revision,
             final_seq: 5,
         }
+    }
+
+    #[test]
+    fn session_tool_stream_cannot_start_behind_an_active_stop_fence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = SessionDB::open(&dir.path().join("paused-session-tool.db")).expect("open db");
+        let session = db.create_session("ha-main").expect("session");
+        db.prepare_session_autonomy_pause(&session.id)
+            .expect("pause session");
+
+        let error = db
+            .create_stream_run(&CreateStreamRun {
+                run_id: "paused-session-tool-run".to_string(),
+                session_id: session.id,
+                source: crate::chat_engine::ChatSource::SessionTool
+                    .as_str()
+                    .to_string(),
+                stream_id: None,
+                turn_id: None,
+                provider_shape: None,
+            })
+            .expect_err("paused delegated stream must fail closed");
+
+        assert!(error.to_string().contains("use Continue"));
     }
 
     fn success_commit(fixture: &RunFixture, placeholder_id: Option<i64>) -> CommitAssistantTurn {
@@ -2138,6 +3246,8 @@ mod tests {
             turn_id: Some(fixture.turn_id.clone()),
             usage: Some(usage),
             final_seq: fixture.final_seq,
+            tier3_recovery: crate::session::Tier3RecoveryCommit::Unchanged,
+            request_plan: RequestPlanCommit::None,
         }
     }
 
@@ -2231,6 +3341,472 @@ mod tests {
     }
 
     #[test]
+    fn public_persistent_commit_rejects_attempt_zero() {
+        let fixture = fixture("attempt-zero-rejected");
+        let mut input = success_commit(&fixture, None);
+        input.attempt_no = 0;
+
+        let error = fixture
+            .db
+            .commit_assistant_turn(&input)
+            .expect_err("only the kernel-local completion may omit a Provider attempt");
+
+        assert!(error.to_string().contains("requires a Provider attempt"));
+        assert_success_rollback(&fixture, 1);
+    }
+
+    fn snapshot_name_for_run(run_id: &str) -> String {
+        let owner = uuid::Uuid::parse_str(run_id).expect("run UUID").simple();
+        format!(
+            "context-snapshot-run_{owner}-resource_ref_{}",
+            uuid::Uuid::new_v4().simple()
+        )
+    }
+
+    #[test]
+    fn typed_snapshot_gc_is_ledgered_before_run_deletion_and_not_found_is_idempotent() {
+        let fixture = fixture("typed-snapshot-gc");
+        let data_root = tempfile::tempdir().expect("data root");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", data_root.path())], || {
+            let snapshot_name = snapshot_name_for_run(&fixture.run_id);
+            fixture
+                .db
+                .register_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                )
+                .expect("register ownership before publish");
+            let attachment_dir = crate::paths::attachments_dir(&fixture.session_id).expect("dir");
+            std::fs::create_dir_all(&attachment_dir).expect("create dir");
+            let snapshot_path = attachment_dir.join(&snapshot_name);
+            std::fs::write(&snapshot_path, b"sensitive snapshot").expect("snapshot");
+
+            fixture
+                .db
+                .commit_assistant_turn(&success_commit(&fixture, None))
+                .expect("commit run");
+            assert_eq!(
+                fixture
+                    .db
+                    .gc_stream_journals("9999-12-31T23:59:59Z")
+                    .expect("gc run"),
+                1
+            );
+            assert!(fixture
+                .db
+                .stream_run_status(&fixture.run_id)
+                .expect("status")
+                .is_none());
+
+            let pending = fixture
+                .db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("pending cleanup");
+            assert_eq!(pending.len(), 1);
+            assert!(
+                snapshot_path.exists(),
+                "DB delete must not race ahead of unlink"
+            );
+            crate::attachments::remove_pending_typed_resource_snapshot(&pending[0])
+                .expect("unlink snapshot");
+            assert!(!snapshot_path.exists());
+            assert!(fixture
+                .db
+                .finish_typed_resource_snapshot_cleanup(&pending[0])
+                .expect("ack cleanup"));
+            assert!(fixture
+                .db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("drained")
+                .is_empty());
+
+            // Simulate a crash after unlink but before ack: retrying the exact
+            // ledger row sees NotFound as success and never widens its target.
+            crate::attachments::remove_pending_typed_resource_snapshot(&pending[0])
+                .expect("missing snapshot is idempotent");
+            assert!(!fixture
+                .db
+                .finish_typed_resource_snapshot_cleanup(&pending[0])
+                .expect("already acked"));
+        });
+    }
+
+    #[test]
+    fn typed_snapshot_registration_requires_live_owner_and_survives_session_delete() {
+        let fixture = fixture("typed-snapshot-owner-guards");
+        let data_root = tempfile::tempdir().expect("data root");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", data_root.path())], || {
+            let missing_run = uuid::Uuid::new_v4().to_string();
+            let missing_name = snapshot_name_for_run(&missing_run);
+            fixture
+                .db
+                .register_typed_resource_snapshots(
+                    &missing_run,
+                    &fixture.session_id,
+                    &[missing_name],
+                )
+                .expect_err("publication cannot proceed without a live run owner");
+
+            let snapshot_name = snapshot_name_for_run(&fixture.run_id);
+            fixture
+                .db
+                .register_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                )
+                .expect("register owner");
+            fixture
+                .db
+                .conn
+                .lock()
+                .expect("db lock")
+                .execute_batch(
+                    "CREATE TABLE channel_conversations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        channel_id TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        chat_id TEXT NOT NULL,
+                        thread_id TEXT,
+                        session_id TEXT NOT NULL,
+                        sender_id TEXT,
+                        sender_name TEXT,
+                        chat_type TEXT NOT NULL DEFAULT 'dm',
+                        source TEXT NOT NULL DEFAULT 'inbound',
+                        attached_at TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                     );",
+                )
+                .expect("install channel projection schema used by session metadata");
+            fixture
+                .db
+                .delete_session(&fixture.session_id)
+                .expect("delete session");
+            let pending = fixture
+                .db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("session cleanup ownership survives");
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].snapshot_name, snapshot_name);
+            crate::attachments::remove_pending_typed_resource_snapshot(&pending[0])
+                .expect("already-removed session directory is an idempotent cleanup");
+            assert!(fixture
+                .db
+                .finish_typed_resource_snapshot_cleanup(&pending[0])
+                .expect("ack session cleanup"));
+            assert_eq!(
+                scalar_i64(
+                    &fixture.db,
+                    "SELECT COUNT(*) FROM chat_stream_typed_snapshots WHERE run_id = ?1",
+                    &fixture.run_id,
+                ),
+                0
+            );
+        });
+    }
+
+    #[test]
+    fn typed_snapshot_late_publish_after_delete_and_not_found_drain_is_rejected() {
+        let fixture = fixture("typed-snapshot-late-publish");
+        let data_root = tempfile::tempdir().expect("data root");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", data_root.path())], || {
+            let snapshot_name = snapshot_name_for_run(&fixture.run_id);
+            fixture
+                .db
+                .register_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                )
+                .expect("register ownership before publish");
+
+            fixture
+                .db
+                .conn
+                .lock()
+                .expect("db lock")
+                .execute(
+                    "DELETE FROM chat_stream_runs WHERE run_id = ?1",
+                    params![fixture.run_id],
+                )
+                .expect("delete owner run before publication");
+            let pending = fixture
+                .db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("pending cleanup");
+            assert_eq!(pending.len(), 1);
+            crate::attachments::remove_pending_typed_resource_snapshot(&pending[0])
+                .expect("NotFound is a successful drain");
+            assert!(fixture
+                .db
+                .finish_typed_resource_snapshot_cleanup(&pending[0])
+                .expect("ack missing snapshot"));
+
+            let attachment_dir =
+                crate::paths::attachments_dir(&fixture.session_id).expect("attachment dir");
+            let snapshot_path = attachment_dir.join(&snapshot_name);
+            let publish_invoked = std::sync::atomic::AtomicBool::new(false);
+            fixture
+                .db
+                .publish_registered_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                    || {
+                        publish_invoked.store(true, std::sync::atomic::Ordering::SeqCst);
+                        std::fs::create_dir_all(&attachment_dir)?;
+                        std::fs::write(&snapshot_path, b"late orphan")?;
+                        anyhow::Ok(())
+                    },
+                )
+                .expect_err("an acknowledged/deleted owner must reject late publication");
+            assert!(
+                !publish_invoked.load(std::sync::atomic::Ordering::SeqCst),
+                "publication callback must not run after ownership was acknowledged"
+            );
+            assert!(
+                !snapshot_path.exists(),
+                "late publication must not orphan a file"
+            );
+        });
+    }
+
+    #[test]
+    fn typed_snapshot_publish_gate_blocks_delete_and_drain_until_file_is_visible() {
+        let fixture = fixture("typed-snapshot-publish-lock");
+        let data_root = tempfile::tempdir().expect("data root");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", data_root.path())], || {
+            let snapshot_name = snapshot_name_for_run(&fixture.run_id);
+            fixture
+                .db
+                .register_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                )
+                .expect("register ownership before publish");
+
+            let attachment_dir =
+                crate::paths::attachments_dir(&fixture.session_id).expect("attachment dir");
+            std::fs::create_dir_all(&attachment_dir).expect("create attachment dir");
+            let snapshot_path = attachment_dir.join(&snapshot_name);
+            let publisher_db = std::sync::Arc::new(
+                SessionDB::open(&fixture.db_path).expect("open publisher connection"),
+            );
+            let cleanup_db = std::sync::Arc::new(
+                SessionDB::open(&fixture.db_path).expect("open cleanup connection"),
+            );
+
+            let (publish_entered_tx, publish_entered_rx) = std::sync::mpsc::sync_channel(0);
+            let (allow_publish_tx, allow_publish_rx) = std::sync::mpsc::sync_channel(0);
+            let publisher_run_id = fixture.run_id.clone();
+            let publisher_session_id = fixture.session_id.clone();
+            let publisher_snapshot_name = snapshot_name.clone();
+            let publisher_snapshot_path = snapshot_path.clone();
+            let publisher = {
+                let publisher_db = publisher_db.clone();
+                std::thread::spawn(move || {
+                    publisher_db.publish_registered_typed_resource_snapshots(
+                        &publisher_run_id,
+                        &publisher_session_id,
+                        std::slice::from_ref(&publisher_snapshot_name),
+                        || {
+                            publish_entered_tx
+                                .send(())
+                                .expect("signal held publication gate");
+                            allow_publish_rx.recv().expect("release publisher");
+                            crate::platform::write_atomic_create_new(
+                                &publisher_snapshot_path,
+                                b"published under writer lock",
+                            )?;
+                            anyhow::Ok(())
+                        },
+                    )
+                })
+            };
+            publish_entered_rx
+                .recv()
+                .expect("publisher acquired and validated immediate transaction");
+
+            let (delete_started_tx, delete_started_rx) = std::sync::mpsc::sync_channel(0);
+            let (cleanup_done_tx, cleanup_done_rx) = std::sync::mpsc::sync_channel(1);
+            let cleanup_run_id = fixture.run_id.clone();
+            let cleanup_worker = {
+                let cleanup_db = cleanup_db.clone();
+                std::thread::spawn(move || -> Result<()> {
+                    delete_started_tx.send(()).expect("signal delete attempt");
+                    cleanup_db
+                        .conn
+                        .lock()
+                        .map_err(|error| anyhow::anyhow!("Lock error: {error}"))?
+                        .execute(
+                            "DELETE FROM chat_stream_runs WHERE run_id = ?1",
+                            params![cleanup_run_id],
+                        )?;
+                    let pending = cleanup_db.pending_typed_resource_snapshot_cleanups(10)?;
+                    anyhow::ensure!(pending.len() == 1, "expected one cleanup row");
+                    crate::attachments::remove_pending_typed_resource_snapshot(&pending[0])?;
+                    anyhow::ensure!(
+                        cleanup_db.finish_typed_resource_snapshot_cleanup(&pending[0])?,
+                        "cleanup row disappeared before acknowledgement"
+                    );
+                    cleanup_done_tx.send(()).expect("signal cleanup completion");
+                    Ok(())
+                })
+            };
+            delete_started_rx.recv().expect("delete worker started");
+            assert_eq!(
+                cleanup_done_rx.recv_timeout(std::time::Duration::from_millis(100)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout),
+                "delete/drain must wait while filesystem publication holds the writer gate"
+            );
+
+            allow_publish_tx.send(()).expect("allow publication");
+            publisher
+                .join()
+                .expect("publisher thread")
+                .expect("publish under gate");
+            cleanup_done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("cleanup completes after gate commit");
+            cleanup_worker
+                .join()
+                .expect("cleanup thread")
+                .expect("delete and drain");
+
+            assert!(!snapshot_path.exists(), "published file must be drained");
+            assert!(cleanup_db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("cleanup ledger")
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn typed_snapshot_publish_failure_marks_the_registered_batch_pending() {
+        let fixture = fixture("typed-snapshot-publish-failure");
+        let data_root = tempfile::tempdir().expect("data root");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", data_root.path())], || {
+            let snapshot_name = snapshot_name_for_run(&fixture.run_id);
+            fixture
+                .db
+                .register_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                )
+                .expect("register ownership before publish");
+
+            fixture
+                .db
+                .publish_registered_typed_resource_snapshots(
+                    &fixture.run_id,
+                    &fixture.session_id,
+                    std::slice::from_ref(&snapshot_name),
+                    || -> Result<()> { anyhow::bail!("synthetic filesystem publication failure") },
+                )
+                .expect_err("publication failure must propagate");
+            let pending = fixture
+                .db
+                .pending_typed_resource_snapshot_cleanups(10)
+                .expect("failed batch remains recoverable");
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].snapshot_name, snapshot_name);
+            crate::attachments::remove_pending_typed_resource_snapshot(&pending[0])
+                .expect("missing failed-publication artifact is idempotent");
+            assert!(fixture
+                .db
+                .finish_typed_resource_snapshot_cleanup(&pending[0])
+                .expect("ack failed-publication cleanup"));
+        });
+    }
+
+    #[test]
+    fn prerelease_session_fk_ledger_is_rebuilt_without_losing_ownership() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("typed-ledger-migration.db");
+        let (run_id, snapshot_name) = {
+            let db = SessionDB::open(&path).expect("open db");
+            let session = db
+                .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+                .expect("session");
+            let run_id = uuid::Uuid::new_v4().to_string();
+            db.create_stream_run(&CreateStreamRun {
+                run_id: run_id.clone(),
+                session_id: session.id.clone(),
+                source: "desktop".to_string(),
+                stream_id: None,
+                turn_id: None,
+                provider_shape: None,
+            })
+            .expect("run");
+            let snapshot_name = snapshot_name_for_run(&run_id);
+            db.register_typed_resource_snapshots(
+                &run_id,
+                &session.id,
+                std::slice::from_ref(&snapshot_name),
+            )
+            .expect("owner");
+            db.conn
+                .lock()
+                .expect("db lock")
+                .execute_batch(
+                    "BEGIN IMMEDIATE;
+                     DROP TRIGGER chat_stream_runs_typed_snapshots_bd;
+                     DROP INDEX idx_chat_stream_typed_snapshots_cleanup;
+                     ALTER TABLE chat_stream_typed_snapshots
+                        RENAME TO chat_stream_typed_snapshots_current;
+                     CREATE TABLE chat_stream_typed_snapshots (
+                        run_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        snapshot_name TEXT NOT NULL,
+                        cleanup_pending INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (run_id, snapshot_name),
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                     );
+                     INSERT INTO chat_stream_typed_snapshots
+                     SELECT * FROM chat_stream_typed_snapshots_current;
+                     DROP TABLE chat_stream_typed_snapshots_current;
+                     CREATE INDEX idx_chat_stream_typed_snapshots_cleanup
+                        ON chat_stream_typed_snapshots(cleanup_pending, created_at);
+                     CREATE TRIGGER chat_stream_runs_typed_snapshots_bd
+                     BEFORE DELETE ON chat_stream_runs
+                     BEGIN
+                        UPDATE chat_stream_typed_snapshots SET cleanup_pending = 1
+                         WHERE run_id = OLD.run_id;
+                     END;
+                     COMMIT;",
+                )
+                .expect("install prerelease schema");
+            (run_id, snapshot_name)
+        };
+
+        let reopened = SessionDB::open(&path).expect("migrate db");
+        let conn = reopened.conn.lock().expect("db lock");
+        let foreign_tables = conn
+            .prepare("PRAGMA foreign_key_list(chat_stream_typed_snapshots)")
+            .expect("prepare foreign keys")
+            .query_map([], |row| row.get::<_, String>(2))
+            .expect("query foreign keys")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect foreign keys");
+        assert!(!foreign_tables.iter().any(|table| table == "sessions"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT snapshot_name FROM chat_stream_typed_snapshots WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("preserved owner"),
+            snapshot_name
+        );
+    }
+
+    #[test]
     fn cancelling_turn_rejects_late_success_commit_atomically() {
         let fixture = fixture("cancel-wins-final-commit");
         fixture
@@ -2275,6 +3851,16 @@ mod tests {
     #[test]
     fn turn_scoped_snapshot_never_selects_a_newer_session_run() {
         let fixture = fixture("turn-scoped-run");
+        fixture
+            .db
+            .interrupt_stream_run(
+                &fixture.run_id,
+                1,
+                ChatTurnStatus::Interrupted,
+                Some(ChatTurnInterruptReason::RuntimeCancel.as_str()),
+                None,
+            )
+            .expect("finish older run");
         let newer_turn = fixture
             .db
             .create_chat_turn(&fixture.session_id, "desktop", Some("stream-new"), None)
@@ -2431,6 +4017,7 @@ mod tests {
                 fixture.context_revision,
                 r#"[{"role":"assistant","content":"attempt one"}]"#,
                 5,
+                crate::session::Tier3RecoveryCommit::Unchanged,
             )
             .expect("attempt one checkpoint");
         assert_eq!(
@@ -2579,6 +4166,7 @@ mod tests {
                 interrupt_reason: Some("provider_failed".to_string()),
                 error: Some("attempt two failed before output".to_string()),
                 recovery_event: None,
+                request_plan: RequestPlanCommit::None,
             })
             .expect("converge from prior visible attempt");
         let terminal = fixture
@@ -2589,6 +4177,57 @@ mod tests {
         assert_eq!(terminal.run.status, "failed");
         assert_eq!(terminal.attempts[0].status, "superseded");
         assert_eq!(terminal.attempts[1].status, "failed");
+    }
+
+    #[test]
+    fn terminal_read_stream_commit_seals_notice_before_later_commands() {
+        for status in [ChatTurnStatus::Failed, ChatTurnStatus::Interrupted] {
+            let fixture = fixture("terminal-read-notice");
+            let committed = fixture
+                .db
+                .commit_interrupted_turn(&CommitInterruptedTurn {
+                    run_id: Some(fixture.run_id.clone()),
+                    attempt_no: 1,
+                    session_id: fixture.session_id.clone(),
+                    assistant: Some(NewMessage::assistant("partial")),
+                    context_json: "[]".to_string(),
+                    expected_context_revision: fixture.context_revision,
+                    turn_id: Some(fixture.turn_id.clone()),
+                    final_seq: fixture.final_seq,
+                    status,
+                    interrupt_reason: Some("runtime_cancel".to_string()),
+                    error: None,
+                    recovery_event: Some(NewMessage::event("terminal notice")),
+                    request_plan: RequestPlanCommit::None,
+                })
+                .unwrap();
+            fixture
+                .db
+                .mark_session_read_through(
+                    &fixture.session_id,
+                    Some(committed.assistant_message_id),
+                )
+                .unwrap();
+            assert_eq!(
+                fixture
+                    .db
+                    .chat_turn_terminal_read(&fixture.session_id, &fixture.turn_id)
+                    .unwrap(),
+                Some(false)
+            );
+            fixture.db.mark_session_read(&fixture.session_id).unwrap();
+            fixture
+                .db
+                .append_message(&fixture.session_id, &NewMessage::event("/status"))
+                .unwrap();
+            assert_eq!(
+                fixture
+                    .db
+                    .chat_turn_terminal_read(&fixture.session_id, &fixture.turn_id)
+                    .unwrap(),
+                Some(true)
+            );
+        }
     }
 
     #[test]
@@ -2617,6 +4256,7 @@ mod tests {
             interrupt_reason: Some("user_stop".to_string()),
             error: None,
             recovery_event: None,
+            request_plan: RequestPlanCommit::None,
         };
         fixture
             .db
@@ -2788,6 +4428,8 @@ mod tests {
                 turn_id: None,
                 usage: None,
                 final_seq: seq,
+                tier3_recovery: crate::session::Tier3RecoveryCommit::Unchanged,
+                request_plan: RequestPlanCommit::None,
             };
             for _ in 0..10 {
                 db.commit_assistant_turn(&commit)
@@ -2857,6 +4499,7 @@ mod tests {
                 registration.context_revision + (seq as i64 - 1),
                 "[]",
                 seq,
+                crate::session::Tier3RecoveryCommit::Unchanged,
             )
             .expect("checkpoint");
         }
@@ -2916,7 +4559,14 @@ mod tests {
         })
         .expect("first journal block");
         let revision_a = db
-            .checkpoint_stream_context(&run_id, 1, registration.context_revision, context_a, 1)
+            .checkpoint_stream_context(
+                &run_id,
+                1,
+                registration.context_revision,
+                context_a,
+                1,
+                crate::session::Tier3RecoveryCommit::Unchanged,
+            )
             .expect("first checkpoint");
         db.append_stream_journal_batch(&JournalBatch {
             run_id: run_id.clone(),
@@ -2931,7 +4581,14 @@ mod tests {
         })
         .expect("second journal block");
         let revision_ab = db
-            .checkpoint_stream_context(&run_id, 1, revision_a, context_ab, 2)
+            .checkpoint_stream_context(
+                &run_id,
+                1,
+                revision_a,
+                context_ab,
+                2,
+                crate::session::Tier3RecoveryCommit::Unchanged,
+            )
             .expect("second checkpoint");
 
         db.conn
@@ -2973,6 +4630,7 @@ mod tests {
             interrupt_reason: Some("journal_corrupt".to_string()),
             error: integrity_error,
             recovery_event: None,
+            request_plan: RequestPlanCommit::RecoverAllForRun,
         })
         .expect("recover valid prefix");
 
@@ -3023,6 +4681,7 @@ mod tests {
             "chat_stream_attempts",
             "chat_stream_journal",
             "chat_stream_context_checkpoints",
+            "chat_stream_typed_snapshots",
             "model_usage_events",
         ] {
             let count: i64 = conn
@@ -3047,6 +4706,8 @@ mod tests {
             turn_id: None,
             usage: Some(usage),
             final_seq: 0,
+            tier3_recovery: crate::session::Tier3RecoveryCommit::Unchanged,
+            request_plan: RequestPlanCommit::None,
         })
         .expect("incognito in-session commit");
         let usage_count: i64 = db

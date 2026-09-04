@@ -8,7 +8,7 @@
 //!   - live turn → cancel (A-9)
 //!   - per-session allowlist rules → clear (A-9)
 //!
-//! Mirrors [`crate::channel::worker::eviction_watcher`]: one EventBus
+//! Mirrors `ha_channel::channel::worker::eviction_watcher`: one EventBus
 //! subscriber, name-filtered, each fan-out step best-effort so a single failing
 //! subsystem can't block the rest.
 //!
@@ -132,10 +132,13 @@ async fn cleanup_session(
     descendant_session_ids: Vec<String>,
     im_chat: Option<(String, String)>,
 ) {
+    crate::session_title::cancel_generation(session_id);
+    crate::memory_extract::cancel_idle_extraction(session_id);
+    crate::memory_extract::cancel_active_extractions(session_id);
     crate::ask_user::cancel_owner_question_timeouts_for_session(session_id);
     crate::ask_user::cancel_pending_ask_user_questions_for_session(session_id, "session_deleted")
         .await;
-    crate::channel::worker::ask_user::drop_pending_for_session(session_id).await;
+    crate::channel_hooks::drop_ask_user_for_session(session_id).await;
 
     // A-8: cancel active / awaiting-approval background jobs (DELETE-4).
     let cancelled_jobs = crate::async_jobs::JobManager::cancel_for_session(session_id);
@@ -177,13 +180,16 @@ async fn cleanup_session(
     // it owns, so deleting the parent doesn't strand an orphan approval dialog
     // (or a child-session job) with no way to resolve it.
     for child_sid in &descendant_session_ids {
+        crate::session_title::cancel_generation(child_sid);
+        crate::memory_extract::cancel_idle_extraction(child_sid);
+        crate::memory_extract::cancel_active_extractions(child_sid);
         crate::ask_user::cancel_owner_question_timeouts_for_session(child_sid);
         crate::ask_user::cancel_pending_ask_user_questions_for_session(
             child_sid,
             "session_deleted",
         )
         .await;
-        crate::channel::worker::ask_user::drop_pending_for_session(child_sid).await;
+        crate::channel_hooks::drop_ask_user_for_session(child_sid).await;
         crate::async_jobs::JobManager::cancel_for_session(child_sid);
         let _ = crate::tools::deny_pending_for_session(
             child_sid,
@@ -192,21 +198,24 @@ async fn cleanup_session(
         .await;
     }
 
-    // A-9: drop stale IM text-reply approval state for this session (SURFACE-2).
-    crate::channel::worker::approval::drop_pending_for_session(session_id).await;
-    // SURFACE-2: the session-keyed drop above can't resolve the chat once the
-    // `channel_conversations` row is FK-cascade-deleted, so also drop by the IM
-    // coordinates captured pre-delete (no-op when the session wasn't IM-attached).
+    // A-9 / SURFACE-2: drop stale IM approval state for this deleted session.
+    // When pre-delete chat coordinates are available, use them as an additional
+    // identity check. Never clean the whole chat: distinct Telegram topics or
+    // Slack threads can share these coordinates while mapping to other sessions.
     if let Some((account_id, chat_id)) = &im_chat {
-        crate::channel::worker::approval::drop_pending_for_chat(account_id, chat_id).await;
+        crate::channel_hooks::drop_approval_for_session_chat(session_id, account_id, chat_id).await;
+    } else {
+        crate::channel_hooks::drop_approval_for_session(session_id).await;
     }
 
     // A-9: clear per-session allowlist rules so they don't linger (INCOG-7).
     crate::permission::allowlist::clear_session_rules(session_id);
     crate::agent::purge_incognito_tool_activations(session_id);
+    cleanup_incognito_tier3_recovery(session_id, is_purge);
     crate::memory::core_repository::invalidate_session_snapshot(session_id);
     crate::agent::token_manifest::invalidate_round_context(session_id);
     for child_sid in &descendant_session_ids {
+        cleanup_incognito_tier3_recovery(child_sid, is_purge);
         crate::memory::core_repository::invalidate_session_snapshot(child_sid);
         crate::agent::token_manifest::invalidate_round_context(child_sid);
     }
@@ -218,10 +227,34 @@ async fn cleanup_session(
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    // R10: cancel + delete the session's scheduled wakeups (both delete and
-    // burn) — a gone session must not be woken back to life, and the live timer
-    // shouldn't linger. Incognito wakeups are in-memory only; this aborts them.
+    // R10: cancel + delete scheduled wakeups for the root and every captured
+    // descendant before releasing ParentInjection receipts. A queued wakeup
+    // owns its delivery claim through that receipt; releasing it first could
+    // briefly re-arm an overdue timer from a racing Continue. Removing the
+    // descriptor first makes the receipt callback a no-op and also fulfils the
+    // close-and-burn contract for hidden child sessions.
     crate::wakeup::purge_for_session(session_id);
+    for child_sid in &descendant_session_ids {
+        crate::wakeup::purge_for_session(child_sid);
+    }
+
+    // ParentInjection retries retain DB/source receipts and optional UI leases
+    // in memory. Remove both Ready and Channel-gated entries for the deleted
+    // session (plus cascade-deleted descendants) before any later idle/surface
+    // event can resurrect a ghost turn.
+    let mut purged_injections = crate::subagent::injection::purge_pending_for_session(session_id);
+    for child_sid in &descendant_session_ids {
+        purged_injections += crate::subagent::injection::purge_pending_for_session(child_sid);
+    }
+    if purged_injections > 0 {
+        app_debug!(
+            "session",
+            "cleanup_watcher",
+            "purged {} pending parent injection(s) for deleted session {}",
+            purged_injections,
+            session_id
+        );
+    }
 
     // Panel action timeline: drop the in-memory step history (delete and burn
     // alike — the buffer is memory-only, so purge here fulfils incognito's
@@ -244,7 +277,7 @@ async fn cleanup_session(
     // agent-created tabs owned by this session. This mirrors tool-level
     // `tabs.finalize` so deleting or burning a session cannot leave stale
     // browser-control ownership behind.
-    let browser_cleanup = crate::browser::cleanup_extension_session(session_id).await;
+    let browser_cleanup = crate::browser_hooks::cleanup_session(session_id).await;
     app_debug!(
         "session",
         "cleanup_watcher",
@@ -274,11 +307,21 @@ async fn cleanup_session(
     }
     let artifact_session_id = session_id.to_string();
     let artifact_result = crate::blocking::run_blocking(move || {
-        let service = crate::artifacts::ArtifactService::open()?;
-        if is_purge {
-            service.purge_for_session(&artifact_session_id)
-        } else {
-            service.detach_from_session(&artifact_session_id)
+        // 特征 crate 钩子。未 wire 时无法级联清理 durable Artifact——记
+        // warn 留审计信号（生产四入口全 wire 不可达；漏接线时 purge 语义
+        // 缺口必须可见，不能静默当 0 条成功）。
+        match crate::session::design_hooks::design_session_hooks() {
+            Some(hooks) => (hooks.cleanup_artifacts)(&artifact_session_id, is_purge),
+            None => {
+                app_warn!(
+                    "session",
+                    "cleanup_watcher",
+                    "design hooks not wired — durable Artifacts (if any) were NOT {} for {}",
+                    if is_purge { "purged" } else { "detached" },
+                    artifact_session_id
+                );
+                Ok(0)
+            }
         }
     })
     .await;
@@ -312,5 +355,47 @@ async fn cleanup_session(
             cancelled_processes,
             denied
         );
+    }
+}
+
+/// Drop an in-memory Tier 3 recovery marker for any removed session, but only
+/// burn its identity when this is an incognito close-and-burn purge. Ordinary
+/// durable session deletion cannot race a late incognito writer and must not
+/// consume the bounded tombstone capacity reserved for that privacy fence.
+fn cleanup_incognito_tier3_recovery(session_id: &str, is_purge: bool) {
+    if is_purge {
+        crate::session::purge_incognito_tier3_recovery(session_id);
+    } else {
+        crate::session::clear_incognito_tier3_recovery(session_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cleanup_incognito_tier3_recovery;
+
+    #[test]
+    fn ordinary_delete_clears_recovery_without_burning_incognito_capacity() {
+        let session_id = format!("ordinary-delete-{}", uuid::Uuid::new_v4());
+
+        crate::session::require_incognito_tier3_recovery(&session_id);
+        cleanup_incognito_tier3_recovery(&session_id, false);
+        assert!(crate::session::incognito_tier3_recovery_requirement(&session_id).is_none());
+
+        crate::session::require_incognito_tier3_recovery(&session_id);
+        assert!(crate::session::incognito_tier3_recovery_requirement(&session_id).is_some());
+        crate::session::clear_incognito_tier3_recovery(&session_id);
+    }
+
+    #[test]
+    fn incognito_purge_burns_recovery_identity() {
+        let session_id = format!("incognito-purge-{}", uuid::Uuid::new_v4());
+
+        crate::session::require_incognito_tier3_recovery(&session_id);
+        cleanup_incognito_tier3_recovery(&session_id, true);
+        assert!(crate::session::incognito_tier3_recovery_requirement(&session_id).is_none());
+
+        crate::session::require_incognito_tier3_recovery(&session_id);
+        assert!(crate::session::incognito_tier3_recovery_requirement(&session_id).is_none());
     }
 }

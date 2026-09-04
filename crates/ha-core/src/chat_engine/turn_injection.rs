@@ -1,4 +1,4 @@
-//! Durable user-message queue orchestration for active desktop / HTTP turns.
+//! Durable user-message queue orchestration for active user-visible turns.
 
 use serde::Serialize;
 
@@ -59,7 +59,7 @@ pub fn request_insertion(
     })
 }
 
-pub(crate) fn request_channel_insertion(
+pub fn request_channel_insertion(
     db: &crate::session::SessionDB,
     session_id: &str,
     turn_id: &str,
@@ -106,7 +106,8 @@ pub fn cancel_insertion(
     })
 }
 
-pub(crate) fn drain(session_id: &str, turn_id: &str) -> Vec<QueuedTurnUserMessage> {
+#[doc(hidden)]
+pub fn drain(session_id: &str, turn_id: &str) -> Vec<QueuedTurnUserMessage> {
     crate::get_session_db()
         .and_then(|db| {
             db.claim_turn_messages_for_insertion(session_id, turn_id)
@@ -115,7 +116,7 @@ pub(crate) fn drain(session_id: &str, turn_id: &str) -> Vec<QueuedTurnUserMessag
         .unwrap_or_default()
 }
 
-pub(crate) fn clear_turn(session_id: &str, turn_id: &str) {
+pub fn clear_turn(session_id: &str, turn_id: &str) {
     // Close the active-turn gate first. `request_insertion` holds that gate
     // through its DB transition, so this fallback cannot miss a late writer.
     active_turn::stop_accepting_insertions(session_id, turn_id);

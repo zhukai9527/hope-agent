@@ -190,14 +190,6 @@
     "labelPlaceholder": "ラベル（例：Org A Key）",
     "title": "API Key ローテーション設定"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "回答が必要です",
-      "detail": "会話内に {{count}} 件の質問が待機中",
-      "detail_one": "会話内に 1 件の質問が待機中",
-      "openAction": "今すぐ回答"
-    }
-  },
   "canvas": {
     "close": "閉じる",
     "export": "エクスポート",
@@ -318,6 +310,16 @@
     "removeConfig": "削除",
     "running": "実行中",
     "selectChannel": "チャネルを選択",
+    "nativeReply": "ネイティブストリーミング返信",
+    "nativeReplyHint": "プラットフォームのネイティブ返信ストリームを使用します。オフにすると通常のメッセージへ即時フォールバックします。",
+    "imsgProtocolV1": "信頼性の高い imsg プロトコル",
+    "imsgProtocolV1Hint": "プロトコル v1 のネゴシエーション、watch オーバーフローの回復、子プロセスの再起動監視を行います。オフにすると従来の RPC を使用します。",
+    "googleChatStandardMarkdown": "標準 Markdown",
+    "googleChatStandardMarkdownHint": "新規テキストメッセージに Google Chat の標準 Markdown を使用します。オフにすると従来の Chat 構文を使用します。",
+    "discordChannelObfuscation": "プライベートチャンネル難読化をテスト",
+    "discordChannelObfuscationHint": "このアカウントを Discord の一時的な Gateway 動作にオプトインします。非表示チャンネルは選択も処理もされません。",
+    "discordFileRequests": "Discord ネイティブファイル要求",
+    "discordFileRequestsHint": "構造化質問から単一ファイルのアップロード画面を開きます。種類、サイズ、会話の紐付けはサーバーで再検証されます。",
     "showThinking": "IM メッセージに思考過程を表示",
     "showThinkingHint": "有効にすると、各ラウンドの回答前にモデルの推論内容が引用ブロックとして挿入されます。既定はオフ。",
     "signalAccount": "電話番号",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark（国際版）"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "「{{title}}」にメッセージを送信しました",
+      "receivedFrom": "別の会話「{{title}}」から送信",
+      "untitled": "無題の会話",
+      "details": "メッセージの詳細を表示"
+    },
     "addWorkingDirectory": "作業ディレクトリを追加",
     "askAnything": "アイデアを教えてください。@ でファイル/ノート/スキル、# でクイック入力、/ でクイックコマンド...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "新しいセッションで続ける",
       "continuedFrom": "続き元",
       "created": "新しいセッションで続けます",
+      "createdButNotOpened": "フォーク `{{id}}` は作成されましたが、開けませんでした。セッション一覧から選択して続行してください。",
       "failed": "新しいセッションで続けられませんでした",
       "sourceFallback": "元のセッション"
+    },
+    "sideChat": {
+      "label": "サイドチャット",
+      "untitled": "サイドチャット {{index}}",
+      "new": "新しいサイドチャット",
+      "close": "サイドチャットを閉じる",
+      "nonBlocking": "メインチャットを中断せずに別の質問ができます",
+      "askSelection": "サイドチャットで質問",
+      "createFailed": "サイドチャットを作成できませんでした"
     },
     "browserPanel": {
       "backendBadgeTooltip": "ブラウザバックエンド：{{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "以前のコンテキストを圧縮中",
     "contextCompactedMsgs": "{{count}} 件の以前のメッセージ",
     "contextCompactionFailedTitle": "コンテキスト圧縮を一時停止",
+    "contextCompactionRetry": "圧縮を再試行",
     "contextCompaction": {
       "preparing": "以前のコンテキストを圧縮中",
       "summarizing": "セッション要約を生成中",
@@ -553,6 +572,7 @@
       "noMatches": "一致するクイック入力はありません"
     },
     "cronTaskStarted": "定期タスクが起動されました",
+    "scheduledOrigin": "予定タスク：{{name}}",
     "cronTrigger": "定期タスク",
     "loopTriggered": "ループのステップを1回実行しました",
     "loopTrigger": "ループ",
@@ -651,6 +671,7 @@
     "markAllRead": "すべて既読にする",
     "markAsRead": "既読にする",
     "pinSession": "ピン留め",
+    "pinnedSessions": "ピン留め",
     "unpinSession": "ピン留め解除",
     "minutesAgo": "{{count}}分前",
     "modelsCount": "{{count}} モデル",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "サンドボックス",
       "off": {
-        "desc": "ホスト、WSL、隔離環境から自動的に選択します。",
-        "label": "自動"
+        "desc": "ホスト上で実行します。承認動作は変わりません。",
+        "label": "サンドボックスオフ"
       },
       "setupTitle": "サンドボックスを有効にするために Docker を構成する",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "認証失敗",
     "reasonBilling": "課金 / クォータ超過",
     "reasonContextOverflow": "コンテキスト超過",
+    "reasonDispatchUnknown": "送信結果が不明（自動再試行なし）",
     "reasonModelNotFound": "モデルが見つかりません",
     "reasonOverloaded": "サービス過負荷",
     "reasonRateLimit": "レート制限超過",
@@ -899,6 +921,7 @@
     "statusThinking": "思考モード",
     "statusUpdated": "更新日時",
     "stopReply": "返信を停止",
+    "continuePausedWork": "一時停止した作業を続行",
     "stopGenerationDone": "生成を停止しました",
     "subagentFrom": "{{agent}} からの委任",
     "subagentResultCompleted": "完了しました",
@@ -923,6 +946,7 @@
     "thinking": "実行中...",
     "thinkingAutoDisabled": "{{provider}} / {{model}} は現在の思考モードをサポートしていません。思考は自動的に無効になり、リクエストが再試行されました。",
     "visionAutoDisabled": "{{provider}} / {{model}} は画像入力に対応していません。画像を無視して回答を続けました。",
+    "visionBridgeConfigureAction": "視覚ブリッジを設定",
     "toolCalling": "ツール呼び出し中...",
     "totalTokens": "合計",
     "unknownProvider": "不明なプロバイダー",
@@ -983,6 +1007,9 @@
       "failed": "会話のエクスポートに失敗しました。",
       "untitled": "無題"
     },
+    "capabilityMention": {
+      "heading": "プラグインとコネクタ"
+    },
     "skillMention": {
       "heading": "スキル",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Chrome拡張機能が必要です"
     },
     "conversationEmpty": "この会話にはメッセージがありません",
-    "pendingCancelForceInsert": "このラウンドの挿入をキャンセルします",
+    "pendingCancelForceInsert": "返信後に送信へ変更",
     "pendingSaving": "保存中",
     "pendingSavingTip": "メッセージと添付ファイルを復元可能なキューに保存しています。",
     "pendingInserting": "挿入中",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "今すぐ送信",
     "pendingFallbackAfterReply": "返信後に送信",
     "pendingFallbackAfterReplyTip": "ツールの完了ポイントに到達していないため、現在の応答が終了した後に送信されます。",
-    "pendingForceInsertTip": "実行中のツールが完了するまで待機し、現在のツールを中断することなくモデルにツールを挿入します。",
+    "pendingForceInsertTip": "このバッチで実行中のすべてのツールが完了してからモデルに挿入します。ツールは中断されません。このターンで次のツール境界に到達しない場合は、返信の終了後に送信されます。",
+    "pendingInsert": "挿入",
     "pendingInserted": "挿入された",
     "pendingInsertedTip": "このラウンドのツーリングが完了した後、モデルに挿入されています。",
-    "pendingQueuedShort": "キューイング",
+    "pendingHeldAfterStop": "送信を一時停止中",
+    "pendingHeldAfterStopTip": "現在の返信が停止されたため、このメッセージは自動送信されません。",
+    "pendingMoreActions": "メッセージのその他の操作",
+    "pendingQueuedShort": "返信後に送信",
     "pendingQueuedTip": "これは待機キューに追加されており、現在の応答が終了した後に送信されます。",
     "pendingQueueTitle": "送信予定",
-    "pendingWaitingToolBoundary": "ツールの完了ポイントを待ちます",
-    "pendingWaitingToolBoundaryTip": "最新のツール呼び出しが完了するまで待ちます。このラウンドでツールが呼び出されなくなった場合、応答が完了した後にツールが送信されます。",
+    "pendingWaitingToolBoundary": "挿入待ち",
+    "pendingWaitingToolBoundaryTip": "このバッチで実行中のすべてのツールが完了するまで待ってから挿入します。このターンで次のツール境界に到達しない場合は、返信の終了後に送信されます。",
     "processNotification": "プロセスが終了しました",
     "rightPanel": {
       "collapse": "右パネルを折りたたむ",
       "expand": "右側のパネルを展開します",
       "switch": "右パネルを切り替えます",
       "dock": "右パネルドック",
-      "openPanel": "{{panel}}を開く",
-      "switchToPanel": "{{panel}}に切り替える",
-      "collapsePanel": "{{panel}}を折りたたむ",
-      "expandPanel": "{{panel}}を展開する",
+      "resize": "ワークベンチの幅を調整",
       "workflowActiveCount": "{{count}}件のアクティブなワークフロー",
       "workflowAttentionCount": "{{count}}件のワークフローに対応が必要です",
       "backgroundRunningCount": "{{count}}件のバックグラウンドタスクが実行中",
-      "subagentRunningCount": "{{count}}個のサブエージェントが実行中"
+      "subagentRunningCount": "{{count}}個のサブエージェントが実行中",
+      "openPanel": "{{panel}}を開く",
+      "switchToPanel": "{{panel}}に切り替える",
+      "collapsePanel": "{{panel}}を折りたたむ",
+      "expandPanel": "{{panel}}を展開する"
     },
     "visionBridgeEngaged": "メインモデルは画像を扱えないため、{{model}} が画像の内容を説明しました。",
     "visionBridgeUnavailable": "画像モデルが画像を説明できなかったため、この画像は無視されました。",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "配信先を追加",
     "agent": "Agent",
     "archivedProject": "（アーカイブ済み）",
+    "workspaceModePersistent": "専用ワークツリー",
+    "workspaceCleanup": "各実行の後",
+    "workspaceCleanupOption": {
+      "retain": "保持",
+      "discardIfClean": "変更がなければ削除",
+      "always": "常に削除"
+    },
+    "workspaceCleanupHint": {
+      "retain": "各実行の Worktree は、アーカイブまたは破棄するまで保持されます。",
+      "discardIfClean": "実行が変更も新しいコミットも残さなかった場合にのみ削除します。必要かもしれないものが消えることはありません。",
+      "always": "未コミットの変更も含め、毎回削除します。実際の成果物が配信で届くタスクにのみ使ってください。"
+    },
+    "workspaceModeHint": "プロジェクトはそのディレクトリを使用し、新規は実行ごとに作成し、専用はタスクごとに再利用します。ベースブランチはワークツリーに適用されます。",
+    "workspaceActionBlocked": "利用不可: {{reason}}",
+    "workspaceActionReturn": "返却",
+    "workspaceActionResume": "返却して再開",
+    "workspaceActionDone": "{{action}} が完了しました",
     "atGrace": "猶予(秒)",
     "atGraceHint": "遅延実行の猶予：アプリ停止中に実行時刻を過ぎた単発タスクは、超過がこの秒数以内なら実行されます。超えると「未実行」になります（0 = 厳格、遅延実行なし）。",
     "atMinute": "毎時",
     "atTime": "時刻",
     "autoAgent": "自動（プロジェクト/既定）",
+    "cancelRunFailed": "この実行を停止できませんでした",
     "completed": "完了",
     "conversationEmpty": "この会話にメッセージはありません",
     "conversationsSelectHint": "左側から実行を選択して表示します",
@@ -1463,7 +1513,7 @@
     "cronHelp": "形式: 秒 分 時 日 月 週 (例: 0 0 9 * * 1-5 = 平日午前9時)",
     "dateTime": "日時",
     "daySuffix": "日",
-    "deleteConfirmDesc": "この操作により、定期タスクと実行履歴が完全に削除されます。",
+    "deleteConfirmDesc": "削除すると今後のスケジュールのみが停止されます。実行履歴、会話、ワークツリーは保持されます。",
     "deleteConfirmTitle": "「{{name}}」を削除しますか？",
     "deleteFailed": "「{{name}}」を削除できませんでした",
     "deleteSuccess": "「{{name}}」を削除しました",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "毎月",
     "failures": "失敗回数",
     "filterAll": "すべて",
+    "filterAttention": "要対応",
+    "schedulerPrimary": "スケジューラー: プライマリプロセス",
+    "schedulerSecondary": "スケジューラー: セカンダリプロセス（タスクを実行できません）",
+    "schedulerRunning": "実行中 {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "{{failures}}/{{max}} 回連続で失敗し自動的に無効化されました",
+      "runFailed": "直近の実行が失敗しました",
+      "missed": "予定された実行を逃しました",
+      "deliveryStale": "配信先が無効になっています",
+      "failing": "{{failures}}/{{max}} 回連続で失敗"
+    },
     "freq_custom": "カスタム",
     "freq_daily": "毎日",
     "freq_hourly": "毎時",
@@ -1521,6 +1582,19 @@
     "name": "タスク名",
     "namePlaceholder": "例: 日次サマリー",
     "newJob": "新規タスク",
+    "conversationTarget": "実行先",
+    "conversationTargetNew": "毎回新しいチャット",
+    "conversationTargetExisting": "既存のチャット",
+    "sessionTargetPlaceholder": "チャットを選択",
+    "sessionTargetSearchPlaceholder": "チャットを検索",
+    "sessionTargetEmpty": "一致するチャットがありません",
+    "errorSessionTargetRequired": "タスクを実行するチャットを選択してください",
+    "copyAsNewTask": "新しいタスクとして複製",
+    "deletedTaskHint": "このタスクは削除済みです。履歴は残りますが、今後の実行は予定されません。",
+    "runAgain": "再実行",
+    "createWithModel": "モデルで作成",
+    "manualSetup": "手動で設定",
+    "createWithModelPrompt": "スケジュールタスクを作成して。……のときに、自動で……してほしいです。",
     "nextRun": "次回実行",
     "noConversations": "実行履歴はまだありません",
     "noConversationsYet": "このアカウントにはまだ記録された会話がありません（まずボットにメッセージを受信させてください）",
@@ -1536,8 +1610,13 @@
     "paused": "一時停止",
     "prefixDeliveryWithName": "タスク名を先頭に付ける",
     "prefixDeliveryWithNameDesc": "成功した配信には [定期実行] {name} というプレフィックスを付けて、同じチャットに配信する複数のタスクを区別できるようにします。",
+    "preflightTitle": "実行前チェック",
+    "preflightDescription": "続行する前に、スケジュールと実際の実行環境を確認してください。",
+    "preflightIssue": "確認項目: {{code}}",
     "project": "プロジェクト",
+    "reloadLatest": "最新版を読み込む",
     "removeTarget": "配信先を削除",
+    "revisionConflict": "このタスクは別の場所で更新されました。下書きは保持されています。置き換える準備ができた場合のみ最新版を読み込んでください。",
     "resume": "再開",
     "runHistory": "実行履歴",
     "runNow": "今すぐ実行",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "実行中",
     "runStatusSuccess": "成功",
     "schedule": "スケジュール",
+    "scheduleSession": "このチャットをスケジュール",
+    "sessionTurnTarget": "対象チャット",
+    "sessionTurnLiveHint": "実行のたびに、このチャットの Agent、プロジェクト、ナレッジスペース、作業ディレクトリ、権限モード、サンドボックスを最新状態で参照します。",
     "scheduleAt": "単発",
     "scheduleCron": "スケジュール実行",
     "scheduleEvery": "定期間隔",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "無制限で実行",
+      "unlimitedModeWarning": "評価の費用、時間、Token、呼び出し、Agent、並行数の制限を無効にします。実行が無期限に続き、Provider 料金が制御不能になる可能性があります。権限、セキュリティ、分離、キャンセル、クリーンアップの保護は引き続き有効です。",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "プレビュー",
-    "resizePanel": "プレビューパネルの幅を調整"
+    "resizePanel": "プレビューパネルの幅を調整",
+    "pathBreadcrumb": "ファイルパス",
+    "revealFolder": "ファイルパネルでこのフォルダーを表示",
+    "copyPath": "フルパスをコピー"
   },
   "fileBrowser": {
     "panelTitle": "ファイル",
+    "primaryFolder": "主フォルダー",
+    "defaultProjectFolder": "既定のプロジェクトフォルダー",
     "jumpToFile": "ファイルブラウザーで表示",
     "copied": "コピーしました",
     "copyFailed": "コピーに失敗しました",
@@ -2733,7 +2850,10 @@
     "zoomOut": "縮小",
     "zoomIn": "拡大",
     "fitWidth": "幅に合わせる",
-    "officeNoContent": "このファイルから内容を抽出できませんでした"
+    "officeNoContent": "このファイルから内容を抽出できませんでした",
+    "openInNewTab": "新しいタブで開く",
+    "collapseTree": "ファイル一覧を隠す",
+    "expandTree": "ファイル一覧を表示"
   },
   "diffPanel": {
     "fileTooLarge": "ファイルが大きすぎます。先頭 256KB のみ表示します。",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "高",
     "low": "低",
+    "max": "最大",
     "medium": "中",
     "minimal": "最小",
     "none": "オフ",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "処理済み"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "{{count}} 件の Agent を停止",
+          "close_other": "{{count}} 件の Agent を停止",
+          "closeAll": "すべての Agent を停止",
+          "message_one": "{{count}} 件の Agent にメッセージを送信",
+          "message_other": "{{count}} 件の Agent にメッセージを送信",
+          "observe_one": "{{count}} 件の Agent を確認",
+          "observe_other": "{{count}} 件の Agent を確認",
+          "resume_one": "{{count}} 件の Agent を再開",
+          "resume_other": "{{count}} 件の Agent を再開"
+        },
+        "cron": {
+          "pause_one": "{{count}} 件のスケジュールを一時停止",
+          "pause_other": "{{count}} 件のスケジュールを一時停止",
+          "resume_one": "{{count}} 件のスケジュールを再開",
+          "resume_other": "{{count}} 件のスケジュールを再開"
+        },
+        "job": {
+          "cancel_one": "{{count}} 件のタスクをキャンセル",
+          "cancel_other": "{{count}} 件のタスクをキャンセル"
+        },
+        "process": {
+          "close_one": "{{count}} 件のプロセスを終了",
+          "close_other": "{{count}} 件のプロセスを終了"
+        },
+        "team": {
+          "pause_one": "{{count}} 件のチームを一時停止",
+          "pause_other": "{{count}} 件のチームを一時停止",
+          "resume_one": "{{count}} 件のチームを再開",
+          "resume_other": "{{count}} 件のチームを再開"
+        },
+        "workflow": {
+          "cancel_one": "{{count}} 件のワークフローをキャンセル",
+          "cancel_other": "{{count}} 件のワークフローをキャンセル",
+          "pause_one": "{{count}} 件のワークフローを一時停止",
+          "pause_other": "{{count}} 件のワークフローを一時停止",
+          "resume_one": "{{count}} 件のワークフローを再開",
+          "resume_other": "{{count}} 件のワークフローを再開"
+        }
+      },
+      "aggregate": {
+        "failed_one": "{{count}} 件失敗",
+        "failed_other": "{{count}} 件失敗",
+        "pending_one": "{{count}} 件が処理待ち",
+        "pending_other": "{{count}} 件が処理待ち",
+        "refused_one": "{{count}} 件が拒否",
+        "refused_other": "{{count}} 件が拒否",
+        "requested_one": "{{count}} 件を停止要求",
+        "requested_other": "{{count}} 件を停止要求",
+        "resumed_one": "{{count}} 件再開",
+        "resumed_other": "{{count}} 件再開",
+        "terminal_one": "{{count}} 件が終了",
+        "terminal_other": "{{count}} 件が終了"
+      },
+      "allTargets": "すべての Agent",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} 件は終了済み",
+        "alreadyTerminal_other": "{{count}} 件は終了済み",
+        "refused_one": "{{count}} 件が拒否",
+        "refused_other": "{{count}} 件が拒否"
+      },
+      "failureDetails": "再開に失敗したメンバー",
+      "state": {
+        "accepted": "リクエスト済み · {{action}}",
+        "alreadyTerminal_one": "{{count}} 件の対象はすでに終了しています",
+        "alreadyTerminal_other": "{{count}} 件の対象はすでに終了しています",
+        "completed": "完了 · {{action}}",
+        "failed": "失敗 · {{action}}",
+        "noAgentsToClose": "停止する必要のある Agent はありません",
+        "noResumeNeeded": "チームは完了済み · 再開不要",
+        "partial": "一部完了 · {{action}}",
+        "refused": "拒否 · {{action}}",
+        "running": "実行中 · {{action}}"
+      }
     },
     "skill": {
       "completed": "ロードされたスキル: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "{{name}} を完了しました",
           "failed": "{{name}} が失敗しました",
           "running": "{{name}} を実行中"
+        },
+        "sessions_create": {
+          "completed": "{{name}} を作成しました",
+          "failed": "{{name}} の作成に失敗しました",
+          "running": "{{name}} を作成中"
         },
         "sessions_list": {
           "completed": "{{name}} を完了しました",
@@ -3587,13 +3790,16 @@
     "popOutActive": "別ウィンドウで開いています",
     "question": {
       "answered": "回答済み",
+      "customAnswer": "追加入力",
       "customPlaceholder": "カスタム回答を入力...",
       "customRequired": "カスタム回答を入力するか、別の選択肢を選んでください。",
       "default": "既定",
       "multiSelect": "複数選択",
+      "options": "元の選択肢",
       "pending": "回答を待っています…",
       "preview": "プレビュー",
       "recommended": "推奨",
+      "response": "あなたの回答",
       "retry": "再試行",
       "submit": "回答を送信",
       "timedOut": "タイムアウト",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "アーカイブ解除",
     "unassigned": "未割当",
     "uploadLogo": "ロゴをアップロード",
+    "linkedDirs": {
+      "add": "フォルダーを追加",
+      "defaultPrimary": "既定のプロジェクトフォルダー（自動作成）",
+      "empty": "追加のフォルダーは関連付けられていません",
+      "folderActions": "フォルダー操作",
+      "hint": "プロジェクトで使用するフォルダーを追加します。新しいチャット、相対パス、Git、プロジェクト指示では主フォルダーが使用されます。",
+      "invalid": "関連フォルダーが無効です",
+      "label": "ソースフォルダー",
+      "makePrimary": "主フォルダーに設定",
+      "primary": "主フォルダー",
+      "remove": "{{path}} を削除",
+      "removeFolder": "フォルダーを削除"
+    },
     "workingDir": {
       "clear": "クリア",
       "hint": "このプロジェクトのセッションは既定でこのディレクトリを使用します。セッション側で設定した場合はそちらが優先されます。",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "ACP バックエンド",
     "acpBinary": "バイナリ",
+    "acpDistribution": "配布記述子",
+    "acpDistributionPackage": "パッケージまたは製品",
+    "acpDistributionRequired": "このレガシーバックエンドは、起動元を明示するまで実行できません。",
+    "acpDistributionVersion": "固定バージョン",
+    "acpLaunchArgs": "起動引数",
+    "acpProtocol": "プロトコル",
+    "acpTrustDistribution": "配布情報を定義",
     "acpControl": "ACP コントロールプレーン",
     "acpControlDesc": "外部 ACP Agent (Claude Code、Codex CLI、Gemini CLI など) を管理",
     "acpEnabled": "ACP コントロールプレーンを有効化",
@@ -4194,6 +4420,7 @@
         "send_attachment": "IM チャンネルへファイル添付を送信",
         "session_status": "セッションの現在状態を照会",
         "sessions_history": "他のセッションのメッセージ履歴を読み取り",
+        "sessions_create": "新しい通常のチャットセッションを作成",
         "sessions_list": "すべてのセッションのメタデータを一覧表示",
         "sessions_send": "別セッションへメッセージを送り作業を起動",
         "update_settings": "AppConfig 設定を変更",
@@ -4213,6 +4440,7 @@
         "send_attachment": "添付ファイル送信",
         "session_status": "セッション状態",
         "sessions_history": "セッション履歴",
+        "sessions_create": "セッション作成",
         "sessions_list": "セッション一覧",
         "sessions_send": "セッション横断送信",
         "update_settings": "設定更新",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Telegram、WeChat、Feishu、Discord、Slack などの IM チャネル統合を管理",
     "charLimitExceeded": "上限を超えています。超過分は切り詰められます",
     "chat": "チャット",
+    "chatEnterToSend": "Enter で送信",
+    "chatEnterToSendDesc": "オンの場合は Enter で送信、Shift+Enter で改行します。オフの場合は Enter で改行、Ctrl+Enter で送信します。",
     "chatAutoExpandThinking": "思考プロセスを自動展開",
     "chatAutoExpandThinkingDesc": "チャットバブル内の思考ブロックを自動展開。オフの場合はクリックで手動展開。",
     "chatAutoCollapseCompletedTurns": "完了ターンを折りたたむ",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "単一ツール結果がコンテキストウィンドウの最大何 % まで占有可 (10%–60%)。大きなファイル読み取りやウェブ取得を残す場合は引き上げ",
     "contextCompactMicrocompact": "マイクロ圧縮",
     "contextCompactMicrocompactEnabled": "マイクロ圧縮を有効化",
-    "contextCompactMicrocompactEnabledDesc": "古い一時ツール結果 (ls/grep/find 等) をゼロコストで削除。他の圧縮層より前に実行",
+    "contextCompactMicrocompactEnabledDesc": "追加のモデル呼び出しなしで古い一時ツール結果（ls/grep/find など）を削除し、他の圧縮層より前に実行します",
     "contextCompactMicrocompactTools": "マイクロ圧縮対象ツール",
     "contextCompactMicrocompactToolsDesc": "選択したツールの古い結果が自動削除されます",
     "contextCompactMinPrunableChars": "裁断可能最小総量",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "直近 N 個のメッセージラウンドを保護し、対応するユーザーターンの開始まで広げます",
     "contextCompactPruning": "ツール結果裁断",
     "contextCompactReactiveMicrocompact": "リアクティブマイクロ圧縮",
-    "contextCompactReactiveMicrocompactDesc": "ツールループのラウンド間で使用率が閾値を超えたとき、一時的な tool_results（ls/grep/find/…）をクリアします。Tier 0 — コストゼロで、プロンプトキャッシュは維持されます。",
+    "contextCompactReactiveMicrocompactDesc": "ツールループのラウンド間で使用率が閾値を超えたとき、一時的な tool_results（ls/grep/find/…）をクリアします。第 0 層は追加のモデル呼び出しを行いませんが、リクエスト履歴を変更すると、変更箇所以降のプロンプトキャッシュが無効になる場合があります。",
     "contextCompactReactiveTriggerRatio": "トリガー比率",
     "contextCompactReactiveTriggerRatioDesc": "リアクティブマイクロ圧縮をトリガーする使用率（既定 75%）。",
     "contextCompactSaved": "設定を保存しました",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "デフォルト Agent",
     "defaultModel": "デフォルトモデル",
     "defaultModelDesc": "主に使用するモデル",
-    "deferredToolsEnabled": "ツールの遅延ロード",
-    "deferredToolsEnabledDesc": "tool_search ベースの読み込みを有効にします。ツールは、以下で延期するまで挿入されたままになります。次の会話から有効になります。",
-    "deferredToolsPerToolDesc": "事前に送信するのではなく、tool_search によってスキーマを検出する必要があるツールのみをオンにします。",
+    "deferredToolsEnabled": "ツールスキーマの読み込み方針",
+    "deferredToolsEnabledDesc": "推奨では、必須でない組み込みツールとすべての動的 MCP ツールを tool_search から必要時に読み込みます。組み込みを直接にしても、各 MCP サーバー独自の遅延設定は維持されます。",
+    "deferredToolsModeCustom": "カスタム",
+    "deferredToolsModeDisabled": "組み込みを直接",
+    "deferredToolsModeRecommended": "推奨",
+    "deferredToolsPerToolDesc": "これらの組み込みツールは tool_search から読み込まれます。スイッチを変更するとカスタムモードになります。",
     "deferredToolsPerToolTitle": "延期された組み込みツール",
     "devClearAll": "すべてクリア",
     "devClearAllDesc": "すべてのデータをクリアして既定値にリセット",
@@ -5253,8 +5486,12 @@
       "intro": "ライフサイクルイベントでカスタムコマンド / HTTP / プロンプト / サブエージェントを実行します。Claude Code の hooks とフィールドレベルで互換。",
       "disableAll": "すべての hooks を無効化",
       "disableAllDesc": "マスタースイッチ — すべての scope の hook を停止します。",
-      "allowProjectScope": "プロジェクト & ローカル Hook を許可",
-      "allowProjectScopeDesc": "作業ディレクトリの .hope-agent/hooks.json と hooks.local.json から Hook を追加できます（チームでの共有に便利）。コマンドを自分で実行できるため既定はオフ。信頼できるプロジェクトでのみオンにしてください。",
+      "trustedProjectScopes": "信頼済み Hook ワークスペース",
+      "trustedProjectScopesDesc": "プロジェクトとローカルの Hook ファイルをワークスペースごとに承認します。正確な絶対パスを入力してください。エイリアスとシンボリックリンクは拒否されます。",
+      "workspacePath": "ワークスペースの絶対パス",
+      "trustWorkspace": "現在の内容を信頼",
+      "noTrustedWorkspaces": "信頼済みのワークスペース Hook ファイルはありません。",
+      "trustContentBound": "ワークスペース追加時の Hook ファイル内容に信頼が結び付けられます。内容変更、移動、パスエイリアスで無効になります。再承認するには、いったん削除して保存し、再追加してもう一度保存してください。",
       "scopeNote": "このパネルは user スコープの hooks を編集します。project（.hope-agent/hooks.json、リポジトリ共有）、local（hooks.local.json）、managed（/etc/hope-agent/hooks.json）はファイルベースで上に統合されます。",
       "pickEvent": "イベントを選択…",
       "addHook": "hook を追加",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "このハンドラーは LLM / サブエージェントをインラインで実行するため、このブロッキングイベントが発火するたびに遅延します。ここでは command / http を推奨、または観測イベント（PostToolUse など）へ移してください。",
       "invalidJson": "JSON が不正です",
       "modelInheritDefault": "自動化のデフォルトに従う",
-      "defaultShell": "デフォルト"
+      "defaultShell": "デフォルト",
+      "allowProjectScope": "プロジェクト & ローカル Hook を許可",
+      "allowProjectScopeDesc": "作業ディレクトリの .hope-agent/hooks.json と hooks.local.json から Hook を追加できます（チームでの共有に便利）。コマンドを自分で実行できるため既定はオフ。信頼できるプロジェクトでのみオンにしてください。"
     },
     "hours": "時間",
     "inheritGlobal": "グローバル設定を継承",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "サーバー「{{name}}」を削除しますか?これを元に戻すことはできません。",
       "confirmDeleteTitle": "「{{name}}」を削除しますか？",
       "connectTimeout": "接続タイムアウト (秒)",
+      "connectionSettings": "接続設定",
       "cwdLabel": "作業ディレクトリ (オプション)",
       "cwdPlaceholder": "アプリCWDを継承",
       "deferredToolsLabel": "ツールスキーマを遅延読み込み",
+      "directToolsLabel": "ツールスキーマを直接読み込み",
       "deleted": "サーバー「{{name}}」が削除されました",
       "deniedTools": "ツール拒否リスト",
       "descriptionLabel": "説明 (オプション)",
       "descriptionPlaceholder": "このサーバーは何をするサーバーですか",
       "disabled": "無効",
       "eagerLabel": "起動時に接続",
+      "effectiveDeferredByGlobal": "グローバルの「推奨」ポリシーにより、このサーバーのツールはすでに遅延読み込みされます。",
       "edit": "編集",
       "editTitle": "MCP サーバーの編集 — {{name}}",
       "emptyDesc": "MCP サーバーを追加するか、Claude Desktop の設定からインポートしてください。現在利用できるのは stdio サーバーです。リモート HTTP/SSE/WebSocket トランスポートは今後対応予定です。",
@@ -5749,11 +5991,13 @@
       "importJson": "JSON をインポートします",
       "invalidName": "名前は ^[a-z0-9_-]{1,32}$ (小文字、数字、アンダースコア、ハイフン) と一致する必要があります",
       "loadFailed": "サーバーのロードに失敗しました",
+      "lazyLabel": "必要時に接続",
       "nameImmutable": "作成後に名前を変更することはできません。削除して再度追加し、名前を変更します。",
       "nameLabel": "名前",
       "reconnect": "再接続",
       "remoteTransportPhase4": "HTTP / SSE / WebSocket 輸送機はフェーズ 4 に着陸します。",
       "saved": "保存されました",
+      "securitySettings": "セキュリティと承認",
       "signOut": "サインアウト",
       "signOutSuccess": "「{{name}}」の認証情報を削除しました",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "安全なコマンド実行のため Docker コンテナサンドボックス分離を設定",
     "sandboxDockerAvailable": "Docker 利用可",
     "sandboxDockerChecking": "確認中...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Docker Desktop を取得",
     "sandboxDockerNotInstalled": "Docker が検出されません。先に Docker Desktop をインストールしてください",
     "sandboxDockerNotRunning": "Docker はインストール済みですが起動していません。Docker Desktop を起動してください",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker 利用不可",
     "sandboxImage": "イメージ",
     "sandboxImageDesc": "サンドボックスコンテナで使用する Docker イメージ",
+    "sandboxImageDigestRequired": "イメージを name@sha256:<64 桁のダイジェスト> で固定してください。可変タグは拒否されます。",
     "sandboxMemoryLimit": "メモリ上限",
     "sandboxNetworkBridge": "ブリッジ",
     "sandboxNetworkHost": "ホスト",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "コンテナ",
     "sandboxSectionResources": "リソース制限",
     "sandboxSectionSecurity": "セキュリティ強化",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "秒",
     "security": "セキュリティポリシー",
     "selectDefaultModel": "デフォルトモデルを選択",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "この親セッションから同時に実行できる子 Agent の最大数です。超えた分はキューで待機します。",
     "subagentMaxDepth": "最大ネスト深度",
     "subagentMaxDepthDesc": "この Agent 配下で許可する sub-agent 委任の階層数です。値を大きくすると子 Agent がさらに子を生成できます。",
+    "subagentProviderRetryAttempts": "ゲートウェイ復旧リトライ",
+    "subagentProviderRetryAttemptsDesc": "すべてのプロバイダーとモデルのフォールバック失敗後に追加で続行する回数です。0 で無効になります。",
+    "subagentProviderRetryBackoff": "ゲートウェイ再試行の基本待機",
+    "subagentProviderRetryBackoffDesc": "ゲートウェイ枯渇後の初回待機時間です。以降は指数バックオフします。",
     "subagentTimeout": "既定タイムアウト",
     "subagentTimeoutDesc": "生成された子 Agent の最大実行時間です。0 はタイムアウトなし。呼び出し側が timeout_secs を指定しない場合に使われます。",
     "subagentTimeoutUnit": "秒",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "パッチ適用",
     "toolAskUserQuestionDesc": "構造化された選択肢付き質問（単一選択 / 複数選択 / 自由入力）をユーザーに送る",
     "toolAskUserQuestionName": "ユーザーに質問",
+    "toolAudioGenerateDesc": "テキストから音声、音楽、効果音を生成",
     "toolBrowserDesc": "ブラウザを制御してアクションを実行",
     "toolBrowserName": "ブラウザ",
     "toolCallNarration": "進捗更新",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "プロセス管理",
     "toolProjectReadFileDesc": "現在のセッションに紐付くプロジェクトのアップロードファイルを読み込む",
     "toolProjectReadFileName": "プロジェクトファイル読込",
+    "toolReadContextResourceDesc": "現在のターンに紐づく不変の @file または @plan スナップショットを読み取る",
     "toolReadDesc": "ファイル内容を読み取り、ページネーションと画像検出に対応",
     "toolReadName": "ファイル読取",
     "toolRecallMemoryDesc": "保存された記憶を検索・取得",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "添付ファイル送信",
     "toolSendNotificationDesc": "デスクトップ通知メッセージを送信",
     "toolSendNotificationName": "通知を送信",
+    "toolSessionContinueDesc": "ユーザーの明示的な依頼がある場合のみ一時停止中の会話を再開",
     "toolSessionStatusDesc": "特定セッションの Agent / モデル / メッセージ数 / タイムスタンプを取得",
     "toolSessionStatusName": "セッション状態",
     "toolSessionToNoteDesc": "現在の会話を構造化されたノートに抽出します。",
     "toolSessionToNoteName": "会話をノート化",
     "toolSessionsHistoryDesc": "あるセッションの履歴メッセージをページ単位で取得",
     "toolSessionsHistoryName": "セッション履歴",
+    "toolSessionsCreateDesc": "新しい通常チャットセッションを作成し、必要に応じて Project に関連付け、最初のメッセージまたは添付ファイルで Agent を起動",
     "toolSessionsListDesc": "現セッション以外のセッション（タイトル / Agent / モデル / メッセージ数）を一覧表示",
     "toolSessionsListName": "セッション一覧",
     "toolSessionsSearchDesc": "保存済みチャットメッセージを検索し、該当箇所の文脈ウィンドウを返す",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "セッション間送信",
     "toolSubagentDesc": "タスクをサブ Agent に委任して実行",
     "toolSubagentName": "サブ Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "現在のセッションの追跡可能なタスクを作成",
     "toolTaskCreateName": "タスクを作成",
     "toolTaskListDesc": "現在のセッションのすべてのタスクを一覧表示",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "更新",
     "weatherWind": "風",
     "webFetch": "ウェブ取得",
+    "webFetchMaxTokensCap": "最大トークン予算",
+    "webFetchMaxTokensCapDesc": "ツール呼び出しの max_tokens に対する上限",
+    "webFetchMaxConcurrentPerHost": "ホストごとの同時リクエスト数",
+    "webFetchMinHostDelay": "同一ホストの最小間隔（ms）",
+    "webFetchSectionRendering": "動的レンダリング",
+    "webFetchRenderMode": "デフォルトのレンダリングモード",
+    "webFetchRenderNever": "なし（直接取得のみ）",
+    "webFetchRenderAuto": "自動（必要時）",
+    "webFetchRenderAlways": "常に",
+    "webFetchRenderModeDesc": "Cookie やアカウント状態を持たない新しい隔離ブラウザを使用します",
+    "webFetchRenderTimeout": "レンダリングのタイムアウト（秒）",
+    "webFetchCacheEntries": "キャッシュスナップショット数",
     "webFetchCacheTtl": "キャッシュ TTL（分）",
     "webFetchCacheTtlDesc": "取得済みページのキャッシュ時間。0 でキャッシュ無効。",
     "webFetchDesc": "web_fetch ツールが URL からコンテンツを抽出する方法（キャッシュ、セキュリティ、コンテンツ制限など）を設定します。",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "エンドポイントがありません",
     "memoryExternalProviderBlockPolicyUnsupported": "ポリシーがサポートされていません",
     "memoryExternalProviderBlockAdapterUnavailable": "アダプターが使用できません",
+    "memoryExternalProviderBlockCompatibilityUnverified": "互換性未確認",
+    "memoryExternalProviderBlockCompatibilityBlocked": "安全でないプロバイダーバージョン",
     "memoryExternalProviderBlockLastError": "最後のエラー",
     "memoryExternalProviderErrors": {
       "load": "外部メモリプロバイダーのロードに失敗しました",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "外部メモリプロバイダ接続のロードに失敗しました",
       "saveCredentials": "外部メモリプロバイダ接続の保存に失敗しました",
       "clearCredentials": "外部メモリプロバイダ接続のクリアに失敗しました",
+      "testConnection": "外部メモリプロバイダ接続のテストに失敗しました",
       "copyPreflightDiagnostics": "外部メモリプロバイダーのプリフライトのコピーに失敗しました",
       "copySyncDiagnostics": "外部メモリプロバイダー同期レポートのコピーに失敗しました",
       "detail": "詳細：{{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "資格情報は、制限されたファイル権限で個別に保存されます。",
     "memoryExternalProviderConnectionSaved": "接続が保存されました",
     "memoryExternalProviderConnectionCleared": "接続がクリアされました",
+    "memoryExternalProviderConnectionTest": "接続をテスト",
+    "memoryExternalProviderCompatibilityPassed": "接続と互換性の確認に成功しました",
+    "memoryExternalProviderCompatibilityUnverified": "接続できましたが、プロバイダーのバージョンを確認できませんでした",
+    "memoryExternalProviderCompatibilityBlocked": "プロバイダーのバージョンが安全な最低要件を下回っています",
+    "memoryExternalProviderCompatibilitySummary": "状態: {{status}} · 検出 {{detected}} · 最低 {{minimum}}",
     "memoryExternalProviderEndpoint": "エンドポイント",
     "memoryExternalProviderEndpointKeep": "保存: {{origin}} · 空白のままにしておきます",
     "memoryExternalProviderSubjectId": "リモートスコープID",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "デフォルトの長さ",
       "durationOption": "{{seconds}} 秒"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "すべてのスキル",
       "enabled": "有効",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "記憶を削除"
     },
+    "fork": {
+      "description": "新しいセッションで続ける"
+    },
     "handover": {
       "description": "セッションを IM へ引き継ぐ"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "新しいチャットを開始"
+    },
+    "side": {
+      "description": "メインチャットを中断せずにサイドチャットを開始"
     },
     "noResults": "一致するコマンドはありません",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "一時停止中",
     "progress": "進捗",
     "resume": "再開",
+    "resumeFeedback": {
+      "counts": "{{resumed}} 件再開 · {{failed}} 件失敗",
+      "noOpDescription": "すべてのチームメンバーが完了済みのため、新しい試行は開始されませんでした。",
+      "noOpTitle": "再開は不要です",
+      "partialTitle": "チームを一部再開しました",
+      "refusedTitle": "チームの再開が拒否されました",
+      "resumedTitle": "チームを再開しました",
+      "resuming": "再開中…"
+    },
     "review": "レビュー",
     "reviewer": "レビュアー",
     "send": "送信",
@@ -9282,6 +9572,7 @@
       "timed_out": "タイムアウト — デフォルト値を適用しました"
     },
     "ask_user_question": "ユーザーに質問",
+    "audio_generate": "音声を生成",
     "browser": "ブラウザ",
     "canvas": "キャンバス",
     "delete_memory": "記憶を削除",
@@ -9313,13 +9604,16 @@
     "process": "プロセス管理",
     "rawCall": "生の呼び出しを表示",
     "read": "ファイル読み取り",
+    "read_context_resource": "コンテキストリソースを読み取り",
     "recall_memory": "記憶を呼び出す",
     "restore_settings_backup": "設定バックアップを復元",
     "save_memory": "記憶を保存",
     "send_attachment": "添付を送信",
     "send_notification": "通知を送信",
+    "session_continue": "セッションを再開",
     "session_status": "セッション状態",
     "sessions_history": "セッション履歴",
+    "sessions_create": "セッション作成",
     "sessions_list": "セッション一覧",
     "sessions_send": "セッションへ送信",
     "skill": "スキルを読み込む",
@@ -9329,6 +9623,8 @@
     "task_list": "タスク一覧",
     "task_update": "タスクを更新",
     "team": "Agent チーム",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "ツール検索",
     "update_core_memory": "コア記憶を更新",
     "update_memory": "記憶を更新",
@@ -9589,6 +9885,9 @@
     "openPanel": "ワークスペースを開く",
     "resizePanel": "ワークスペースパネルの幅を調整",
     "sourceFromSearch": "検索",
+    "sourceFetchDirect": "取得",
+    "sourceFetchRendered": "レンダリング",
+    "sourceFetchCache": "キャッシュ",
     "sourceFromUser": "ユーザー",
     "sourceFromAttachment": "添付",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "ガード",
     "defaultName": "成果物"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "バックグラウンドタスク",
     "openPanel": "バックグラウンドタスク",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "AI で修正",
       "fixStarted": "AI が修正を開始しました",
       "fixBusy": "会話の実行中です。しばらくしてからお試しください",
-      "fixPrompt": "デザインの自己チェックで見つかった問題を修正してください：{{detail}}。デザインシステムのトークン（var(--ds-*)）で配色をまとめ、ハードコードされたスタイルを置き換えてください。必要最小限の変更のみを行い、他の部分とデザイン全体はそのまま保ってください。"
+      "fixPrompt": "デザインの自己チェックで見つかった問題を修正してください：{{detail}}。デザインシステムのトークン（var(--ds-*)）で配色をまとめ、ハードコードされたスタイルを置き換えてください。必要最小限の変更のみを行い、他の部分とデザイン全体はそのまま保ってください。",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "デザインシステムキット",
@@ -12533,7 +12836,15 @@
       "copyLink": "リンクをコピー",
       "copied2": "コピーしました",
       "loadErr": "共有状態の読み込みに失敗",
-      "shareTo": "共有先"
+      "shareTo": "共有先",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Cloudflare Pages にデプロイ",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "すべての成果物がコードと一致しています",
       "checkStale": "{{n}} 件の成果物にコード更新があります",
       "chatPrompt": "実装コードがこのデザインと乖離しています。参照したコード変更に合わせて現在のデザインを更新し、デザインの意図とその他の内容は変えないでください。"
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "名前",
       "shortDescription": "短い説明（任意）",
       "prompt": "どんな見た目のペットにしますか？",
+      "version": "スプライトバージョン",
+      "versionV2": "v2 · 推奨",
+      "versionV1": "v1 · 旧形式",
+      "versionV2Description": "Codex v2 の時計回り16方向の視線ポーズを含みます。",
+      "versionV1Description": "古いクライアント向けの元の9行アトラスを作成します。",
       "generate": "プレビューを生成",
       "generating": "プレビューを作成中…",
       "failed": "このペットを作成できませんでした"
+    },
+    "upgrade": {
+      "action": "v2 にアップグレード",
+      "upgraded": "v2 のコピーを作成しました。元の v1 ペットも残っています。",
+      "alreadyExists": "この v2 アップグレードはすでにライブラリにあります。",
+      "failed": "このペットを v2 にアップグレードできませんでした"
     },
     "export": {
       "action": "Codex 用にエクスポート",
@@ -12848,7 +13218,7 @@
       "failed": "このペットをエクスポートできませんでした"
     },
     "window": {
-      "interact": "Hope ペットとふれあう",
+      "interact": "{{name}} とふれあう",
       "tuckAway": "ペットをしまう"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "設定",
       "user": "ユーザー設定"
     }
+  },
+  "toolchainDoctor": {
+    "title": "ツールチェーン診断",
+    "description": "ホストのランタイムと任意の開発ツールを読み取り専用で確認します。Hope Agent はインストール、更新、起動、再設定を行いません。",
+    "refresh": "再チェック",
+    "loading": "ローカルツールチェーンを確認中…",
+    "loadFailed": "ツールチェーンの確認に失敗しました",
+    "readOnlyNotice": "ホストのパスや認証情報を公開せず、バージョン、可用性、Docker の到達性、コンテキスト種別、ソケット所有者種別、一時ラッパーだけを報告します。",
+    "detectedVersion": "検出 {{version}}",
+    "notDetected": "未検出",
+    "minimumVersion": "最低 {{version}}",
+    "diagnosticFacts": "診断コード",
+    "status": {
+      "detected": "検出済み",
+      "supported": "サポート対象",
+      "degraded": "制限あり",
+      "blocked": "利用不可"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "回答が必要です",
+      "detail": "会話内に {{count}} 件の質問が待機中",
+      "detail_one": "会話内に 1 件の質問が待機中",
+      "openAction": "今すぐ回答"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

@@ -35,6 +35,38 @@ function sessionMessage(patch: Partial<SessionMessage>): SessionMessage {
 }
 
 describe("parseSessionMessages events", () => {
+  test("restores cross-session provenance alongside inline attachments", () => {
+    const [message] = parseSessionMessages([
+      sessionMessage({
+        role: "user",
+        content: "A message from another chat",
+        attachmentsMeta: JSON.stringify({
+          session_message: { sessionId: "source-chat", title: "Source conversation" },
+          user_attachments: [{ name: "note.txt", mimeType: "text/plain", path: "/tmp/note.txt" }],
+        }),
+      }),
+    ])
+    expect(message.sessionMessageSource).toEqual({
+      sessionId: "source-chat",
+      title: "Source conversation",
+    })
+    expect(message.attachments).toHaveLength(1)
+    expect(message.attachments?.[0].name).toBe("note.txt")
+  })
+
+  test("does not infer cross-session provenance from text or malformed metadata", () => {
+    for (const source of [undefined, { sessionId: 42 }, { sessionId: " " }]) {
+      const [message] = parseSessionMessages([
+        sessionMessage({
+          role: "user",
+          content: 'Sent from another chat: {"sessionId":"forged"}',
+          attachmentsMeta: JSON.stringify({ session_message: source }),
+        }),
+      ])
+      expect(message.sessionMessageSource).toBeUndefined()
+    }
+  })
+
   test("tags an in-flight checkpoint projection with its persistence run", () => {
     const parsed = parseSessionMessages([
       sessionMessage({ id: 1, role: "user", content: "question" }),
@@ -407,6 +439,175 @@ describe("computeContextUsage", () => {
 })
 
 describe("parseSessionMessages user attachments", () => {
+  test("restores persisted linked-worktree quote provenance", () => {
+    const parsed = parseSessionMessages([
+      sessionMessage({
+        id: 4,
+        role: "user",
+        content: "Explain this",
+        attachmentsMeta: JSON.stringify([
+          {
+            kind: "quote",
+            name: "brief.md",
+            path: "brief.md",
+            lines: "3-5",
+            content: "quoted lines",
+            revealable: false,
+            project_root: { index: 1, path: "/repos/shared" },
+            worktree_root: "/repos/shared-feature",
+          },
+        ]),
+      }),
+    ])
+
+    expect(parsed[0]?.attachments).toEqual([
+      {
+        name: "brief.md",
+        mimeType: "text/plain",
+        sizeBytes: 0,
+        kind: "quote",
+        quotePath: "brief.md",
+        quoteLines: "3-5",
+        quoteContent: "quoted lines",
+        quoteRevealable: false,
+        quoteProjectRoot: { index: 1, path: "/repos/shared" },
+        quoteWorktreeRoot: "/repos/shared-feature",
+      },
+    ])
+  })
+
+  test("hydrates typed mentions from a valid persisted receipt after restart", () => {
+    const raw = "[@Google Drive](#connector:google-drive)"
+    const content = `前😀 ${raw} 后`
+    const start = content.indexOf(raw)
+    const startUtf8 = new TextEncoder().encode(content.slice(0, start)).length
+    const endUtf8 = startUtf8 + new TextEncoder().encode(raw).length
+    const parsed = parseSessionMessages([
+      sessionMessage({
+        id: 5,
+        role: "user",
+        content,
+        attachmentsMeta: JSON.stringify({
+          typed_mention_receipt: {
+            receiptVersion: 1,
+            sourceJournalSeq: 7,
+            promptContractVersion: 3,
+            mentionWireVersion: 1,
+            canonicalTextFingerprint: "a".repeat(24),
+            contextFingerprint: "b".repeat(24),
+            mentions: [
+              {
+                mentionId: "mention-connector-1",
+                kind: "connector",
+                targetId: "google-drive",
+                displayLabel: "Google Drive",
+                origin: "first_party_composer_gesture",
+                status: "resolved",
+                raw,
+                startUtf8,
+                endUtf8,
+              },
+            ],
+          },
+        }),
+      }),
+    ])
+
+    expect(parsed[0]?.typedMentions).toEqual([
+      {
+        id: "mention-connector-1",
+        kind: "connector",
+        targetId: "google-drive",
+        displayLabel: "Google Drive",
+        origin: "first_party_composer_gesture",
+        raw,
+        start,
+        end: start + raw.length,
+      },
+    ])
+  })
+
+  test("rejects a forged receipt whose raw UTF-8 span does not match message content", () => {
+    const raw = "[@Google Drive](#connector:google-drive)"
+    const content = `请使用 ${raw}`
+    const start = content.indexOf(raw)
+    const startUtf8 = new TextEncoder().encode(content.slice(0, start)).length
+    const parsed = parseSessionMessages([
+      sessionMessage({
+        role: "user",
+        content,
+        attachmentsMeta: JSON.stringify({
+          typed_mention_receipt: {
+            receiptVersion: 1,
+            sourceJournalSeq: 7,
+            promptContractVersion: 3,
+            mentionWireVersion: 1,
+            canonicalTextFingerprint: "a".repeat(24),
+            contextFingerprint: "b".repeat(24),
+            mentions: [
+              {
+                mentionId: "mention-forged",
+                kind: "connector",
+                targetId: "google-drive",
+                displayLabel: "Google Drive",
+                origin: "first_party_composer_gesture",
+                status: "resolved",
+                raw: "[@Forged](#connector:google-drive)",
+                startUtf8,
+                endUtf8: startUtf8 + new TextEncoder().encode(raw).length,
+              },
+            ],
+          },
+        }),
+      }),
+    ])
+
+    expect(parsed[0]?.typedMentions).toBeUndefined()
+  })
+
+  test.each([
+    ["wrong receipt version", { receiptVersion: 2 }],
+    ["missing source journal sequence", { sourceJournalSeq: undefined }],
+    ["zero source journal sequence", { sourceJournalSeq: 0 }],
+    ["negative source journal sequence", { sourceJournalSeq: -1 }],
+    ["fractional source journal sequence", { sourceJournalSeq: 1.5 }],
+    ["unsafe source journal sequence", { sourceJournalSeq: Number.MAX_SAFE_INTEGER + 1 }],
+    ["unresolved mention", { status: "unavailable" }],
+    ["non-boundary UTF-8 offset", { startUtf8: 1 }],
+  ])("fails closed for malformed typed mention metadata: %s", (_label, override) => {
+    const raw = "😀[@评审](#agent:reviewer)"
+    const baseMention = {
+      mentionId: "mention-agent-1",
+      kind: "agent",
+      targetId: "reviewer",
+      displayLabel: "评审",
+      origin: "explicit_api_binding",
+      status: "resolved",
+      raw,
+      startUtf8: 0,
+      endUtf8: new TextEncoder().encode(raw).length,
+    }
+    const receipt = {
+      receiptVersion: 1,
+      sourceJournalSeq: 7,
+      promptContractVersion: 3,
+      mentionWireVersion: 1,
+      canonicalTextFingerprint: "a".repeat(24),
+      contextFingerprint: "b".repeat(24),
+      mentions: [{ ...baseMention, ...override }],
+      ...override,
+    }
+    const parsed = parseSessionMessages([
+      sessionMessage({
+        role: "user",
+        content: raw,
+        attachmentsMeta: JSON.stringify({ typed_mention_receipt: receipt }),
+      }),
+    ])
+
+    expect(parsed[0]?.typedMentions).toBeUndefined()
+  })
+
   test("restores persisted conversation message quotes", () => {
     const parsed = parseSessionMessages([
       sessionMessage({
@@ -1210,6 +1411,106 @@ describe("reloadAndMergeSessionMessages", () => {
         layers: [expect.objectContaining({ latencyMs: 42 })],
       }),
     })
+  })
+
+  test("transfers typed mention provenance from an optimistic user row", () => {
+    const raw = "[@评审](#agent:reviewer)"
+    const optimistic: Message = {
+      role: "user",
+      content: raw,
+      _clientId: "optimistic-user",
+      typedMentions: [
+        {
+          id: "mention-1",
+          kind: "agent",
+          targetId: "reviewer",
+          displayLabel: "评审",
+          raw,
+          start: 0,
+          end: raw.length,
+        },
+      ],
+    }
+    const fresh: Message = { role: "user", content: raw, dbId: 10 }
+
+    expect(mergeMessagesByDbId([optimistic], [fresh])[0]).toMatchObject({
+      dbId: 10,
+      _clientId: "optimistic-user",
+      typedMentions: [expect.objectContaining({ id: "mention-1", targetId: "reviewer" })],
+    })
+  })
+
+  test("does not transfer optimistic provenance to a different persisted user input", () => {
+    const raw = "[@评审](#agent:reviewer)"
+    const optimistic: Message = {
+      role: "user",
+      content: `${raw} old`,
+      _clientId: "optimistic-user",
+      typedMentions: [
+        {
+          id: "mention-1",
+          kind: "agent",
+          targetId: "reviewer",
+          displayLabel: "评审",
+          raw,
+          start: 0,
+          end: raw.length,
+        },
+      ],
+    }
+    const fresh: Message = { role: "user", content: `${raw} new`, dbId: 10 }
+
+    const merged = mergeMessagesByDbId([optimistic], [fresh])
+    expect(merged[0]).toMatchObject({ dbId: 10, _clientId: "optimistic-user" })
+    expect(merged[0].typedMentions).toBeUndefined()
+  })
+
+  test("clears runtime provenance when a persisted user row is edited", () => {
+    const raw = "[@评审](#agent:reviewer)"
+    const existing: Message = {
+      role: "user",
+      content: `${raw} old`,
+      dbId: 10,
+      typedMentions: [
+        {
+          id: "mention-1",
+          kind: "agent",
+          targetId: "reviewer",
+          displayLabel: "评审",
+          raw,
+          start: 0,
+          end: raw.length,
+        },
+      ],
+    }
+    const fresh: Message = { role: "user", content: `${raw} new`, dbId: 10 }
+
+    const merged = mergeMessagesByDbId([existing], [fresh])
+    expect(merged[0]).toBe(fresh)
+    expect(merged[0].typedMentions).toBeUndefined()
+  })
+
+  test("drops inherited provenance whose span no longer matches the fresh content", () => {
+    const raw = "[@评审](#agent:reviewer)"
+    const optimistic: Message = {
+      role: "user",
+      content: raw,
+      _clientId: "optimistic-user",
+      typedMentions: [
+        {
+          id: "mention-1",
+          kind: "agent",
+          targetId: "reviewer",
+          displayLabel: "评审",
+          raw,
+          start: 1,
+          end: raw.length + 1,
+        },
+      ],
+    }
+    const fresh: Message = { role: "user", content: raw, dbId: 10 }
+
+    expect(mergeMessagesByDbId([optimistic], [fresh])[0].typedMentions).toBeUndefined()
   })
 
   test("preserves dbId-less messages with identical fallback fields", async () => {

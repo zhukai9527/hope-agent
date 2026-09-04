@@ -1,5 +1,6 @@
 import { isTauriMode } from "@/lib/transport"
 import { getTransport } from "@/lib/transport-provider"
+import { TauriTransport } from "@/lib/transport-tauri"
 import { logger } from "@/lib/logger"
 import { APP_VERSION } from "@/lib/appMeta"
 
@@ -22,7 +23,8 @@ export interface DesktopUpdate {
 }
 
 // ─── Auto-update config (shared single source of truth) ─────
-// Mirrors `AppConfig.auto_update` (crates/ha-core/src/updater/config.rs). Read
+// Mirrors `AppConfig.auto_update`（wire 类型在 crates/ha-config-schema/src/updater.rs，
+// 行为侧 crates/ha-updater/src/config.rs）. Read
 // via the `get_auto_update_config` command; cached after first fetch.
 
 export interface AutoUpdateConfig {
@@ -51,11 +53,16 @@ function clampAutoUpdateIntervalHours(value: unknown): number {
 
 let _autoUpdateConfig: AutoUpdateConfig | null = null
 
+function desktopConfigTransport() {
+  // A remote-connected Tauri shell still updates the local native bundle.
+  return isTauriMode() ? new TauriTransport() : getTransport()
+}
+
 /** Fetch (and cache) the auto-update config. Falls back to defaults on error. */
 export async function getAutoUpdateConfig(force = false): Promise<AutoUpdateConfig> {
   if (_autoUpdateConfig && !force) return _autoUpdateConfig
   try {
-    const cfg = await getTransport().call<AutoUpdateConfig>("get_auto_update_config")
+    const cfg = await desktopConfigTransport().call<AutoUpdateConfig>("get_auto_update_config")
     _autoUpdateConfig = { ...DEFAULT_AUTO_UPDATE_CONFIG, ...cfg }
   } catch {
     _autoUpdateConfig = { ...DEFAULT_AUTO_UPDATE_CONFIG }
@@ -66,6 +73,11 @@ export async function getAutoUpdateConfig(force = false): Promise<AutoUpdateConf
 /** Invalidate the cached config (call after a settings save). */
 export function invalidateAutoUpdateConfig(): void {
   _autoUpdateConfig = null
+}
+
+export async function setAutoUpdateConfig(config: AutoUpdateConfig): Promise<void> {
+  await desktopConfigTransport().call("set_auto_update_config", { config })
+  invalidateAutoUpdateConfig()
 }
 
 /**

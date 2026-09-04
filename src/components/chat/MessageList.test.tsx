@@ -23,6 +23,7 @@ vi.mock("./MessageBubble", () => ({
     executionState,
     goalCompletionReportOverride,
     suppressGoalCompletionFooter,
+    hideActionBar,
     forceExpandUserContent,
     index,
     onContextMenu,
@@ -31,6 +32,7 @@ vi.mock("./MessageBubble", () => ({
     executionState?: string | null
     goalCompletionReportOverride?: { status?: string } | null
     suppressGoalCompletionFooter?: boolean
+    hideActionBar?: boolean
     forceExpandUserContent?: boolean
     index: number
     onContextMenu: (event: ReactMouseEvent, index: number) => void
@@ -41,11 +43,18 @@ vi.mock("./MessageBubble", () => ({
       data-execution-state={executionState ?? "none"}
       data-goal-report-status={goalCompletionReportOverride?.status ?? ""}
       data-suppress-goal-footer={suppressGoalCompletionFooter ? "true" : "false"}
+      data-hide-action-bar={hideActionBar ? "true" : "false"}
       data-force-expand-user-content={forceExpandUserContent ? "true" : "false"}
       onContextMenuCapture={(event) => onContextMenu(event, index)}
     >
       {msg.content}
     </div>
+  ),
+}))
+
+vi.mock("./message/ScheduleEntityCard", () => ({
+  default: ({ metadata }: { metadata: { entityId: string } }) => (
+    <div data-testid="schedule-card">{metadata.entityId}</div>
   ),
 }))
 
@@ -73,6 +82,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
   restoreElementMethod("scrollIntoView", originalScrollIntoView)
   restoreElementMethod("scrollTo", originalScrollTo)
@@ -154,6 +165,30 @@ function selectText(element: HTMLElement, start: number, end: number): void {
 }
 
 describe("MessageList", () => {
+  test("opens the selection actions automatically after selecting message text", async () => {
+    render(
+      <MessageList
+        messages={[baseMessage({ role: "assistant", content: "prefix selected suffix", dbId: 1 })]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        onAddMessageQuote={vi.fn()}
+        sessionId="s1"
+      />,
+    )
+
+    const bubble = screen.getByTestId("message-bubble")
+    selectText(bubble, 7, 15)
+    document.dispatchEvent(new Event("selectionchange"))
+
+    await waitFor(() => {
+      expect(screen.getByText("chat.copy")).toBeTruthy()
+      expect(screen.getByText("chat.messageQuote.addToChat")).toBeTruthy()
+    })
+  })
+
   test("adds an exact user-message selection to chat from the custom menu", () => {
     const onAddMessageQuote = vi.fn()
     render(
@@ -231,6 +266,27 @@ describe("MessageList", () => {
     fireEvent.contextMenu(bubbles[0], { clientX: 20, clientY: 30 })
 
     expect(screen.queryByText("chat.messageQuote.addToChat")).toBeNull()
+  })
+
+  test.each([
+    ["default", undefined],
+    ["timeline", "timeline" as const],
+  ])("reserves the environment lane in %s mode", (_label, displayMode) => {
+    render(
+      <MessageList
+        messages={[baseMessage({ role: "user", content: "hello", dbId: 1 })]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        sessionId="s1"
+        displayMode={displayMode}
+        environmentInsetPx={348}
+      />,
+    )
+
+    expect(getScroller().style.paddingRight).toBe("348px")
   })
 
   test("renders non-meta messages and hides isMeta entries", () => {
@@ -367,6 +423,54 @@ describe("MessageList", () => {
     expect(screen.queryByText("step two")).toBeNull()
   })
 
+  test("keeps a scheduled trigger prompt visible instead of folding it into the previous turn", () => {
+    render(
+      <MessageList
+        messages={[
+          baseMessage({
+            role: "user",
+            content: "question",
+            dbId: 1,
+            timestamp: "2026-04-26T00:00:00.000Z",
+          }),
+          baseMessage({
+            role: "assistant",
+            content: "manual answer",
+            dbId: 2,
+            timestamp: "2026-04-26T00:00:03.000Z",
+          }),
+          baseMessage({
+            role: "user",
+            content: "scheduled prompt",
+            dbId: 3,
+            isCronTrigger: true,
+            cronJobName: "Daily summary",
+            cronJobId: "job-1",
+            timestamp: "2026-04-26T01:00:00.000Z",
+          }),
+          baseMessage({
+            role: "assistant",
+            content: "scheduled answer",
+            dbId: 4,
+            timestamp: "2026-04-26T01:00:05.000Z",
+          }),
+        ]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        sessionId="s1"
+      />,
+    )
+
+    // The occurrence is its own turn: its prompt explains the answer below it.
+    expect(screen.getByText("scheduled prompt")).toBeTruthy()
+    expect(screen.getByText("scheduled answer")).toBeTruthy()
+    expect(screen.getByText("manual answer")).toBeTruthy()
+    expect(screen.queryByText("chat.completedTurnCollapsedWithDuration")).toBeNull()
+  })
+
   test("collapses historical assistant content blocks before the final answer", () => {
     render(
       <MessageList
@@ -465,6 +569,49 @@ describe("MessageList", () => {
     ).toBe(true)
   })
 
+  test("keeps scheduled-task cards visible when the completed turn is collapsed", () => {
+    render(
+      <MessageList
+        messages={[
+          baseMessage({ role: "user", content: "create a task", dbId: 1 }),
+          baseMessage({
+            role: "assistant",
+            content: "created",
+            dbId: 2,
+            contentBlocks: [
+              { type: "thinking", content: "creating" },
+              {
+                type: "tool_call",
+                tool: {
+                  callId: "cron-create-1",
+                  name: "manage_cron",
+                  arguments: '{"action":"create"}',
+                  result: "created",
+                  metadata: {
+                    kind: "schedule_entity",
+                    entityType: "cronTask",
+                    entityId: "job-1",
+                  },
+                },
+              },
+              { type: "text", content: "created" },
+            ],
+          }),
+        ]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        sessionId="s1"
+      />,
+    )
+
+    expect(screen.getByRole("button", { expanded: false })).toBeTruthy()
+    expect(screen.getByTestId("schedule-card").textContent).toBe("job-1")
+    expect(screen.queryByTestId("completed-turn-details")).toBeNull()
+  })
+
   test("expands collapsed historical prefix when search targets text inside it", async () => {
     const scrolled: Element[] = []
     vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
@@ -503,7 +650,26 @@ describe("MessageList", () => {
     expect(scrolled[0]?.textContent).toContain("needle intermediate note")
   })
 
-  test("expands and collapses completed turn details", () => {
+  test("animates completed turn details out before destroying the hidden subtree", () => {
+    vi.useFakeTimers()
+    const resizeObservers: Array<{
+      callback: ResizeObserverCallback
+      observer: ResizeObserver
+    }> = []
+    class ResizeObserverMock implements ResizeObserver {
+      readonly callback: ResizeObserverCallback
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback
+        resizeObservers.push({ callback, observer: this })
+      }
+
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock)
+
     render(
       <MessageList
         messages={[
@@ -520,12 +686,73 @@ describe("MessageList", () => {
       />,
     )
 
+    const scroller = getScroller()
+    const scrollMetrics = { scrollHeight: 1_000, clientHeight: 400, scrollTop: 600 }
+    patchScrollMetrics(scroller, scrollMetrics)
     const toggle = screen.getByRole("button", { expanded: false })
+    expect(toggle.classList.contains("w-fit")).toBe(true)
+    expect(toggle.classList.contains("w-full")).toBe(false)
+    expect(toggle.classList.contains("hover:bg-transparent")).toBe(true)
+    expect(toggle.closest("[data-message-key]")?.classList.contains("border-b")).toBe(true)
     fireEvent.click(toggle)
     expect(screen.getByText("step one")).toBeTruthy()
+    expect(screen.getByTestId("completed-turn-details")).toBeTruthy()
+    const collapseGroup = toggle.closest("[data-message-key]")?.parentElement
+    const finalReply = document.querySelector('[data-message-id="3"]')
+    expect(collapseGroup?.nextElementSibling).toBe(finalReply)
+    scrollMetrics.scrollHeight = 1_200
+    act(() => {
+      for (const { callback, observer } of resizeObservers) callback([], observer)
+    })
+    expect(scroller.scrollTop).toBe(600)
 
     fireEvent.click(toggle)
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(screen.getByText("step one")).toBeTruthy()
+    expect(
+      screen.getByTestId("completed-turn-details").closest('[aria-hidden="true"]'),
+    ).toBeTruthy()
+
+    act(() => vi.runAllTimers())
     expect(screen.queryByText("step one")).toBeNull()
+    expect(screen.queryByTestId("completed-turn-details")).toBeNull()
+  })
+
+  test("drops the per-message action bar inside the expanded processed fold", () => {
+    render(
+      <MessageList
+        messages={[
+          baseMessage({ role: "user", content: "question", dbId: 1 }),
+          baseMessage({ role: "assistant", content: "step one", dbId: 2 }),
+          baseMessage({ role: "assistant", content: "step two", dbId: 3 }),
+          baseMessage({ role: "assistant", content: "final answer", dbId: 4 }),
+        ]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        sessionId="s1"
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { expanded: false }))
+    const folded = Array.from(
+      screen
+        .getByTestId("completed-turn-details")
+        .querySelectorAll('[data-testid="message-bubble"]'),
+    )
+    expect(folded.map((bubble) => bubble.getAttribute("data-message-db-id"))).toEqual(["2", "3"])
+    for (const bubble of folded) {
+      expect(bubble.getAttribute("data-hide-action-bar")).toBe("true")
+    }
+    for (const dbId of ["1", "4"]) {
+      expect(
+        document
+          .querySelector(`[data-message-id="${dbId}"] [data-testid="message-bubble"]`)
+          ?.getAttribute("data-hide-action-bar"),
+      ).toBe("false")
+    }
   })
 
   test("does not collapse completed turns when the preference is disabled", () => {
@@ -909,6 +1136,91 @@ describe("MessageList", () => {
     )
 
     expect(el.scrollTop).toBe(2000)
+  })
+
+  test("frames the latest human turn so short replies grow into reserved viewport space", () => {
+    const observed = new Set<Element>()
+    class ResizeObserverMock {
+      observe(target: Element) {
+        observed.add(target)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", ResizeObserverMock)
+
+    const initialMessages = [
+      baseMessage({ role: "user", content: "earlier question", dbId: 1 }),
+      baseMessage({ role: "assistant", content: "earlier answer", dbId: 2 }),
+      baseMessage({ role: "user", content: "latest question", dbId: 3 }),
+      baseMessage({ role: "assistant", content: "short reply", dbId: 4 }),
+    ]
+    const { rerender } = render(
+      <MessageList
+        messages={initialMessages}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        sessionId="s1"
+        anchorLatestTurn
+      />,
+    )
+
+    const frame = screen.getByTestId("latest-turn-frame")
+    expect(frame.classList.contains("min-h-[calc(100%-4rem)]")).toBe(true)
+    expect(frame.contains(screen.getByText("latest question"))).toBe(true)
+    expect(frame.contains(screen.getByText("short reply"))).toBe(true)
+    expect(frame.contains(screen.getByText("earlier answer"))).toBe(false)
+    expect(frame.parentElement?.classList.contains("h-full")).toBe(true)
+
+    const earlierAnswer = screen.getByText("earlier answer")
+    const earlierTurn = earlierAnswer.closest("[data-transcript-segment]")
+    expect(earlierTurn).toBeTruthy()
+    expect(observed.has(earlierTurn as Element)).toBe(true)
+
+    rerender(
+      <MessageList
+        messages={[
+          ...initialMessages,
+          baseMessage({ role: "user", content: "next question", dbId: 5 }),
+          baseMessage({ role: "assistant", content: "next reply", dbId: 6 }),
+        ]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        sessionId="s1"
+        anchorLatestTurn
+      />,
+    )
+
+    expect(screen.getByText("earlier answer")).toBe(earlierAnswer)
+    expect(earlierAnswer.closest("[data-transcript-segment]")).toBe(earlierTurn)
+    expect(screen.getByTestId("latest-turn-frame").textContent).toContain("next question")
+  })
+
+  test("does not frame an around-window search result as the latest turn", () => {
+    render(
+      <MessageList
+        messages={[
+          baseMessage({ role: "user", content: "search-window question", dbId: 1 }),
+          baseMessage({ role: "assistant", content: "search-window answer", dbId: 2 }),
+        ]}
+        loading={false}
+        agents={[]}
+        hasMore={false}
+        loadingMore={false}
+        onLoadMore={vi.fn()}
+        hasMoreAfter
+        sessionId="s1"
+        anchorLatestTurn
+      />,
+    )
+
+    expect(screen.queryByTestId("latest-turn-frame")).toBeNull()
   })
 
   test("does not force-scroll to the last user message when switching sessions", () => {

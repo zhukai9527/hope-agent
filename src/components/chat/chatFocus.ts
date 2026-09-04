@@ -1,7 +1,18 @@
+import type { PetNavigationTarget } from "@/types/pet"
+import { emitTo, listen } from "@tauri-apps/api/event"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import { t } from "i18next"
+import { toast } from "sonner"
+import { isTauriMode } from "@/lib/transport"
+import { focusMainWindow } from "@/lib/spaceWindow"
+import { logger } from "@/lib/logger"
+import { chatFocusErrorDetail } from "./chatFocusFeedback"
+
 export const CHAT_FOCUS_EVENT = "hope:chat-focus"
 
 export interface ChatFocusTarget {
   sessionId: string
+  sideSessionId?: string
   targetMessageId?: number
   controlTarget?: {
     kind: string
@@ -34,6 +45,9 @@ function normalizeTarget(value: unknown): ChatFocusTarget | null {
       : undefined
   return {
     sessionId: raw.sessionId,
+    ...(typeof raw.sideSessionId === "string" && raw.sideSessionId.length > 0
+      ? { sideSessionId: raw.sideSessionId }
+      : {}),
     ...(typeof messageId === "number" && Number.isSafeInteger(messageId) && messageId > 0
       ? { targetMessageId: messageId }
       : {}),
@@ -43,15 +57,62 @@ function normalizeTarget(value: unknown): ChatFocusTarget | null {
 
 export function requestChatFocus(target: ChatFocusTarget): void {
   if (typeof window === "undefined") return
+  // 独立窗口不挂载 App；把完整导航目标交给主窗口，再显示并聚焦它。
+  if (isTauriMode() && getCurrentWindow().label !== "main") {
+    void emitTo("main", CHAT_FOCUS_EVENT, target)
+      .then(() => focusMainWindow())
+      .catch((error: unknown) => {
+        logger.error("ui", "chatFocus::request", "Failed to open main chat window", {
+          error: chatFocusErrorDetail(error),
+        })
+        toast.error(t("chat.openSourceConversationFailed"))
+      })
+    return
+  }
   window.dispatchEvent(new CustomEvent(CHAT_FOCUS_EVENT, { detail: target }))
 }
 
 export function subscribeChatFocus(handler: (target: ChatFocusTarget) => void): () => void {
   if (typeof window === "undefined") return () => {}
-  const listener = (event: Event) => {
-    const target = normalizeTarget((event as CustomEvent<unknown>).detail)
+  let disposed = false
+  let stopNativeListener: (() => void) | undefined
+  const receive = (value: unknown) => {
+    if (disposed) return
+    const target = normalizeTarget(value)
     if (target) handler(target)
   }
+  const listener = (event: Event) => {
+    receive((event as CustomEvent<unknown>).detail)
+  }
   window.addEventListener(CHAT_FOCUS_EVENT, listener)
-  return () => window.removeEventListener(CHAT_FOCUS_EVENT, listener)
+  if (isTauriMode()) {
+    void listen<unknown>(CHAT_FOCUS_EVENT, (event) => receive(event.payload))
+      .then((stop) => {
+        if (disposed) stop()
+        else stopNativeListener = stop
+      })
+      .catch((error: unknown) => {
+        logger.error("ui", "chatFocus::subscribe", "Failed to listen for chat navigation", {
+          error: chatFocusErrorDetail(error),
+        })
+      })
+  }
+  return () => {
+    disposed = true
+    window.removeEventListener(CHAT_FOCUS_EVENT, listener)
+    stopNativeListener?.()
+  }
+}
+
+export function chatFocusTargetForPetNavigation(
+  target: PetNavigationTarget,
+): ChatFocusTarget | null {
+  if (target.kind === "regular") return { sessionId: target.sessionId }
+  if (target.kind === "side") {
+    return {
+      sessionId: target.sourceSessionId,
+      sideSessionId: target.sessionId,
+    }
+  }
+  return null
 }

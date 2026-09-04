@@ -69,6 +69,7 @@ pub const ATTACHMENT_META_KEY_TOOL_MEDIA_ITEMS: &str = "tool_media_items";
 pub const ATTACHMENT_META_KEY_ACTIVE_MEMORY: &str = "active_memory";
 pub const ATTACHMENT_META_KEY_USED_MEMORY_REFS: &str = "used_memory_refs";
 pub const ATTACHMENT_META_KEY_RETRIEVAL_PLANNER: &str = "retrieval_planner";
+pub const ATTACHMENT_META_KEY_TYPED_MENTION_RECEIPT: &str = "typed_mention_receipt";
 
 /// Resolve the `attachments_meta` value for a user-message coming from the
 /// `chat` API surface (Tauri command + HTTP route). Centralizes the
@@ -108,7 +109,7 @@ pub fn build_chat_user_attachments_meta(
     }
 }
 
-fn merge_user_message_meta(base: Value, user_attachments: Option<String>) -> String {
+pub(super) fn merge_user_message_meta(base: Value, user_attachments: Option<String>) -> String {
     let Some(raw) = user_attachments else {
         return base.to_string();
     };
@@ -133,6 +134,19 @@ fn merge_user_message_meta(base: Value, user_attachments: Option<String>) -> Str
     Value::Object(map).to_string()
 }
 
+/// Merge a backend-verified typed mention projection into an existing user
+/// message's metadata. The receipt key wins on retries so provider failover is
+/// idempotent, while unrelated plan/goal/attachment metadata is preserved.
+pub(crate) fn merge_typed_mention_receipt_attachments_meta(
+    projection: &crate::prompt_context::TypedMentionReceiptProjection,
+    existing: Option<String>,
+) -> String {
+    merge_user_message_meta(
+        json!({ ATTACHMENT_META_KEY_TYPED_MENTION_RECEIPT: projection }),
+        existing,
+    )
+}
+
 /// Persist structured media emitted by a tool result in `attachments_meta`
 /// without polluting `tool_result`, which is replayed back into model context.
 pub fn build_tool_media_items_attachments_meta(media_items: &Value) -> Option<String> {
@@ -146,7 +160,9 @@ pub fn build_tool_media_items_attachments_meta(media_items: &Value) -> Option<St
 
 /// Classifies a session so cross-cutting surfaces can filter it.
 ///
-/// `Regular` is the normal user-facing chat. `Knowledge` is a knowledge-space
+/// `Regular` is the normal user-facing chat. `Side` is a parent-scoped side
+/// conversation — persisted so it can be reopened from the parent composer,
+/// but excluded from the main sidebar / search / unread surfaces. `Knowledge` is a knowledge-space
 /// sidebar conversation — persisted (so history survives) but kept out of the
 /// main session sidebar / `/sessions` picker, and driving a trimmed tool set
 /// at the chat-engine layer (`ToolScope::Knowledge`). It is NOT a security
@@ -156,6 +172,7 @@ pub fn build_tool_media_items_attachments_meta(media_items: &Value) -> Option<St
 pub enum SessionKind {
     #[default]
     Regular,
+    Side,
     Knowledge,
     /// A design-space per-project chat thread — persisted (history survives)
     /// but kept out of the main sidebar / `/sessions` picker / global FTS, and
@@ -169,6 +186,7 @@ impl SessionKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             SessionKind::Regular => "regular",
+            SessionKind::Side => "side",
             SessionKind::Knowledge => "knowledge",
             SessionKind::Design => "design",
             SessionKind::EvalFixture => "eval_fixture",
@@ -179,6 +197,7 @@ impl SessionKind {
     /// falls back to `Regular` so old rows / forward-compat writes are safe.
     pub fn from_db_string(s: &str) -> Self {
         match s {
+            "side" => SessionKind::Side,
             "knowledge" => SessionKind::Knowledge,
             "design" => SessionKind::Design,
             "eval_fixture" => SessionKind::EvalFixture,
@@ -200,6 +219,19 @@ pub struct PendingCountdown {
     pub total_ms: i64,
     /// Server wall clock at enrich time, for client clock-skew correction.
     pub server_now_ms: i64,
+}
+
+/// Display-only provenance for an ordinary conversation. This must never be
+/// used to derive permissions or execution policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionOrigin {
+    /// Stable producer kind (currently `cron`).
+    pub kind: String,
+    /// Producer-owned identifier, such as the scheduled task id.
+    pub id: String,
+    /// Human-readable label captured when the conversation is created.
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -235,6 +267,9 @@ pub struct SessionMeta {
     /// project / Agent ownership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
+    /// Display-only provenance; deliberately independent of permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<SessionOrigin>,
     pub message_count: i64,
     /// Whether this regular desktop conversation is unread, encoded as `0` or
     /// `1` for transport compatibility. Any number of assistant messages after
@@ -320,11 +355,15 @@ pub struct SessionMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     /// Session classification (see [`SessionKind`]). `Regular` for normal
-    /// chats; `Knowledge` for knowledge-space sidebar conversations and
-    /// `EvalFixture` for synthetic eval/smoke runs (both hidden from the main
-    /// sidebar / picker).
+    /// chats; `Side`, `Knowledge`, and `Design` for their dedicated conversation
+    /// surfaces; `EvalFixture` for synthetic eval/smoke runs. All non-regular
+    /// kinds are hidden from the main sidebar / picker.
     #[serde(default)]
     pub kind: SessionKind,
+    /// Whether a durable Stop receipt currently fences this session's
+    /// autonomous controllers. Cleared only by an explicit Continue.
+    #[serde(default)]
+    pub autonomy_paused: bool,
 }
 
 /// Result returned by the user-facing fork APIs. The session fields stay
@@ -357,8 +396,9 @@ impl From<SessionMeta> for ForkSessionResult {
 pub struct UnreadSessionTarget {
     pub session_id: String,
     pub project_id: Option<String>,
-    /// Zero-based position inside the target's sidebar session group using the
-    /// same pin/update ordering as the list endpoint.
+    /// Whether the target belongs to the sidebar's cross-project pinned group.
+    pub pinned: bool,
+    /// Zero-based position inside the target's sidebar session group.
     pub list_offset: u32,
 }
 
@@ -796,6 +836,7 @@ mod tests {
             updated_at: "2026-05-01T00:00:00Z".to_string(),
             pinned_at: None,
             archived_at: None,
+            origin: None,
             message_count: 0,
             unread_count: 0,
             channel_unread_count: 0,
@@ -817,6 +858,7 @@ mod tests {
             incognito: false,
             working_dir: None,
             kind: SessionKind::Regular,
+            autonomy_paused: false,
         }
     }
 
@@ -858,6 +900,10 @@ mod tests {
         kb.kind = SessionKind::Knowledge;
         assert!(!kb.is_regular_chat());
 
+        let mut side = meta("side");
+        side.kind = SessionKind::Side;
+        assert!(!side.is_regular_chat());
+
         let mut fixture = meta("h");
         fixture.kind = SessionKind::EvalFixture;
         assert!(!fixture.is_regular_chat());
@@ -866,8 +912,10 @@ mod tests {
     #[test]
     fn session_kind_roundtrips_and_defaults() {
         assert_eq!(SessionKind::Regular.as_str(), "regular");
+        assert_eq!(SessionKind::Side.as_str(), "side");
         assert_eq!(SessionKind::Knowledge.as_str(), "knowledge");
         assert_eq!(SessionKind::EvalFixture.as_str(), "eval_fixture");
+        assert_eq!(SessionKind::from_db_string("side"), SessionKind::Side);
         assert_eq!(
             SessionKind::from_db_string("knowledge"),
             SessionKind::Knowledge
@@ -883,6 +931,12 @@ mod tests {
 
         // serde uses snake_case and round-trips through SessionMeta.
         let mut m = meta("k");
+        m.kind = SessionKind::Side;
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"kind\":\"side\""));
+        let back: SessionMeta = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, SessionKind::Side);
+
         m.kind = SessionKind::Knowledge;
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"kind\":\"knowledge\""));

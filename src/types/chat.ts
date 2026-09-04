@@ -17,6 +17,11 @@ export type ChatTurnInterruptReason =
   | "crash_recovery"
   | "tool_cancel"
   | "runtime_cancel"
+  | "no_profile"
+  | "provider_failed"
+  | "current_tool_group_overflow"
+  | "dispatch_unknown"
+  | "compaction_failed"
   | "unknown"
 
 /** Structured media item emitted by tools (e.g. send_attachment) — richer than
@@ -46,9 +51,23 @@ export interface MediaItem {
 export interface PendingFileQuote {
   path: string
   name: string
+  /** 1-based source range; `0 / 0` means visual context without a source-line mapping. */
   startLine: number
   endLine: number
   content: string
+  /** False for visual/pseudo sources that cannot be reopened in the file browser. */
+  revealable?: boolean
+  /** Exact linked-project root selected when the quote was captured. The
+   *  index + path pair is a stale-selection guard, mirroring project_folder
+   *  filesystem scopes. */
+  projectRoot?: {
+    index: number
+    path: string
+  }
+  /** Absolute Git worktree root selected when the quote was captured. The
+   *  browser restores it through the backend-validated read-only path scope;
+   *  `projectRoot` remains the base-repository identity for linked roots. */
+  worktreeRoot?: string
   /** Knowledge-space quotes carry their KB id so "jump to selection" opens the
    *  right base even if the user has since switched the active KB. Unset for
    *  main-chat file quotes. */
@@ -88,7 +107,9 @@ export interface PendingSendPreview {
   editable?: boolean
   /** Backend-owned rows are visible for status only; the GUI must not claim,
    * edit, delete, or force-insert them. */
-  managedBy?: "channel"
+  managedBy?: "channel" | "scheduled"
+  /** Opaque owner reference; Scheduled uses the canonical run-log id. */
+  sourceRef?: string
 }
 
 export interface MessageAttachment {
@@ -106,6 +127,11 @@ export interface MessageAttachment {
   quotePath?: string
   quoteLines?: string
   quoteContent?: string
+  /** Persisted reopen capability for visual or synthetic quote sources. */
+  quoteRevealable?: boolean
+  /** Persisted browser provenance for restoring a linked-root quote draft. */
+  quoteProjectRoot?: PendingFileQuote["projectRoot"]
+  quoteWorktreeRoot?: string
   /** For `kind === "message_quote"`: role of the message the user selected. */
   messageQuoteRole?: "user" | "assistant"
 }
@@ -157,11 +183,62 @@ export interface BrowserActivityMetadata {
   at?: number | null
 }
 
+/** Durable card attached to a successful model-created scheduled task. */
+export interface ScheduleEntityMetadata {
+  kind: "schedule_entity"
+  entityType: "cronTask"
+  entityId: string
+  sessionId?: string | null
+  title?: string | null
+  state?: string | null
+  nextRunAt?: string | null
+  schedule?: import("@/components/cron/CronJobForm.types").CronSchedule | null
+  projectId?: string | null
+  workspaceMode?: import("@/components/cron/CronJobForm.types").CronWorkspaceMode | null
+  workspaceBaseRef?: string | null
+}
+
+/** Source provenance emitted by web_fetch for the workspace Sources panel. */
+export interface WebFetchSourceMetadata {
+  kind: "web_fetch_source"
+  url: string
+  title?: string | null
+  status: number
+  retrievedAt: string
+  snapshotId: string
+  fetchMode: "direct" | "rendered"
+  cacheHit: boolean
+  cacheAgeMs: number
+  sourceHash: string
+  truncated: boolean
+  continuationAvailable: boolean
+  warnings: string[]
+}
+
+/** Durable receipt emitted only after a cross-session message is admitted. */
+export interface SessionMessageMetadata {
+  kind: "session_message"
+  sessionId: string
+  sessionTitle?: string | null
+  messageId: number
+  turnId: string
+}
+
+/** Backend-owned provenance, separate from the message's text. */
+export interface SessionMessageSource {
+  sessionId: string
+  title?: string
+  sideParentSessionId?: string
+}
+
 export type ToolMetadata =
   | FileChangeMetadata
   | FileChangesMetadata
   | FileReadMetadata
   | BrowserActivityMetadata
+  | ScheduleEntityMetadata
+  | WebFetchSourceMetadata
+  | SessionMessageMetadata
 
 export interface ToolCall {
   callId: string
@@ -278,6 +355,10 @@ export type ContentBlock =
 export interface Message {
   role: "user" | "assistant" | "event"
   content: string
+  /** Client/runtime evidence for mention chips in this exact user message.
+   * Persisted history without a backend receipt intentionally leaves this
+   * unset, so lookalike markdown remains an ordinary link. */
+  typedMentions?: import("@/components/chat/mentions/typedMentions").ComposerMentionBinding[]
   contentBlocks?: ContentBlock[]
   toolCalls?: ToolCall[]
   thinking?: string
@@ -289,6 +370,8 @@ export interface Message {
   contextCompactedEvent?: ContextCompactedEvent
   /** If set, this user message was sent by a parent agent (not a human) */
   fromAgentId?: string
+  /** This user-shaped turn was sent by another conversation, not the user. */
+  sessionMessageSource?: SessionMessageSource
   /** Attachments sent by the user with this message. */
   attachments?: MessageAttachment[]
   /** If true, this user message is a sub-agent result injected by the backend */
@@ -337,6 +420,8 @@ export interface Message {
   isMeta?: boolean
   /** The cron job name that triggered this message */
   cronJobName?: string
+  /** The scheduled task that triggered this message. */
+  cronJobId?: string
   /** If set, this user message came from an IM channel */
   channelInbound?: {
     channelId: string
@@ -530,8 +615,71 @@ export type SessionMode = "default" | "smart" | "yolo"
  */
 export type SandboxMode = "off" | "standard" | "isolated" | "workspace" | "trusted"
 
+export interface SessionOrigin {
+  kind: string
+  id: string
+  label: string
+}
+
+/** Durable Stop receipt; `id` is the exact pause a Continue must consume. */
+export interface SessionAutonomyPause {
+  id: string
+  sessionId: string
+  goalId?: string | null
+  workflowRunIds: string[]
+  subagentRunIds: string[]
+  createdAt: string
+  resumedAt?: string | null
+}
+
+/** One session-owned runtime unit Stop tried to cancel; mirrors the Rust
+ *  `ha_core::runtime_tasks::CancelRuntimeTaskResult`. `accepted` is
+ *  deliberately separate from `finalStatus`: an accepted best-effort request
+ *  does not prove the target reached a terminal state. */
+export interface RuntimeCancelResult {
+  kind: string
+  id: string
+  accepted: boolean
+  disposition: "requested" | "already_terminal" | "refused" | string
+  status: string
+  reason?: string | null
+  finalStatus?: string | null
+  message: string
+}
+
+/** Result of `stop_chat` / `POST /api/chat/stop`; mirrors the Rust
+ *  `ha_core::chat_engine::stop::StopChatResult`. It reports what the call did,
+ *  never what the session is doing now — that stays with
+ *  `get_session_stream_state` so the two cannot disagree. */
+export interface StopChatResult {
+  stopped: boolean
+  scope: "request" | "session" | "all"
+  reason?: string | null
+  /** An exact-turn Stop targeted a turn that is no longer the live one. */
+  turnMismatch: boolean
+  /** The backend still held a live foreground turn for this session. */
+  activeTurnFound: boolean
+  /** The executor passed its cancellation point before Stop claimed it. */
+  completionSealed: boolean
+  /** A `cancelling` broadcast plus stop watchdog were armed, so a terminal
+   *  stream event will follow. When false (and nothing was sealed or latched)
+   *  no event can arrive and a busy-looking UI must reconcile itself. */
+  terminalEventPending: boolean
+  /** A pre-registration latch consumed the Stop; the turn registers shortly. */
+  latched: boolean
+  runtimeCancellations: RuntimeCancelResult[]
+  runtimeCancellationError?: string | null
+  autonomyPaused: boolean
+  autonomyPause?: SessionAutonomyPause | null
+  autonomyPauseError?: string | null
+  /** Global Stop only. */
+  stoppedSessionCount?: number
+}
+
 export interface SessionMeta {
   id: string
+  /** A durable Stop receipt fences autonomous work until explicit Continue. */
+  autonomyPaused?: boolean
   title?: string | null
   titleSource?: "first_message" | "llm" | "manual"
   agentId: string
@@ -547,6 +695,8 @@ export interface SessionMeta {
   pinnedAt?: string | null
   /** Retained but hidden from active chat surfaces until restored. */
   archivedAt?: string | null
+  /** Display-only producer provenance; never an execution or permission input. */
+  origin?: SessionOrigin | null
   messageCount: number
   /** Regular-conversation unread flag encoded as 0 or 1. */
   unreadCount: number
@@ -614,7 +764,7 @@ export interface SessionMeta {
     senderName?: string | null
   } | null
   /** Dedicated spaces use non-regular kinds and never enter regular unread. */
-  kind?: "regular" | "knowledge" | "design" | "eval_fixture" | string
+  kind?: "regular" | "side" | "knowledge" | "design" | "eval_fixture" | string
 }
 
 /** Fork responses remain SessionMeta-compatible and optionally carry the
@@ -626,7 +776,9 @@ export interface ForkSessionResult extends SessionMeta {
 export interface UnreadSessionTarget {
   sessionId: string
   projectId?: string | null
-  /** Zero-based position within its project or the unassigned session list. */
+  /** Whether the target belongs to the cross-project pinned group. */
+  pinned: boolean
+  /** Zero-based position within the target sidebar group. */
   listOffset: number
 }
 
@@ -724,6 +876,7 @@ export interface SubagentEvent {
     | "killed"
     | "timeout"
     | "interrupted"
+    | "retrying"
     | "steered"
   runId: string
   parentSessionId: string
@@ -808,6 +961,8 @@ export interface SubagentConfig {
   maxBatchSize?: number
   archiveAfterMinutes?: number
   announceTimeoutSecs?: number
+  providerRetryAttempts?: number
+  providerRetryBackoffSecs?: number
 }
 
 export function modelSupportsThinking(
@@ -825,6 +980,7 @@ export function getEffortOptionsForType(apiType: string | undefined, t: (key: st
   const medium = t("effort.medium")
   const high = t("effort.high")
   const xhigh = t("effort.xhigh")
+  const max = t("effort.max")
   switch (apiType) {
     case "openai-responses":
     case "codex":
@@ -835,6 +991,7 @@ export function getEffortOptionsForType(apiType: string | undefined, t: (key: st
         { value: "medium", label: medium },
         { value: "high", label: high },
         { value: "xhigh", label: xhigh },
+        { value: "max", label: max },
       ]
     case "anthropic":
     case "openai-chat":
@@ -853,17 +1010,43 @@ export function getEffortOptionsForType(apiType: string | undefined, t: (key: st
 }
 
 export function getEffortOptionsForModel(
-  model: Pick<AvailableModel, "apiType" | "reasoning" | "thinkingStyle"> | undefined,
+  model:
+    | Pick<AvailableModel, "apiType" | "modelId" | "reasoning" | "thinkingStyle">
+    | undefined,
   t: (key: string) => string,
 ) {
   if (!modelSupportsThinking(model)) {
     return [{ value: "none", label: t("effort.off") }]
   }
+  const id = model?.modelId.toLowerCase() ?? ""
+  if (id.includes("kimi-k3") || id.includes("kimi_k3")) {
+    return [
+      { value: "none", label: t("effort.off") },
+      { value: "low", label: t("effort.low") },
+      { value: "high", label: t("effort.high") },
+      { value: "max", label: t("effort.max") },
+    ]
+  }
+  if (
+    ["claude-fable-5", "claude-mythos-5", "claude-sonnet-5", "claude-opus-5"].some(
+      (prefix) => id.startsWith(prefix),
+    )
+  ) {
+    return [
+      { value: "none", label: t("effort.off") },
+      { value: "low", label: t("effort.low") },
+      { value: "medium", label: t("effort.medium") },
+      { value: "high", label: t("effort.high") },
+      { value: "max", label: t("effort.max") },
+    ]
+  }
   return getEffortOptionsForType(model?.apiType, t)
 }
 
 export function normalizeEffortForModel(
-  model: Pick<AvailableModel, "apiType" | "reasoning" | "thinkingStyle"> | undefined,
+  model:
+    | Pick<AvailableModel, "apiType" | "modelId" | "reasoning" | "thinkingStyle">
+    | undefined,
   effort: string,
   t: (key: string) => string,
 ): string {
@@ -871,5 +1054,7 @@ export function normalizeEffortForModel(
   if (validOptions.some((opt) => opt.value === effort)) {
     return effort
   }
-  return validOptions.some((opt) => opt.value === "medium") ? "medium" : "none"
+  if (validOptions.some((opt) => opt.value === "medium")) return "medium"
+  if (validOptions.some((opt) => opt.value === "low")) return "low"
+  return "none"
 }

@@ -190,14 +190,6 @@
     "labelPlaceholder": "名稱（如：組織 A 金鑰）",
     "title": "API Key 輪換設定"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "需要回答",
-      "detail": "對話中有 {{count}} 個問題正在等待",
-      "detail_one": "對話中有一個問題正在等待",
-      "openAction": "立即回答"
-    }
-  },
   "canvas": {
     "close": "關閉",
     "export": "匯出",
@@ -318,6 +310,16 @@
     "removeConfig": "刪除",
     "running": "執行中",
     "selectChannel": "選擇頻道",
+    "nativeReply": "原生串流回覆",
+    "nativeReplyHint": "使用平台原生回覆串流；關閉後立即回退為一般訊息。",
+    "imsgProtocolV1": "可靠 imsg 協議",
+    "imsgProtocolV1Hint": "協商協議 v1、補追 watch 溢位並監管子程序重啟；關閉後使用舊版 RPC。",
+    "googleChatStandardMarkdown": "標準 Markdown",
+    "googleChatStandardMarkdownHint": "建立文字訊息時使用 Google Chat 標準 Markdown；關閉後使用舊版 Chat 語法。",
+    "discordChannelObfuscation": "測試私密頻道混淆",
+    "discordChannelObfuscationHint": "讓此帳號加入 Discord 暫時 Gateway 行為；隱藏頻道永遠不可選且不會被處理。",
+    "discordFileRequests": "Discord 原生檔案請求",
+    "discordFileRequestsHint": "允許結構化問答開啟單一檔案上傳視窗；伺服器仍會重新驗證類型、大小與對話綁定。",
     "showThinking": "在 IM 訊息中顯示思考過程",
     "showThinkingHint": "開啟後，每輪回覆前會以引用塊形式插入模型的思考過程。預設關閉。",
     "signalAccount": "手機號",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark（國際版）"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "已將訊息傳送至「{{title}}」",
+      "receivedFrom": "由其他對話「{{title}}」傳送",
+      "untitled": "未命名對話",
+      "details": "查看訊息詳情"
+    },
     "addWorkingDirectory": "新增工作目錄",
     "askAnything": "告訴我你的想法，@ 找檔案/筆記/技能，# 快捷輸入，/ 快捷指令…",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "在新會話中繼續",
       "continuedFrom": "接續自",
       "created": "已在新會話中繼續",
+      "createdButNotOpened": "分支 `{{id}}` 已建立，但未能開啟。請從會話列表中選擇它繼續。",
       "failed": "無法在新會話中繼續",
       "sourceFallback": "原會話"
+    },
+    "sideChat": {
+      "label": "側聊",
+      "untitled": "側聊 {{index}}",
+      "new": "新增側聊",
+      "close": "關閉側聊面板",
+      "nonBlocking": "獨立提問，不會中斷主對話",
+      "askSelection": "在側聊中提問",
+      "createFailed": "無法建立側聊"
     },
     "browserPanel": {
       "backendBadgeTooltip": "瀏覽器後端：{{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "正在壓縮較早上下文",
     "contextCompactedMsgs": "{{count}} 則較早訊息",
     "contextCompactionFailedTitle": "上下文壓縮已暫停",
+    "contextCompactionRetry": "重新壓縮",
     "contextCompaction": {
       "preparing": "正在壓縮較早上下文",
       "summarizing": "正在生成會話摘要",
@@ -553,6 +572,7 @@
       "noMatches": "沒有符合的快捷輸入"
     },
     "cronTaskStarted": "定時器觸發了一個任務",
+    "scheduledOrigin": "定時任務：{{name}}",
     "cronTrigger": "定時任務",
     "loopTriggered": "已觸發一次推進",
     "loopTrigger": "持續推進",
@@ -651,6 +671,7 @@
     "markAllRead": "全部已讀",
     "markAsRead": "標記已讀",
     "pinSession": "置頂",
+    "pinnedSessions": "置頂",
     "unpinSession": "取消置頂",
     "minutesAgo": "{{count}}分鐘前",
     "modelsCount": "{{count}} 個模型",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "沙箱",
       "off": {
-        "desc": "由程式自動選擇主機、WSL 或隔離環境",
-        "label": "自動執行"
+        "desc": "在主機上運作；審核行為不變。",
+        "label": "沙盒關閉"
       },
       "setupTitle": "設定 Docker 以啟用沙箱",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "認證失敗",
     "reasonBilling": "帳戶餘額不足",
     "reasonContextOverflow": "上下文超限",
+    "reasonDispatchUnknown": "傳送結果未知（未自動重試）",
     "reasonModelNotFound": "模型不存在",
     "reasonOverloaded": "服務過載",
     "reasonRateLimit": "請求頻率超限",
@@ -899,6 +921,7 @@
     "statusThinking": "思考模式",
     "statusUpdated": "更新時間",
     "stopReply": "停止回覆",
+    "continuePausedWork": "繼續已暫停的工作",
     "stopGenerationDone": "生成已停止",
     "subagentFrom": "由 {{agent}} 指派",
     "subagentResultCompleted": "已完成",
@@ -923,6 +946,7 @@
     "thinking": "執行中…",
     "thinkingAutoDisabled": "{{provider}} / {{model}} 不支援目前的 Think 模式，已自動關閉思考並重試本次請求。",
     "visionAutoDisabled": "{{provider}} / {{model}} 不支援圖片輸入，已忽略圖片繼續回覆。",
+    "visionBridgeConfigureAction": "設定視覺橋",
     "toolCalling": "工具呼叫中…",
     "totalTokens": "總計",
     "unknownProvider": "未知服務商",
@@ -983,6 +1007,9 @@
       "failed": "匯出失敗。",
       "untitled": "未命名會話"
     },
+    "capabilityMention": {
+      "heading": "外掛程式與連接器"
+    },
     "skillMention": {
       "heading": "技能",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "需要 Chrome 擴充功能"
     },
     "conversationEmpty": "此對話中沒有訊息",
-    "pendingCancelForceInsert": "取消本輪插入",
+    "pendingCancelForceInsert": "改為回覆後傳送",
     "pendingSaving": "正在儲存",
     "pendingSavingTip": "正在把訊息和附件儲存到可恢復佇列。",
     "pendingInserting": "正在插入",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "立即傳送",
     "pendingFallbackAfterReply": "回覆後傳送",
     "pendingFallbackAfterReplyTip": "尚未遇到工具完成點，將在目前回覆結束後傳送。",
-    "pendingForceInsertTip": "它會等待正在執行的工具完成，再將內容插入模型，不會中斷目前的工具。",
+    "pendingForceInsertTip": "等本批正在執行的工具全部完成後插入給模型，不會中斷這些工具；如果本輪不再進入工具邊界，則在回覆結束後傳送。",
+    "pendingInsert": "插入",
     "pendingInserted": "插入",
     "pendingInsertedTip": "本輪加工完成後已將其插入模型中。",
-    "pendingQueuedShort": "排隊",
+    "pendingHeldAfterStop": "已暫停傳送",
+    "pendingHeldAfterStopTip": "目前回覆已停止，這則訊息不會自動傳送。",
+    "pendingMoreActions": "更多訊息操作",
+    "pendingQueuedShort": "回覆後傳送",
     "pendingQueuedTip": "已加入等待佇列，目前回覆結束後傳送。",
     "pendingQueueTitle": "待傳送",
-    "pendingWaitingToolBoundary": "等待工具完成點",
-    "pendingWaitingToolBoundaryTip": "等待最新的工具呼叫完成；如果本輪不再呼叫該工具，則會在回覆完成後傳送。",
+    "pendingWaitingToolBoundary": "等待插入",
+    "pendingWaitingToolBoundaryTip": "等待本批正在執行的工具全部完成後插入；如果本輪不再進入工具邊界，將在回覆結束後傳送。",
     "processNotification": "行程結束",
     "rightPanel": {
       "collapse": "折疊右側面板",
       "expand": "展開右側面板",
       "switch": "切換右側面板",
       "dock": "右側面板停駐列",
-      "openPanel": "開啟{{panel}}",
-      "switchToPanel": "切換至{{panel}}",
-      "collapsePanel": "收合{{panel}}",
-      "expandPanel": "展開{{panel}}",
+      "resize": "調整工作檯寬度",
       "workflowActiveCount": "{{count}} 個作用中的工作流",
       "workflowAttentionCount": "{{count}} 個工作流需要處理",
       "backgroundRunningCount": "{{count}} 個背景任務正在執行",
-      "subagentRunningCount": "{{count}} 個子智能體執行中"
+      "subagentRunningCount": "{{count}} 個子智能體執行中",
+      "openPanel": "開啟{{panel}}",
+      "switchToPanel": "切換至{{panel}}",
+      "collapsePanel": "收合{{panel}}",
+      "expandPanel": "展開{{panel}}"
     },
     "visionBridgeEngaged": "主模型不支援看圖，已用 {{model}} 轉述圖片內容。",
     "visionBridgeUnavailable": "視覺模型轉述圖片失敗，已忽略該圖片。",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "新增目標",
     "agent": "Agent",
     "archivedProject": "（已封存）",
+    "workspaceModePersistent": "專屬工作樹",
+    "workspaceCleanup": "每次執行後",
+    "workspaceCleanupOption": {
+      "retain": "保留",
+      "discardIfClean": "無變更則刪除",
+      "always": "一律刪除"
+    },
+    "workspaceCleanupHint": {
+      "retain": "每次執行的 Worktree 都會保留，直到你封存或丟棄它。",
+      "discardIfClean": "僅當這次執行沒有留下任何變更、也沒有新提交時才刪除——不會刪掉你可能還需要的東西。",
+      "always": "每次執行後都刪除，包含未提交的變更。只適合真正產出走投遞的任務。"
+    },
+    "workspaceModeHint": "專案模式直接使用專案目錄；新增模式每次執行建立工作樹；專屬模式由任務長期重複使用。起始分支僅用於工作樹。",
+    "workspaceActionBlocked": "不可用：{{reason}}",
+    "workspaceActionReturn": "歸還",
+    "workspaceActionResume": "歸還並恢復任務",
+    "workspaceActionDone": "已完成：{{action}}",
     "atGrace": "補跑視窗（秒）",
     "atGraceHint": "補跑視窗：應用程式關閉期間錯過觸發時點的一次性任務，逾期不超過這麼多秒仍會補跑；超過則標記為「錯過」（0 = 嚴格，不補跑）。",
     "atMinute": "在第",
     "atTime": "時間",
     "autoAgent": "自動（專案/預設）",
+    "cancelRunFailed": "停止本次執行失敗",
     "completed": "已完成",
     "conversationEmpty": "此對話暫無訊息",
     "conversationsSelectHint": "從左側選擇一條檢視",
@@ -1463,7 +1513,7 @@
     "cronHelp": "格式：秒、分、時、日、月、週（例如 0 0 9 * * 1-5 = 工作日上午 9 點）",
     "dateTime": "日期和時間",
     "daySuffix": "日",
-    "deleteConfirmDesc": "這會永久刪除此定時任務及其執行記錄。",
+    "deleteConfirmDesc": "刪除後只會停止未來排程；執行歷史、對話與工作樹都會保留。",
     "deleteConfirmTitle": "刪除「{{name}}」？",
     "deleteFailed": "刪除「{{name}}」失敗",
     "deleteSuccess": "已刪除「{{name}}」",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "每月",
     "failures": "失敗次數",
     "filterAll": "全部",
+    "filterAttention": "需要處理",
+    "schedulerPrimary": "排程器：主行程",
+    "schedulerSecondary": "排程器：副行程（無法執行任務）",
+    "schedulerRunning": "正在執行 {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "連續失敗 {{failures}}/{{max}} 次，已自動停用",
+      "runFailed": "最近一次執行失敗",
+      "missed": "已錯過排定的執行",
+      "deliveryStale": "投遞目標已失效",
+      "failing": "連續失敗 {{failures}}/{{max}} 次"
+    },
     "freq_custom": "自定義",
     "freq_daily": "每天",
     "freq_hourly": "每小時",
@@ -1521,6 +1582,19 @@
     "name": "任務名稱",
     "namePlaceholder": "例如：每日總結",
     "newJob": "新建任務",
+    "conversationTarget": "執行位置",
+    "conversationTargetNew": "每次新建對話",
+    "conversationTargetExisting": "既有對話",
+    "sessionTargetPlaceholder": "選擇對話",
+    "sessionTargetSearchPlaceholder": "搜尋對話",
+    "sessionTargetEmpty": "沒有符合的對話",
+    "errorSessionTargetRequired": "請選擇任務要執行的對話",
+    "copyAsNewTask": "複製為新任務",
+    "deletedTaskHint": "此任務已刪除：歷史保留，不再排程新的執行。",
+    "runAgain": "再次執行",
+    "createWithModel": "使用模型建立",
+    "manualSetup": "手動設定",
+    "createWithModelPrompt": "幫我建立一個定時任務。我想讓它在……的時候，自動……",
     "nextRun": "下次執行",
     "noConversations": "暫無執行歷史",
     "noConversationsYet": "此帳號尚未記錄任何對話（請先讓 bot 收到一則訊息）",
@@ -1536,8 +1610,13 @@
     "paused": "已暫停",
     "prefixDeliveryWithName": "投遞時加任務名字首",
     "prefixDeliveryWithNameDesc": "在成功送達的訊息前加上 [定時任務] {name} 前綴，以便區分送到同一聊天的多個任務",
+    "preflightTitle": "執行前檢查",
+    "preflightDescription": "繼續前請確認排程與實際執行環境。",
+    "preflightIssue": "檢查項目：{{code}}",
     "project": "專案",
+    "reloadLatest": "載入最新版本",
     "removeTarget": "移除目標",
+    "revisionConflict": "此任務已在其他位置更新。你的草稿仍會保留；只有明確載入最新版本才會取代草稿。",
     "resume": "恢復",
     "runHistory": "執行歷史",
     "runNow": "立即執行",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "執行中",
     "runStatusSuccess": "成功",
     "schedule": "排程方式",
+    "scheduleSession": "安排目前會話",
+    "sessionTurnTarget": "目標對話",
+    "sessionTurnLiveHint": "每次執行都會即時讀取此對話的 Agent、專案、知識空間、工作目錄、權限模式與沙箱，不儲存任務副本。",
     "scheduleAt": "一次性",
     "scheduleCron": "定期執行",
     "scheduleEvery": "固定間隔",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "整場實驗累計允許建立的子 Agent 數量。",
+        "campaignConcurrency": "整場可同時執行的評測任務數，不代表單一場景內部並行。",
+        "campaignCost": "整場實驗中，所有模型和場景累計產生的可計費用上限。",
+        "campaignInputTokens": "所有模型請求累計傳送的輸入 Token 上限。",
+        "campaignModelCalls": "所有場景累計允許向模型發起的請求次數。",
+        "campaignOutputTokens": "所有模型回覆累計產生的輸出 Token 上限。",
+        "campaignToolCalls": "所有場景累計允許執行的工具呼叫次數。",
+        "campaignWall": "整場實驗從啟動、執行到證據收尾允許占用的最長時間。",
+        "scenarioAgents": "這個場景單次執行最多允許建立的子 Agent 數量。",
+        "scenarioConcurrency": "這個場景內部允許同時進行的模型、Agent 或工具工作上限。",
+        "scenarioCost": "這個場景在全部所選模型、實驗分支和重複執行中的模型費用總額度。",
+        "scenarioInputTokens": "這個場景單次執行累計可傳送的輸入 Token 上限。",
+        "scenarioModelCalls": "這個場景單次執行最多允許發起的模型請求次數。",
+        "scenarioOutputTokens": "這個場景單次執行累計可產生的輸出 Token 上限。",
+        "scenarioToolCalls": "這個場景單次執行最多允許執行的工具呼叫次數。",
+        "scenarioWall": "這個場景單次執行從開始到清理完成的時間上限。"
+      },
+      "campaignBudgetDescription": "所有已選模型、場景和重複次數的累計消耗，都不能超過以下上限。",
+      "campaignBudgetTitle": "整場評測總預算",
+      "scenarioBudgetDescription": "除費用外，其餘資源上限按單次執行生效；費用是場景跨全部所選模型、實驗分支和重複執行的總額度，所有場景費用分配之和不能超過整場最高費用。",
+      "scenarioBudgetTitle": "單一場景預算分配",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "不設限執行",
+      "unlimitedModeWarning": "將關閉評測的費用、時間、Token、呼叫、Agent 與並行止損。執行可能無限持續並產生無法控制的 Provider 費用；權限、安全、隔離、取消與清理保護仍然生效。",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "正在準備新實驗…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "排隊中",
         "planning": "正在規劃",
+        "deterministic_safety": "正在執行零網路安全用例",
         "running": "執行中",
         "cancelling": "正在取消",
         "completed": "已完成",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "評測批次狀態",
       "trialStatus": "場景即時狀態",
+      "deterministicTrack": "零網路安全用例",
+      "deterministicTrackDescription": "先驗證第 0～4 層協定與安全不變量；不連接模型、不產生費用，失敗時不會啟動付費場景。",
+      "liveModelTrack": "真實模型場景",
+      "liveModelTrackDescription": "安全用例全部通過後，驗證第 3 層語意摘要和 UTF-8 檔案連續分頁。",
       "waitingForTrials": "正在準備評測場景…",
       "scenario": "場景",
       "statusLabel": "狀態",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "預覽",
-    "resizePanel": "調整預覽面板寬度"
+    "resizePanel": "調整預覽面板寬度",
+    "pathBreadcrumb": "檔案路徑",
+    "revealFolder": "在檔案面板中顯示此資料夾",
+    "copyPath": "複製完整路徑"
   },
   "fileBrowser": {
     "panelTitle": "檔案",
+    "primaryFolder": "主要資料夾",
+    "defaultProjectFolder": "預設專案資料夾",
     "jumpToFile": "在檔案瀏覽器中顯示",
     "copied": "已複製",
     "copyFailed": "複製失敗",
@@ -2733,7 +2850,10 @@
     "zoomOut": "縮小",
     "zoomIn": "放大",
     "fitWidth": "符合寬度",
-    "officeNoContent": "無法從該檔案擷取內容"
+    "officeNoContent": "無法從該檔案擷取內容",
+    "openInNewTab": "在新分頁中開啟",
+    "collapseTree": "隱藏檔案清單",
+    "expandTree": "顯示檔案清單"
   },
   "diffPanel": {
     "fileTooLarge": "檔案過大，僅渲染前 256KB",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "高",
     "low": "低",
+    "max": "最大",
     "medium": "中",
     "minimal": "極低",
     "none": "關閉",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "已處理"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "關閉 {{count}} 個 Agent",
+          "close_other": "關閉 {{count}} 個 Agent",
+          "closeAll": "關閉所有 Agent",
+          "message_one": "向 {{count}} 個 Agent 傳送訊息",
+          "message_other": "向 {{count}} 個 Agent 傳送訊息",
+          "observe_one": "檢查 {{count}} 個 Agent",
+          "observe_other": "檢查 {{count}} 個 Agent",
+          "resume_one": "恢復 {{count}} 個 Agent",
+          "resume_other": "恢復 {{count}} 個 Agent"
+        },
+        "cron": {
+          "pause_one": "暫停 {{count}} 個排程",
+          "pause_other": "暫停 {{count}} 個排程",
+          "resume_one": "恢復 {{count}} 個排程",
+          "resume_other": "恢復 {{count}} 個排程"
+        },
+        "job": {
+          "cancel_one": "取消 {{count}} 個任務",
+          "cancel_other": "取消 {{count}} 個任務"
+        },
+        "process": {
+          "close_one": "關閉 {{count}} 個處理程序",
+          "close_other": "關閉 {{count}} 個處理程序"
+        },
+        "team": {
+          "pause_one": "暫停 {{count}} 個團隊",
+          "pause_other": "暫停 {{count}} 個團隊",
+          "resume_one": "恢復 {{count}} 個團隊",
+          "resume_other": "恢復 {{count}} 個團隊"
+        },
+        "workflow": {
+          "cancel_one": "取消 {{count}} 個工作流",
+          "cancel_other": "取消 {{count}} 個工作流",
+          "pause_one": "暫停 {{count}} 個工作流",
+          "pause_other": "暫停 {{count}} 個工作流",
+          "resume_one": "恢復 {{count}} 個工作流",
+          "resume_other": "恢復 {{count}} 個工作流"
+        }
+      },
+      "aggregate": {
+        "failed_one": "失敗 {{count}} 個",
+        "failed_other": "失敗 {{count}} 個",
+        "pending_one": "待完成 {{count}} 個",
+        "pending_other": "待完成 {{count}} 個",
+        "refused_one": "已拒絕 {{count}} 個",
+        "refused_other": "已拒絕 {{count}} 個",
+        "requested_one": "已請求 {{count}} 個",
+        "requested_other": "已請求 {{count}} 個",
+        "resumed_one": "已恢復 {{count}} 個",
+        "resumed_other": "已恢復 {{count}} 個",
+        "terminal_one": "已結束 {{count}} 個",
+        "terminal_other": "已結束 {{count}} 個"
+      },
+      "allTargets": "所有 Agent",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} 個已結束",
+        "alreadyTerminal_other": "{{count}} 個已結束",
+        "refused_one": "{{count}} 個被拒絕",
+        "refused_other": "{{count}} 個被拒絕"
+      },
+      "failureDetails": "恢復失敗",
+      "state": {
+        "accepted": "已請求{{action}}",
+        "alreadyTerminal_one": "{{count}} 個目標此前已結束",
+        "alreadyTerminal_other": "{{count}} 個目標此前已結束",
+        "completed": "已{{action}}",
+        "failed": "{{action}}失敗",
+        "noAgentsToClose": "沒有需要關閉的 Agent",
+        "noResumeNeeded": "團隊已完成 · 無需恢復",
+        "partial": "部分完成 · {{action}}",
+        "refused": "{{action}}被拒絕",
+        "running": "正在{{action}}"
+      }
     },
     "skill": {
       "completed": "已載入技能：{{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "已檢視會話歷史",
           "failed": "會話歷史取得出錯",
           "running": "正在檢視會話歷史"
+        },
+        "sessions_create": {
+          "completed": "已建立會話",
+          "failed": "建立會話出錯",
+          "running": "正在建立會話"
         },
         "sessions_list": {
           "completed": "已檢視會話列表",
@@ -3587,13 +3790,16 @@
     "popOutActive": "已在獨立視窗中開啟",
     "question": {
       "answered": "已回答",
+      "customAnswer": "補充輸入",
       "customPlaceholder": "輸入自定義回答…",
       "customRequired": "請輸入自定義回答，或選擇其他選項。",
       "default": "預設",
       "multiSelect": "多選",
+      "options": "原始選項",
       "pending": "等待你的回答…",
       "preview": "預覽",
       "recommended": "推薦",
+      "response": "你的回答",
       "retry": "重試",
       "submit": "提交回答",
       "timedOut": "已超時",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "取消封存",
     "unassigned": "未指派",
     "uploadLogo": "上傳 Logo",
+    "linkedDirs": {
+      "add": "新增資料夾",
+      "defaultPrimary": "預設專案資料夾（自動建立）",
+      "empty": "尚未關聯其他資料夾",
+      "folderActions": "資料夾操作",
+      "hint": "新增專案需要使用的資料夾。新對話、相對路徑、Git 與專案指令預設使用主要資料夾。",
+      "invalid": "無效的關聯資料夾",
+      "label": "來源資料夾",
+      "makePrimary": "設為主要資料夾",
+      "primary": "主要資料夾",
+      "remove": "移除 {{path}}",
+      "removeFolder": "移除資料夾"
+    },
     "workingDir": {
       "clear": "清除",
       "hint": "可選擇現有目錄，也可建立新目錄。留空則自動建立預設專案目錄。",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "ACP 後端",
     "acpBinary": "二進位制檔案",
+    "acpDistribution": "分發描述",
+    "acpDistributionPackage": "套件或產品識別碼",
+    "acpDistributionRequired": "此舊版後端在明確其啟動分發資訊前將被阻止執行。",
+    "acpDistributionVersion": "固定版本",
+    "acpLaunchArgs": "啟動參數",
+    "acpProtocol": "協議",
+    "acpTrustDistribution": "定義分發資訊",
     "acpControl": "ACP 控制面",
     "acpControlDesc": "管理外部 ACP Agent（Claude Code、Codex CLI、Gemini CLI 等）",
     "acpEnabled": "啟用 ACP 控制面",
@@ -4194,6 +4420,7 @@
         "send_attachment": "向 IM 頻道傳送檔案附件",
         "session_status": "查詢會話目前狀態",
         "sessions_history": "讀取其他會話的訊息歷史",
+        "sessions_create": "建立新的普通聊天會話",
         "sessions_list": "列出所有會話的中繼資料",
         "sessions_send": "向其他會話傳送訊息以觸發工作",
         "update_settings": "修改 AppConfig 設定",
@@ -4213,6 +4440,7 @@
         "send_attachment": "傳送附件",
         "session_status": "會話狀態",
         "sessions_history": "會話歷史",
+        "sessions_create": "建立會話",
         "sessions_list": "會話列表",
         "sessions_send": "跨會話傳送",
         "update_settings": "更新設定",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "管理 Telegram、微信、飛書、Discord、Slack 等 IM 頻道接入",
     "charLimitExceeded": "超出上限，多餘內容將被截斷",
     "chat": "對話與上下文",
+    "chatEnterToSend": "按 Enter 傳送訊息",
+    "chatEnterToSendDesc": "開啟時，Enter 傳送、Shift+Enter 換行；關閉時，Enter 換行、Ctrl+Enter 傳送。",
     "chatAutoExpandThinking": "自動展開Think過程",
     "chatAutoExpandThinkingDesc": "聊天氣泡中的Think過程預設自動展開，關閉後需手動點選展開",
     "chatAutoCollapseCompletedTurns": "完成後摺疊中間訊息",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "單個工具結果最多佔用上下文視窗的比例（10%–60%），調高可保留更完整的大檔案和網頁抓取結果",
     "contextCompactMicrocompact": "微壓縮",
     "contextCompactMicrocompactEnabled": "啟用微壓縮",
-    "contextCompactMicrocompactEnabledDesc": "零成本清除舊的臨時工具結果（ls/grep/find 等），在其他壓縮層之前執行",
+    "contextCompactMicrocompactEnabledDesc": "無需額外呼叫模型，清除舊的臨時工具結果（ls/grep/find 等）；在其他壓縮層之前執行",
     "contextCompactMicrocompactTools": "微壓縮工具列表",
     "contextCompactMicrocompactToolsDesc": "選中的工具的舊結果會被自動清除",
     "contextCompactMinPrunableChars": "最小可裁剪總量",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "保護最近 N 個訊息 round，並向前擴到所屬使用者回合起點",
     "contextCompactPruning": "工具結果裁剪",
     "contextCompactReactiveMicrocompact": "反應式微壓縮",
-    "contextCompactReactiveMicrocompactDesc": "在工具迴圈的輪次之間，如果使用率超過閾值，則清除暫時的 tool_results（ls/grep/find/…）。Tier 0 零成本，且不會使提示詞快取失效。",
+    "contextCompactReactiveMicrocompactDesc": "在工具迴圈的輪次之間，如果使用率超過閾值，則清除暫時的 tool_results（ls/grep/find/…）。第 0 層無需額外呼叫模型，但修改請求歷史後，變更點之後的提示詞快取可能失效。",
     "contextCompactReactiveTriggerRatio": "觸發比例",
     "contextCompactReactiveTriggerRatioDesc": "超過此使用率即觸發反應式微壓縮（預設 75%）。",
     "contextCompactSaved": "設定已儲存",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "預設 Agent",
     "defaultModel": "預設模型",
     "defaultModelDesc": "主要使用的模型",
-    "deferredToolsEnabled": "延遲工具載入",
-    "deferredToolsEnabledDesc": "啟用基於 tool_search 的按需載入。工具預設仍會直接注入，除非你在下方單獨設為延遲。下次對話生效",
-    "deferredToolsPerToolDesc": "只開啟那些希望透過 tool_search 發現、而不是首輪直接送出 schema 的工具。",
+    "deferredToolsEnabled": "工具 Schema 載入策略",
+    "deferredToolsEnabledDesc": "推薦模式會透過 tool_search 按需載入非核心內建工具和所有動態 MCP 工具；「內建工具直接載入」仍會遵守各 MCP 伺服器自己的延遲 Schema 開關。",
+    "deferredToolsModeCustom": "自訂",
+    "deferredToolsModeDisabled": "內建工具直接載入",
+    "deferredToolsModeRecommended": "推薦",
+    "deferredToolsPerToolDesc": "這些內建工具透過 tool_search 按需載入；修改任一開關會切換到自訂模式。",
     "deferredToolsPerToolTitle": "延遲載入的內建工具",
     "devClearAll": "一鍵清除",
     "devClearAllDesc": "清空所有資料並恢復預設設定",
@@ -5253,8 +5486,12 @@
       "intro": "在生命週期事件掛接自訂命令 / HTTP / 提示詞 / 子 Agent，欄位級相容 Claude Code。",
       "disableAll": "停用全部 Hooks",
       "disableAllDesc": "總開關：關閉所有作用域的全部 Hooks。",
-      "allowProjectScope": "允許專案與本機 Hook",
-      "allowProjectScopeDesc": "允許工作目錄下的 .hope-agent/hooks.json 與 hooks.local.json 新增 Hook，便於團隊共享。它們會自行執行命令，因此預設關閉；請僅對可信專案啟用。",
+      "trustedProjectScopes": "受信任的 Hook 工作區",
+      "trustedProjectScopesDesc": "逐一工作區授權專案與本機 Hook 檔案。請輸入精確的絕對工作區路徑；路徑別名與符號連結會被拒絕。",
+      "workspacePath": "工作區絕對路徑",
+      "trustWorkspace": "信任目前內容",
+      "noTrustedWorkspaces": "尚未信任任何工作區 Hook 檔案。",
+      "trustContentBound": "新增工作區時，信任會綁定至當時的 Hook 檔案內容。內容變更、目錄移動或路徑別名都會使其停用。若要重新核准，請先移除並儲存工作區，再重新新增並儲存。",
       "scopeNote": "本面板編輯 user scope hooks。project（.hope-agent/hooks.json，隨儲存庫共用）、local（hooks.local.json）、managed（/etc/hope-agent/hooks.json）為檔案設定，疊加合併。",
       "pickEvent": "選擇事件…",
       "addHook": "新增 Hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "此處理器會內聯執行 LLM / 子 Agent，每次該阻斷事件觸發都會拖慢。建議這裡改用 command / http，或移至觀察型事件（如 PostToolUse）。",
       "invalidJson": "JSON 格式錯誤",
       "modelInheritDefault": "跟隨自動化預設鏈",
-      "defaultShell": "預設"
+      "defaultShell": "預設",
+      "allowProjectScope": "允許專案與本機 Hook",
+      "allowProjectScopeDesc": "允許工作目錄下的 .hope-agent/hooks.json 與 hooks.local.json 新增 Hook，便於團隊共享。它們會自行執行命令，因此預設關閉；請僅對可信專案啟用。"
     },
     "hours": "小時",
     "inheritGlobal": "繼承全域設定",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "刪除伺服器「{{name}}」？此操作無法撤銷。",
       "confirmDeleteTitle": "刪除「{{name}}」？",
       "connectTimeout": "連線逾時（秒）",
+      "connectionSettings": "連線策略",
       "cwdLabel": "工作目錄（可選）",
       "cwdPlaceholder": "繼承應用程式cwd",
       "deferredToolsLabel": "延遲載入工具 schema",
+      "directToolsLabel": "直接載入工具 schema",
       "deleted": "伺服器「{{name}}」已刪除",
       "deniedTools": "工具拒絕名單",
       "descriptionLabel": "說明（可選）",
       "descriptionPlaceholder": "這個伺服器是做什麼的",
       "disabled": "已停用",
       "eagerLabel": "啟動時預先連線",
+      "effectiveDeferredByGlobal": "全域「推薦」策略已使此伺服器的工具延遲載入。",
       "edit": "編輯",
       "editTitle": "編輯 MCP 伺服器 — {{name}}",
       "emptyDesc": "新增 MCP 伺服器或從 Claude 桌面設定匯入伺服器。 stdio 伺服器現在可以工作；遠端 HTTP/SSE/WebSocket 傳輸將在稍後階段到達。",
@@ -5749,11 +5991,13 @@
       "importJson": "導入JSON",
       "invalidName": "名稱必須符合 ^[a-z0-9_-]{1,32}$（小寫字母、數字、底線、連字號）",
       "loadFailed": "無法載入伺服器",
+      "lazyLabel": "按需連線",
       "nameImmutable": "建立後名稱不能更改。刪除並重新新增以重新命名。",
       "nameLabel": "名稱",
       "reconnect": "重新連線",
       "remoteTransportPhase4": "HTTP / SSE / WebSocket 傳輸將於第 4 階段提供。",
       "saved": "已儲存",
+      "securitySettings": "安全與審批",
       "signOut": "登出",
       "signOutSuccess": "已清除「{{name}}」的憑證",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "設定 Docker 容器沙箱隔離，用於安全執行命令",
     "sandboxDockerAvailable": "Docker 可用",
     "sandboxDockerChecking": "檢測中…",
-    "sandboxDockerBackend": "Docker 后端",
-    "sandboxDockerBackendAuto": "自动：优先 Windows，失败回退 WSL",
-    "sandboxDockerBackendDesc": "在 Windows 上选择原生 Docker、WSL Docker 或自动回退；不会扩大挂载范围。",
-    "sandboxDockerBackendWindows": "仅 Windows Docker",
-    "sandboxDockerBackendWsl": "仅 WSL Docker",
     "sandboxDockerInstall": "獲取 Docker Desktop",
     "sandboxDockerNotInstalled": "未檢測到 Docker，請先安裝 Docker Desktop",
     "sandboxDockerNotRunning": "Docker 已安裝但未啟動，請先啟動 Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker 不可用",
     "sandboxImage": "映像",
     "sandboxImageDesc": "沙箱容器使用的 Docker 映像",
+    "sandboxImageDigestRequired": "映像必須固定為 名稱@sha256:<64 位摘要>；可變標籤會被拒絕。",
     "sandboxMemoryLimit": "記憶體限制",
     "sandboxNetworkBridge": "橋接",
     "sandboxNetworkHost": "主機網路",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "容器",
     "sandboxSectionResources": "資源限制",
     "sandboxSectionSecurity": "安全加固",
-    "sandboxWslDistro": "WSL 发行版",
-    "sandboxWslDistroDesc": "可选。留空使用默认 WSL 发行版；仅影响 WSL Docker 后端。",
-    "sandboxWslDistroPlaceholder": "默认 WSL 发行版",
     "seconds": "秒",
     "security": "安全策略",
     "selectDefaultModel": "選擇預設模型",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "同一父會話裡最多同時執行多少個子 Agent；超出的呼叫會先排隊等待。",
     "subagentMaxDepth": "最大巢狀深度",
     "subagentMaxDepthDesc": "限制子 Agent 鏈路可以繼續向下委派的層數，避免任務遞迴拆分過深。",
+    "subagentProviderRetryAttempts": "閘道恢復重試次數",
+    "subagentProviderRetryAttemptsDesc": "所有 Provider 與模型備援都失敗後，額外繼續嘗試的次數。0 表示關閉外層恢復。",
+    "subagentProviderRetryBackoff": "閘道重試基礎等待",
+    "subagentProviderRetryBackoffDesc": "閘道耗盡後首次重試的等待時間，後續採指數退避。",
     "subagentTimeout": "預設超時",
     "subagentTimeoutDesc": "單個子 Agent 的最長執行時間；0 表示不限制。呼叫未明確指定 timeout_secs 時使用此值。",
     "subagentTimeoutUnit": "秒",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "應用補丁",
     "toolAskUserQuestionDesc": "向使用者發起結構化問答（單選 / 多選 / 自由輸入）",
     "toolAskUserQuestionName": "詢問使用者",
+    "toolAudioGenerateDesc": "根據文字產生語音、音樂或音效",
     "toolBrowserDesc": "控制瀏覽器執行操作",
     "toolBrowserName": "瀏覽器",
     "toolCallNarration": "進度更新",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "處理程序管理",
     "toolProjectReadFileDesc": "讀取目前會話所屬專案上傳的檔案",
     "toolProjectReadFileName": "讀取專案檔案",
+    "toolReadContextResourceDesc": "讀取綁定至目前輪次的不可變 @file 或 @plan 快照",
     "toolReadDesc": "讀取檔案內容，支援分頁和圖片自動識別",
     "toolReadName": "讀取檔案",
     "toolRecallMemoryDesc": "搜尋並檢索已儲存的記憶",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "傳送附件",
     "toolSendNotificationDesc": "傳送桌面通知訊息",
     "toolSendNotificationName": "傳送通知",
+    "toolSessionContinueDesc": "僅在使用者明確要求後繼續已暫停的會話",
     "toolSessionStatusDesc": "查詢單個會話的 Agent / 模型 / 訊息數 / 時間戳",
     "toolSessionStatusName": "會話狀態",
     "toolSessionToNoteDesc": "將目前對話提煉成一篇結構化筆記。",
     "toolSessionToNoteName": "對話存為筆記",
     "toolSessionsHistoryDesc": "分頁讀取某會話的歷史訊息",
     "toolSessionsHistoryName": "會話歷史",
+    "toolSessionsCreateDesc": "建立新的普通聊天會話，可選擇關聯至 Project，並透過首則訊息或附件啟動 Agent",
     "toolSessionsListDesc": "列出目前會話之外的會話（標題 / Agent / 模型 / 訊息數）",
     "toolSessionsListName": "會話列表",
     "toolSessionsSearchDesc": "檢索持久化聊天訊息，並返回命中附近的上下文視窗",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "跨會話傳送",
     "toolSubagentDesc": "呼叫子 Agent 執行任務",
     "toolSubagentName": "子 Agent",
+    "toolToolResultMetaDesc": "查看與目前會話關聯的工具結果有界中繼資料。",
+    "toolToolResultReadDesc": "分頁讀取已授權儲存工具結果的 UTF-8 正文。",
     "toolTaskCreateDesc": "為目前會話建立可追蹤的任務",
     "toolTaskCreateName": "建立任務",
     "toolTaskListDesc": "列出目前會話中的所有任務",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "更新",
     "weatherWind": "風速",
     "webFetch": "網頁抓取",
+    "webFetchMaxTokensCap": "最大 Token 預算",
+    "webFetchMaxTokensCapDesc": "工具呼叫所要求 max_tokens 的硬性上限",
+    "webFetchMaxConcurrentPerHost": "每個主機的並行請求數",
+    "webFetchMinHostDelay": "同主機最短間隔（毫秒）",
+    "webFetchSectionRendering": "動態算繪",
+    "webFetchRenderMode": "預設算繪模式",
+    "webFetchRenderNever": "永不（僅直接抓取）",
+    "webFetchRenderAuto": "自動（需要時）",
+    "webFetchRenderAlways": "一律",
+    "webFetchRenderModeDesc": "算繪使用全新隔離瀏覽器，不會帶入 Cookie 或帳號狀態",
+    "webFetchRenderTimeout": "算繪逾時（秒）",
+    "webFetchCacheEntries": "快取快照數",
     "webFetchCacheTtl": "快取時間（分鐘）",
     "webFetchCacheTtlDesc": "快取已抓取頁面的時長，設為 0 禁用快取",
     "webFetchDesc": "設定 web_fetch 工具從 URL 擷取內容的方式，包括快取、安全性和內容限制。",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "端點未設定",
     "memoryExternalProviderBlockPolicyUnsupported": "策略不受支援",
     "memoryExternalProviderBlockAdapterUnavailable": "適配器不可用",
+    "memoryExternalProviderBlockCompatibilityUnverified": "相容性未驗證",
+    "memoryExternalProviderBlockCompatibilityBlocked": "提供方版本不安全",
     "memoryExternalProviderBlockLastError": "最近錯誤",
     "memoryExternalProviderErrors": {
       "load": "載入外部記憶提供方失敗",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "載入外部記憶提供方連線失敗",
       "saveCredentials": "儲存外部記憶提供方連線失敗",
       "clearCredentials": "清除外部記憶提供方連線失敗",
+      "testConnection": "測試外部記憶提供方連線失敗",
       "copyPreflightDiagnostics": "複製外部記憶提供方預檢失敗",
       "copySyncDiagnostics": "複製外部記憶提供方同步報告失敗",
       "detail": "詳細資訊：{{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "憑證會分開儲存，並以受限檔案權限保護。",
     "memoryExternalProviderConnectionSaved": "連線已儲存",
     "memoryExternalProviderConnectionCleared": "連線已清除",
+    "memoryExternalProviderConnectionTest": "測試連線",
+    "memoryExternalProviderCompatibilityPassed": "連線與相容性檢查通過",
+    "memoryExternalProviderCompatibilityUnverified": "已連線，但無法驗證提供方版本",
+    "memoryExternalProviderCompatibilityBlocked": "提供方版本低於安全下限",
+    "memoryExternalProviderCompatibilitySummary": "狀態：{{status}} · 偵測到 {{detected}} · 最低 {{minimum}}",
     "memoryExternalProviderEndpoint": "端點",
     "memoryExternalProviderEndpointKeep": "已儲存：{{origin}} · 留空則保持不變",
     "memoryExternalProviderSubjectId": "遠端作用域 ID",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "預設時長",
       "durationOption": "{{seconds}} 秒"
     },
+    "sandboxDockerBackend": "Docker 后端",
+    "sandboxDockerBackendAuto": "自动：优先 Windows，失败回退 WSL",
+    "sandboxDockerBackendDesc": "在 Windows 上选择原生 Docker、WSL Docker 或自动回退；不会扩大挂载范围。",
+    "sandboxDockerBackendWindows": "仅 Windows Docker",
+    "sandboxDockerBackendWsl": "仅 WSL Docker",
+    "sandboxWslDistro": "WSL 发行版",
+    "sandboxWslDistroDesc": "可选。留空使用默认 WSL 发行版；仅影响 WSL Docker 后端。",
+    "sandboxWslDistroPlaceholder": "默认 WSL 发行版",
     "skillsManager": {
       "total": "全部技能",
       "enabled": "已啟用",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "刪除記憶"
     },
+    "fork": {
+      "description": "在新會話中繼續"
+    },
     "handover": {
       "description": "將工作階段交班到 IM"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "開始新對話"
+    },
+    "side": {
+      "description": "發起側聊且不中斷主對話"
     },
     "noResults": "沒有匹配的命令",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "已暫停",
     "progress": "進度",
     "resume": "恢復",
+    "resumeFeedback": {
+      "counts": "已恢復 {{resumed}} 個 · 失敗 {{failed}} 個",
+      "noOpDescription": "所有團隊成員均已完成，未啟動新的嘗試。",
+      "noOpTitle": "無需恢復",
+      "partialTitle": "團隊已部分恢復",
+      "refusedTitle": "團隊恢復被拒絕",
+      "resumedTitle": "團隊已恢復",
+      "resuming": "正在恢復…"
+    },
     "review": "審查",
     "reviewer": "審查者",
     "send": "傳送",
@@ -9282,6 +9572,7 @@
       "timed_out": "超時，已應用預設值"
     },
     "ask_user_question": "向使用者提問",
+    "audio_generate": "產生音訊",
     "browser": "瀏覽器",
     "canvas": "畫布",
     "delete_memory": "刪除記憶",
@@ -9313,13 +9604,16 @@
     "process": "處理程序管理",
     "rawCall": "檢視原始呼叫",
     "read": "讀取檔案",
+    "read_context_resource": "讀取上下文資源",
     "recall_memory": "回憶記憶",
     "restore_settings_backup": "還原設定備份",
     "save_memory": "儲存記憶",
     "send_attachment": "傳送附件",
     "send_notification": "傳送通知",
+    "session_continue": "繼續會話",
     "session_status": "會話狀態",
     "sessions_history": "會話歷史",
+    "sessions_create": "建立會話",
     "sessions_list": "會話列表",
     "sessions_send": "傳送至會話",
     "skill": "載入技能",
@@ -9329,6 +9623,8 @@
     "task_list": "任務列表",
     "task_update": "更新任務",
     "team": "Agent 團隊",
+    "tool_result_meta": "工具結果中繼資料",
+    "tool_result_read": "讀取工具結果",
     "tool_search": "查詢工具",
     "update_core_memory": "更新核心記憶",
     "update_memory": "更新記憶",
@@ -9589,6 +9885,9 @@
     "openPanel": "開啟工作臺",
     "resizePanel": "調整工作臺面板寬度",
     "sourceFromSearch": "搜尋",
+    "sourceFetchDirect": "擷取",
+    "sourceFetchRendered": "渲染",
+    "sourceFetchCache": "快取",
     "sourceFromUser": "使用者",
     "sourceFromAttachment": "附件",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "門禁",
     "defaultName": "產物"
   },
-  "taskDelivery": {
-    "panelTitle": "任务交付",
-    "resizePanel": "调整任务交付面板大小"
-  },
   "backgroundJobs": {
     "panelTitle": "背景任務",
     "openPanel": "背景任務",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "讓 AI 修復",
       "fixStarted": "已讓 AI 開始修復",
       "fixBusy": "對話進行中，請稍候再試",
-      "fixPrompt": "請修復設計自查發現的問題：{{detail}}。用設計系統 token（var(--ds-*)）收斂配色、替換硬編碼樣式，只做必要的最小改動，保持產物其它內容與整體設計不變。"
+      "fixPrompt": "請修復設計自查發現的問題：{{detail}}。用設計系統 token（var(--ds-*)）收斂配色、替換硬編碼樣式，只做必要的最小改動，保持產物其它內容與整體設計不變。",
+      "visualUnavailable": "视觉回归不可用，请检查浏览器渲染后端",
+      "baselineAccepted": "已接受当前画面为视觉基线",
+      "baselineFailed": "接受视觉基线失败",
+      "visualTitle": "确定性视觉回归",
+      "visualPassed": "固定视口与静态检查均通过",
+      "visualNeedsBaseline": "存在差异或尚未建立基线",
+      "acceptBaseline": "接受为基线",
+      "noBaseline": "无基线"
     },
     "kit": {
       "title": "設計系統套件",
@@ -12533,7 +12836,15 @@
       "copyLink": "複製連結",
       "copied2": "已複製",
       "loadErr": "載入分享狀態失敗",
-      "shareTo": "分享到"
+      "shareTo": "分享到",
+      "fixedReview": "固定版本评审",
+      "fixedReviewHint": "创建 7 天有效的只读或可评论凭证，始终锚定当前版本；凭证只在创建时显示一次。",
+      "commenter": "可评论",
+      "viewer": "仅查看",
+      "createReview": "创建 v{{version}}",
+      "tokenOnce": "评审 Bearer 凭证（只显示一次）",
+      "reviewCreateFailed": "创建评审空间失败",
+      "reviewRevokeFailed": "撤销评审空间失败"
     },
     "deploy": {
       "menu": "部署到 Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "所有產物與程式碼一致",
       "checkStale": "{{n}} 個產物的程式碼有更新",
       "chatPrompt": "實作程式碼相對設計稿已變化，請根據引用的程式碼變更更新目前設計稿，保持設計意圖與其餘內容不變。"
+    },
+    "figmaRoundtrip": {
+      "title": "Figma 安全往返",
+      "desc": "通过已登录的 Figma MCP 读取或写入；Hope 不保存 OAuth 凭据。外部写入必须先预览，再逐次确认。",
+      "direction": "方向",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → Hope 新版本",
+      "server": "MCP 服务器名",
+      "fileKey": "Figma file key",
+      "nodeId": "node id（可选）",
+      "arguments": "MCP 参数（JSON）",
+      "invalidArgs": "MCP 参数必须是 JSON 对象",
+      "previewFailed": "Figma 往返预览失败",
+      "done": "Figma 往返已完成并记录链接",
+      "commitFailed": "Figma 往返提交失败",
+      "confirmTitle": "请确认本次外部操作",
+      "open": "打开 Figma",
+      "confirm": "确认并提交一次",
+      "preview": "生成操作預覽",
+      "reconciliationLoadFailed": "無法讀取 Figma 未決回執",
+      "reconciliationDone": "遠端核對結果已記錄，可繼續往返",
+      "reconciliationFailed": "Figma 回執核對失敗，仍保持阻斷",
+      "reconciliationTitle": "上一次 Figma 操作結果不確定",
+      "reconciliationDesc": "請先在 Figma 中核對該操作是否已發生，再選擇準確結果。記錄完成前不會重播外部操作。",
+      "confirmedApplied": "已核對：操作已發生",
+      "confirmedNotApplied": "已核對：操作未發生"
+    },
+    "scenarios": {
+      "label": "预览场景",
+      "title": "预览场景清单",
+      "desc": "最多 12 个场景、4 个视口；仅保留一个活动预览，其余按需切换。route 只能是本地产物路径。",
+      "invalid": "场景清单不是有效 JSON",
+      "saved": "场景清单已保存",
+      "saveFailed": "场景清单保存失败"
+    },
+    "components": {
+      "title": "组件清单",
+      "desc": "只读扫描绑定仓库生成候选；先保存未发布草稿，再以已发布哈希确认发布。代码始终是本地真相源。",
+      "loadFailed": "组件清单加载失败",
+      "invalid": "组件清单不是有效 JSON",
+      "scanFailed": "只读扫描失败，请先绑定代码仓库",
+      "draftSaved": "组件清单草稿已保存",
+      "saveFailed": "组件清单草稿保存失败",
+      "published": "组件清单已发布",
+      "publishFailed": "发布失败，清单可能已被其他窗口更新",
+      "scan": "只读扫描仓库",
+      "saveDraft": "保存草稿",
+      "publish": "确认发布"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "名稱",
       "shortDescription": "簡短描述（選填）",
       "prompt": "希望寵物長什麼樣子？",
+      "version": "精靈圖版本",
+      "versionV2": "v2 · 建議",
+      "versionV1": "v1 · 舊版相容",
+      "versionV2Description": "包含 Codex v2 使用的 16 個順時針注視方向。",
+      "versionV1Description": "為舊版用戶端建立原始九列精靈圖。",
       "generate": "生成預覽",
       "generating": "正在建立預覽…",
       "failed": "無法建立這隻寵物"
+    },
+    "upgrade": {
+      "action": "升級至 v2",
+      "upgraded": "已建立 v2 副本，原本的 v1 寵物仍會保留。",
+      "alreadyExists": "寵物庫中已有這個 v2 升級版本。",
+      "failed": "無法將這隻寵物升級至 v2"
     },
     "export": {
       "action": "匯出給 Codex",
@@ -12848,7 +13218,7 @@
       "failed": "無法匯出這隻寵物"
     },
     "window": {
-      "interact": "與 Hope 寵物互動",
+      "interact": "與 {{name}} 互動",
       "tuckAway": "收起寵物"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "設定",
       "user": "使用者設定"
     }
+  },
+  "toolchainDoctor": {
+    "title": "工具鏈診斷",
+    "description": "唯讀檢查本機執行環境與選用開發工具。Hope Agent 不會安裝、升級、啟動或重新設定任何元件。",
+    "refresh": "重新檢查",
+    "loading": "正在檢查本機工具鏈…",
+    "loadFailed": "工具鏈檢查失敗",
+    "readOnlyNotice": "報告僅包含版本、可用性、Docker 可達性、環境類別、通訊端擁有權類別與暫時包裝器狀態，不會揭露本機路徑或憑證。",
+    "detectedVersion": "偵測到 {{version}}",
+    "notDetected": "未偵測到",
+    "minimumVersion": "最低 {{version}}",
+    "diagnosticFacts": "診斷代碼",
+    "status": {
+      "detected": "已偵測",
+      "supported": "受支援",
+      "degraded": "降級",
+      "blocked": "受阻"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "需要回答",
+      "detail": "對話中有 {{count}} 個問題正在等待",
+      "detail_one": "對話中有一個問題正在等待",
+      "openAction": "立即回答"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "任务交付",
+    "resizePanel": "调整任务交付面板大小"
   },
   "workflow": {
     "pendingBar": {

@@ -15,7 +15,7 @@
 //! `sessions.context_json` are unaffected so subsequent context windows
 //! and desktop history stay clean.
 
-use crate::slash_commands::truncate_description;
+use crate::slash_defs::truncate_description;
 
 /// Hard char-count cap on the body included in the quote — keeps long
 /// prompts from monopolizing the IM message above the actual reply.
@@ -23,7 +23,7 @@ const MAX_QUOTE_CHARS: usize = 240;
 
 /// Snapshot of the user message that triggered a desktop / HTTP turn,
 /// passed to [`build_user_quote_prefix`] so the quote helper doesn't
-/// need to re-query SQL — `run_chat_engine` already has the input text
+/// need to re-query SQL — the admitted turn already carries the input text
 /// + attachment count + source string in hand at turn entry.
 #[derive(Debug, Clone)]
 pub struct LastUserView<'a> {

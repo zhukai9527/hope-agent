@@ -12,16 +12,16 @@ pub struct PetAssetPath {
 }
 
 #[tauri::command]
-pub async fn get_pet_config_cmd() -> Result<ha_core::pet::PetConfig, CmdError> {
+pub async fn get_pet_config_cmd() -> Result<ha_pet::PetConfig, CmdError> {
     Ok(ha_core::config::cached_config().pet.clone())
 }
 
 #[tauri::command]
-pub async fn save_pet_config_cmd(config: ha_core::pet::PetConfig) -> Result<(), CmdError> {
+pub async fn save_pet_config_cmd(config: ha_pet::PetConfig) -> Result<(), CmdError> {
     // This legacy-shaped command is the selection endpoint. The Settings
     // switch uses `pet_set_enabled_cmd`; preserving the live enabled field here
     // prevents the two controls from overwriting each other.
-    ha_core::pet::update_config(None, Some(config.selected_pet_ref), "settings-ui").await?;
+    ha_pet::update_config(None, Some(config.selected_pet_ref), "settings-ui").await?;
     Ok(())
 }
 
@@ -30,7 +30,7 @@ pub async fn pet_set_enabled_cmd(
     app: tauri::AppHandle,
     enabled: bool,
     source: Option<String>,
-) -> Result<ha_core::pet::PetConfig, CmdError> {
+) -> Result<ha_pet::PetConfig, CmdError> {
     let source = match source.as_deref() {
         Some("slash-command") => "slash-command",
         Some("pet-window") => "pet-window",
@@ -45,7 +45,7 @@ pub async fn pet_set_enabled_cmd(
         // the command response before the main renderer closes that WebView.
         crate::pet_window::sync_enabled(&app, enabled)?;
     }
-    let config = match ha_core::pet::update_config(Some(enabled), None, source).await {
+    let config = match ha_pet::update_config(Some(enabled), None, source).await {
         Ok(config) => config,
         Err(error) => {
             if sync_before_persist {
@@ -62,14 +62,45 @@ pub async fn pet_set_enabled_cmd(
 }
 
 #[tauri::command]
+pub async fn pet_activate_cmd(
+    app: tauri::AppHandle,
+    pet_ref: ha_pet::PetRef,
+) -> Result<ha_pet::PetConfig, CmdError> {
+    activate_pet(&app, pet_ref, "pet-activate")
+        .await
+        .map_err(Into::into)
+}
+
+pub(crate) async fn activate_pet(
+    app: &tauri::AppHandle,
+    pet_ref: ha_pet::PetRef,
+    source: &'static str,
+) -> anyhow::Result<ha_pet::PetConfig> {
+    let previous = ha_core::config::cached_config().pet.clone();
+    // Activation is also an explicit request to repair a missing native
+    // overlay. Prove the window exists on every call; the cached enabled bit
+    // cannot tell us whether a prior asynchronous lifecycle sync succeeded.
+    crate::pet_window::sync_enabled(app, true)?;
+    match ha_pet::update_config(Some(true), Some(pet_ref), source).await {
+        Ok(config) => Ok(config),
+        Err(error) => {
+            if !previous.enabled {
+                let _ = crate::pet_window::sync_enabled(app, false);
+            }
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn pet_sync_window_cmd(app: tauri::AppHandle) -> Result<(), CmdError> {
     crate::pet_window::sync_enabled(&app, ha_core::config::cached_config().pet.enabled)?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn pet_list_cmd() -> Result<ha_core::pet::PetLibrarySnapshot, CmdError> {
-    ha_core::blocking::run_blocking(ha_core::pet::list_pets)
+pub async fn pet_list_cmd() -> Result<ha_pet::PetLibrarySnapshot, CmdError> {
+    ha_core::blocking::run_blocking(ha_pet::list_pets)
         .await
         .map_err(Into::into)
 }
@@ -77,7 +108,7 @@ pub async fn pet_list_cmd() -> Result<ha_core::pet::PetLibrarySnapshot, CmdError
 #[tauri::command]
 pub async fn pet_asset_path_cmd(asset_id: String) -> Result<PetAssetPath, CmdError> {
     let descriptor =
-        ha_core::blocking::run_blocking(move || ha_core::pet::resolve_installed_sprite(&asset_id))
+        ha_core::blocking::run_blocking(move || ha_pet::resolve_installed_sprite(&asset_id))
             .await?;
     Ok(PetAssetPath {
         path: descriptor
@@ -89,86 +120,85 @@ pub async fn pet_asset_path_cmd(asset_id: String) -> Result<PetAssetPath, CmdErr
 }
 
 #[tauri::command]
-pub async fn pet_codex_candidates_cmd() -> Result<ha_core::pet::PetCandidatePage, CmdError> {
-    ha_core::blocking::run_blocking(ha_core::pet::discover_codex_candidates)
+pub async fn pet_codex_candidates_cmd() -> Result<ha_pet::PetCandidatePage, CmdError> {
+    ha_core::blocking::run_blocking(ha_pet::discover_codex_candidates)
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_candidate_thumbnail_cmd(candidate_id: String) -> Result<Vec<u8>, CmdError> {
-    ha_core::blocking::run_blocking(move || ha_core::pet::preview_thumbnail(&candidate_id))
+    ha_core::blocking::run_blocking(move || ha_pet::preview_thumbnail(&candidate_id))
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_preview_thumbnail_cmd(preview_token: String) -> Result<Vec<u8>, CmdError> {
-    ha_core::blocking::run_blocking(move || ha_core::pet::preview_token_thumbnail(&preview_token))
+    ha_core::blocking::run_blocking(move || ha_pet::preview_token_thumbnail(&preview_token))
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_create_preview_cmd(
-    request: ha_core::pet::PetCreateRequest,
-) -> Result<ha_core::pet::PetImportPreview, CmdError> {
-    ha_core::pet::create_preview(request)
-        .await
-        .map_err(Into::into)
+    request: ha_pet::PetCreateRequest,
+) -> Result<ha_pet::PetImportPreview, CmdError> {
+    ha_pet::create_preview(request).await.map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn pet_upgrade_v2_cmd(
+    request: ha_pet::PetUpgradeRequest,
+) -> Result<ha_pet::PetUpgradeResult, CmdError> {
+    ha_pet::upgrade_pet_to_v2(request).await.map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_import_preview_cmd(
-    request: ha_core::pet::PetImportPreviewRequest,
-) -> Result<ha_core::pet::PetImportPreview, CmdError> {
-    ha_core::pet::preview_import_async(request)
+    request: ha_pet::PetImportPreviewRequest,
+) -> Result<ha_pet::PetImportPreview, CmdError> {
+    ha_pet::preview_import_async(request)
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_import_preview_cancel_cmd(preview_token: String) -> Result<bool, CmdError> {
-    ha_core::pet::cancel_import_preview(preview_token)
+    ha_pet::cancel_import_preview(preview_token)
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_import_commit_cmd(
-    request: ha_core::pet::PetImportCommitRequest,
-) -> Result<ha_core::pet::PetImportCommitResult, CmdError> {
-    ha_core::pet::commit_import(request)
-        .await
-        .map_err(Into::into)
+    request: ha_pet::PetImportCommitRequest,
+) -> Result<ha_pet::PetImportCommitResult, CmdError> {
+    ha_pet::commit_import(request).await.map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn pet_delete_cmd(
-    pet_ref: ha_core::pet::PetRef,
+    pet_ref: ha_pet::PetRef,
     expected_package_hash: String,
-) -> Result<ha_core::pet::PetDeleteResult, CmdError> {
-    ha_core::blocking::run_blocking(move || {
-        ha_core::pet::delete_pet(&pet_ref, &expected_package_hash)
-    })
-    .await
-    .map_err(Into::into)
-}
-
-#[tauri::command]
-pub async fn pet_restore_cmd(
-    request: ha_core::pet::PetRestoreRequest,
-) -> Result<ha_core::pet::PetSummary, CmdError> {
-    ha_core::blocking::run_blocking(move || ha_core::pet::restore_pet(&request.restore_token))
+) -> Result<ha_pet::PetDeleteResult, CmdError> {
+    ha_core::blocking::run_blocking(move || ha_pet::delete_pet(&pet_ref, &expected_package_hash))
         .await
         .map_err(Into::into)
 }
 
 #[tauri::command]
-pub async fn pet_export_cmd(
-    pet_ref: ha_core::pet::PetRef,
-) -> Result<ha_core::pet::PetExportResult, CmdError> {
-    ha_core::blocking::run_blocking(move || ha_core::pet::export_codex_package(&pet_ref))
+pub async fn pet_restore_cmd(
+    request: ha_pet::PetRestoreRequest,
+) -> Result<ha_pet::PetSummary, CmdError> {
+    ha_core::blocking::run_blocking(move || ha_pet::restore_pet(&request.restore_token))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn pet_export_cmd(pet_ref: ha_pet::PetRef) -> Result<ha_pet::PetExportResult, CmdError> {
+    ha_core::blocking::run_blocking(move || ha_pet::export_codex_package(&pet_ref))
         .await
         .map_err(Into::into)
 }
@@ -176,8 +206,8 @@ pub async fn pet_export_cmd(
 #[tauri::command]
 pub async fn pet_activity_snapshot_cmd(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<ha_core::pet::PetActivitySnapshot, CmdError> {
-    ha_core::pet::activity_snapshot(state.session_db.clone())
+) -> Result<ha_pet::PetActivitySnapshot, CmdError> {
+    ha_pet::activity_snapshot(state.session_db.clone())
         .await
         .map_err(Into::into)
 }
@@ -198,7 +228,7 @@ pub async fn pet_apply_window_bounds_cmd(
 #[tauri::command]
 pub async fn pet_focus_target_cmd(
     app: tauri::AppHandle,
-    target: Option<ha_core::pet::PetNavigationTarget>,
+    target: Option<ha_pet::PetNavigationTarget>,
 ) -> Result<(), CmdError> {
     if let Some(main) = app.get_webview_window("main") {
         main.show()?;

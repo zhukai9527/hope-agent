@@ -10,11 +10,13 @@ import { FloatingMenu } from "@/components/ui/floating-menu"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { IconTip, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { logger } from "@/lib/logger"
+import { restoreFocusInputModalityAfterConsumedTab } from "@/lib/focus-visibility"
 import { getTransport } from "@/lib/transport-provider"
 import { DEFAULT_MAX_CHAT_ATTACHMENT_MB, MEBIBYTE_BYTES } from "@/lib/filesystemConfig"
 import {
@@ -25,6 +27,7 @@ import {
   Pencil,
   Trash2,
   BetweenHorizontalStart,
+  MoreHorizontal,
   ChevronDown,
   ChevronUp,
   X,
@@ -41,6 +44,7 @@ import {
   PlayCircle,
   CheckCircle2,
   Radio,
+  Timer,
 } from "lucide-react"
 import type {
   AvailableModel,
@@ -110,6 +114,8 @@ import { parseGoalCriteriaDraft, type DraftGoalCriterionKind } from "../workspac
 import { parseGoalUpsertSlashCommand } from "../goalSlashCommand"
 import { parseLoopCreateSlashCommand } from "../loopSlashCommand"
 import type { WorkflowRun, WorkflowRunState } from "../workspace/useWorkflowRuns"
+import { useEnterToSendPreference } from "../enterToSendPreference"
+import type { ComposerMentionBinding, ComposerMentionTextChange } from "../mentions/typedMentions"
 
 type WorkflowMode = "off" | "on" | "ultracode"
 type WorkflowTriggerHint = {
@@ -121,6 +127,8 @@ export type GoalModeSubmitAction =
   | "append_required"
   | "append_optional"
   | "append_follow_up"
+
+type PendingEditSaveStatus = "idle" | "saving" | "saved" | "failed"
 
 const WORKFLOW_MODE_CHANGED_EVENT = "hope-agent:workflow-mode-changed"
 
@@ -251,7 +259,16 @@ function workflowRunIsLive(state: WorkflowRunState): boolean {
 
 interface ChatInputProps {
   input: string
+  /** Provenance-bearing bindings currently owned by the composer draft. Raw
+   * lookalike text is intentionally not rendered as an executable @ chip. */
+  structuredMentions?: ComposerMentionBinding[]
   onInputChange: (value: string) => void
+  /** Atomic text + provenance update used by picker-created typed mentions. */
+  onInputChangeWithMention?: (
+    value: string,
+    mention: ComposerMentionBinding,
+    change: ComposerMentionTextChange,
+  ) => void
   inputHistory?: string[]
   quickPrompts?: QuickPromptItem[]
   onSend: () => void
@@ -287,12 +304,23 @@ interface ChatInputProps {
   onForceInsertPending?: (id: string) => void
   onCancelForceInsertPending?: (id: string) => void
   onStop?: () => void
+  /** A Stop is already in flight for this session; drop repeat clicks. */
+  stopPending?: boolean
+  autonomyPaused?: boolean
+  onContinue?: () => void
   // Slash command support
   currentSessionId?: string | null
   currentAgentId?: string
   /** Materializes a draft conversation before applying session-scoped modes. */
   onEnsureSession?: () => Promise<string | null>
   onCommandAction?: (result: CommandResult) => void
+  /** Expose `/side` only on surfaces that can reveal the created side conversation. */
+  enableSideChatCommand?: boolean
+  /** Expose the durable Goal and Plan composer modes. Disable on embedded
+   *  surfaces that do not own the corresponding session-scoped controllers. */
+  enableGoalAndPlanModes?: boolean
+  /** Disable on embedded surfaces without workflow status/approval controls. */
+  enableWorkflowMode?: boolean
   // Tool permission mode
   permissionMode: SessionMode
   onPermissionModeChange: (mode: SessionMode, options?: PermissionModeChangeOptions) => void
@@ -480,7 +508,9 @@ function toolbarVisibleWidth(container: HTMLElement): number {
 
 export default function ChatInput({
   input,
+  structuredMentions = [],
   onInputChange,
+  onInputChangeWithMention,
   inputHistory = [],
   quickPrompts = [],
   onSend,
@@ -514,10 +544,16 @@ export default function ChatInput({
   onForceInsertPending,
   onCancelForceInsertPending,
   onStop,
+  stopPending = false,
+  autonomyPaused = false,
+  onContinue,
   currentSessionId,
   currentAgentId = DEFAULT_AGENT_ID,
   onEnsureSession,
   onCommandAction,
+  enableSideChatCommand = false,
+  enableGoalAndPlanModes = true,
+  enableWorkflowMode = true,
   permissionMode,
   onPermissionModeChange,
   sandboxMode,
@@ -564,6 +600,7 @@ export default function ChatInput({
   overflowLeadingItems,
 }: ChatInputProps) {
   const { t } = useTranslation()
+  const enterToSend = useEnterToSendPreference()
   const maxAttachmentMb = Math.round(maxAttachmentBytes / MEBIBYTE_BYTES)
   const inputHandleRef = useRef<ComposerInputHandle>(null)
   const inputShellRef = useRef<HTMLDivElement>(null)
@@ -585,7 +622,9 @@ export default function ChatInput({
   const [pendingExpanded, setPendingExpanded] = useState(false)
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null)
   const [pendingEditValue, setPendingEditValue] = useState("")
-  const [pendingEditSaving, setPendingEditSaving] = useState(false)
+  const [pendingEditSaveStatus, setPendingEditSaveStatus] = useState<PendingEditSaveStatus>("idle")
+  const [pendingEditSaveStatusId, setPendingEditSaveStatusId] = useState<string | null>(null)
+  const pendingEditSaveStatusTimerRef = useRef<number | null>(null)
   const [goalComposerMode, setGoalComposerMode] = useState(false)
   const [loopComposerMode, setLoopComposerMode] = useState(false)
   const [goalComposerAction, setGoalComposerAction] =
@@ -603,6 +642,29 @@ export default function ChatInput({
   const [dismissedWorkflowHintFor, setDismissedWorkflowHintFor] = useState<string | null>(null)
   const { toolbarCompact, toolbarTight, permissionCollapsed } =
     getChatInputToolbarFlags(toolbarCollapseLevel)
+
+  const clearPendingEditSaveStatusTimer = useCallback(() => {
+    if (pendingEditSaveStatusTimerRef.current === null) return
+    window.clearTimeout(pendingEditSaveStatusTimerRef.current)
+    pendingEditSaveStatusTimerRef.current = null
+  }, [])
+
+  const updatePendingEditSaveStatus = useCallback(
+    (id: string, status: PendingEditSaveStatus) => {
+      clearPendingEditSaveStatusTimer()
+      setPendingEditSaveStatusId(id)
+      setPendingEditSaveStatus(status)
+      if (status !== "saved" && status !== "failed") return
+      pendingEditSaveStatusTimerRef.current = window.setTimeout(() => {
+        pendingEditSaveStatusTimerRef.current = null
+        setPendingEditSaveStatus("idle")
+        setPendingEditSaveStatusId((current) => (current === id ? null : current))
+      }, 2000)
+    },
+    [clearPendingEditSaveStatusTimer],
+  )
+
+  useEffect(() => clearPendingEditSaveStatusTimer, [clearPendingEditSaveStatusTimer])
 
   useEffect(() => {
     if (focusSignal == null) return
@@ -671,6 +733,7 @@ export default function ChatInput({
     agentId: currentAgentId,
     ensureSession: onEnsureSession,
     bypassLoopCreateOnEnter: !!onLoopModeSubmit,
+    supportsSideChat: enableSideChatCommand,
   }
   const slash = useSlashCommands(input, setComposerInput, slashActions, inputHandleRef)
   const voice = useVoiceInput(currentSessionId)
@@ -692,8 +755,10 @@ export default function ChatInput({
   }, [activeGoal?.id, activeGoal?.objective, activeGoal?.completionCriteria])
 
   useEffect(() => {
-    if (!currentSessionId || incognitoEnabled) {
-      setWorkflowMode(incognitoEnabled ? "off" : normalizeWorkflowMode(draftWorkflowMode))
+    if (!currentSessionId || incognitoEnabled || !enableWorkflowMode) {
+      setWorkflowMode(
+        incognitoEnabled || !enableWorkflowMode ? "off" : normalizeWorkflowMode(draftWorkflowMode),
+      )
       setWorkflowModeLoading(false)
       setWorkflowModeSaving(null)
       return
@@ -716,9 +781,10 @@ export default function ChatInput({
     return () => {
       cancelled = true
     }
-  }, [currentSessionId, draftWorkflowMode, incognitoEnabled])
+  }, [currentSessionId, draftWorkflowMode, enableWorkflowMode, incognitoEnabled])
 
   useEffect(() => {
+    if (!enableWorkflowMode) return
     const onWorkflowModeChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string | null; mode?: unknown }>).detail
       if (!detail || detail.sessionId !== currentSessionId) return
@@ -728,7 +794,7 @@ export default function ChatInput({
     }
     window.addEventListener(WORKFLOW_MODE_CHANGED_EVENT, onWorkflowModeChanged)
     return () => window.removeEventListener(WORKFLOW_MODE_CHANGED_EVENT, onWorkflowModeChanged)
-  }, [currentSessionId])
+  }, [currentSessionId, enableWorkflowMode])
 
   /**
    * Caret anchor captured at `voice.start()` time. While recording, the
@@ -894,6 +960,7 @@ export default function ChatInput({
     enableSkillMention,
     enableAgentMention ? agents : [],
     currentAgentId,
+    onInputChangeWithMention,
   )
   // `[[note]]` picker — knowledge-space notes reachable from this chat.
   const noteMention = useNoteMention(
@@ -904,6 +971,7 @@ export default function ChatInput({
     projectId ?? null,
     draftKbAttachments ?? [],
     enableNoteMention,
+    onInputChangeWithMention,
   )
   // User-global quick prompts (`#` popper).
   const quickPrompt = useQuickPrompts(input, setComposerInput, inputHandleRef, quickPrompts)
@@ -1223,7 +1291,9 @@ export default function ChatInput({
     // Normalize slash-form Goal drafts even when the Goal composer is already
     // active. Pasting a reusable `/goal ...` prompt after clicking the Goal
     // button must not persist the command prefix as part of the objective.
-    const directGoalObjective = parseGoalUpsertSlashCommand(input)
+    const directGoalObjective = enableGoalAndPlanModes
+      ? parseGoalUpsertSlashCommand(input)
+      : null
     const directLoopPrompt =
       goalComposerMode || !onLoopModeSubmit ? null : parseLoopCreateSlashCommand(input)
     if (goalComposerMode || directGoalObjective) {
@@ -1274,6 +1344,7 @@ export default function ChatInput({
     incognitoEnabled,
     input,
     activeGoal,
+    enableGoalAndPlanModes,
     onGoalModeSubmit,
     onLoopModeSubmit,
     onSend,
@@ -1288,19 +1359,44 @@ export default function ChatInput({
     // Slash menu first (owns header `/...` slot), then `[[note]]` picker, then
     // `@` file mention, then `#` quick prompts, then history/send. Each handler self-guards on its own open
     // state, so only the active popper consumes the key.
-    if (slash.handleKeyDown(e)) return
-    if (noteMention.handleKeyDown(e)) return
-    if (mention.handleKeyDown(e)) return
-    if (quickPrompt.handleKeyDown(e)) return
+    const menuHandledKey =
+      slash.handleKeyDown(e) ||
+      noteMention.handleKeyDown(e) ||
+      mention.handleKeyDown(e) ||
+      quickPrompt.handleKeyDown(e)
+    if (menuHandledKey) {
+      if (e.key === "Tab") restoreFocusInputModalityAfterConsumedTab(e.nativeEvent)
+      return
+    }
     if (handleHistoryKeyDown(e)) return
     if (e.key === "Tab" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault()
       onPermissionModeChange(getNextPermissionMode(permissionMode))
       return
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    const sendsWithEnter = enterToSend.ready && enterToSend.enabled && !e.shiftKey
+    const sendsWithCtrlEnter =
+      enterToSend.ready &&
+      !enterToSend.enabled &&
+      e.ctrlKey &&
+      !e.shiftKey &&
+      !e.altKey &&
+      !e.metaKey
+    if (e.key === "Enter" && (sendsWithEnter || sendsWithCtrlEnter)) {
       e.preventDefault()
       handleSend()
+      return
+    }
+    if (
+      e.key === "Enter" &&
+      (!enterToSend.ready || !enterToSend.enabled) &&
+      !e.shiftKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.metaKey
+    ) {
+      e.preventDefault()
+      inputHandleRef.current?.insertNewline()
     }
   }
 
@@ -1448,6 +1544,7 @@ export default function ChatInput({
 
   // Shared by the inline Plan toggle and its "+" overflow-menu counterpart.
   const handlePlanToggle = () => {
+    if (!enableGoalAndPlanModes) return
     if (planState === "off" || planState === "completed") {
       setGoalComposerMode(false)
       setLoopComposerMode(false)
@@ -1462,6 +1559,7 @@ export default function ChatInput({
   }
 
   const handleGoalModeToggle = () => {
+    if (!enableGoalAndPlanModes) return
     if (incognitoEnabled) {
       toast.error(t("chat.goalMode.incognito", "无痕会话不持久化目标"))
       return
@@ -1495,6 +1593,7 @@ export default function ChatInput({
 
   const updateWorkflowMode = useCallback(
     async (nextMode: WorkflowMode) => {
+      if (!enableWorkflowMode) return
       if (incognitoEnabled) {
         toast.error(t("chat.workflowMode.incognito", "无痕会话不启用工作流模式"))
         return
@@ -1541,6 +1640,7 @@ export default function ChatInput({
     },
     [
       currentSessionId,
+      enableWorkflowMode,
       incognitoEnabled,
       onDraftWorkflowModeChange,
       t,
@@ -1665,11 +1765,11 @@ export default function ChatInput({
           ]
         : []
   const pendingVisibleItems = pendingExpanded ? pendingQueueItems : pendingQueueItems.slice(0, 2)
-  const nextSendablePendingId = pendingQueueItems.find(
-    (item) =>
-      item.managedBy !== "channel" &&
-      (item.status === "queued" || item.status === "fallback_after_reply"),
-  )?.id
+  const pendingQueueHead = pendingQueueItems.find(
+    (item) => item.status === "queued" || item.status === "fallback_after_reply",
+  )
+  const nextSendablePendingId =
+    pendingQueueHead?.managedBy == null ? pendingQueueHead?.id : undefined
   const hasPendingQueue = pendingQueueItems.length > 0
   const topStripBase =
     !topAccessory &&
@@ -1689,7 +1789,7 @@ export default function ChatInput({
     !!autonomyActivity &&
     autonomyActivity.state !== "idle" &&
     autonomyActivity.state !== "terminal"
-  const workflowModeStatusOpen = workflowModeActive && !incognitoEnabled
+  const workflowModeStatusOpen = enableWorkflowMode && workflowModeActive && !incognitoEnabled
   const workflowProgressLineIsFirstContent = activeGoalStripIsFirstContent && !activeGoalStatusOpen
   const standaloneActivityStripIsFirstContent =
     workflowProgressLineIsFirstContent && !effectiveShowWorkflowProgressLine
@@ -1702,7 +1802,7 @@ export default function ChatInput({
       case "saving":
         return t("chat.pendingSaving", "正在保存")
       case "waiting_tool_boundary":
-        return t("chat.pendingWaitingToolBoundary", "等待工具完成点")
+        return t("chat.pendingWaitingToolBoundary", "等待插入")
       case "inserting":
         return t("chat.pendingInserting", "正在插入")
       case "dispatching":
@@ -1710,10 +1810,10 @@ export default function ChatInput({
       case "fallback_after_reply":
         return t("chat.pendingFallbackAfterReply", "回复后发送")
       case "held_after_stop":
-        return t("channels.stopped", "已停止")
+        return t("chat.pendingHeldAfterStop", "已暂停发送")
       case "queued":
       default:
-        return t("chat.pendingQueuedShort", "排队中")
+        return t("chat.pendingFallbackAfterReply", "回复后发送")
     }
   }
 
@@ -1724,21 +1824,27 @@ export default function ChatInput({
       case "waiting_tool_boundary":
         return t(
           "chat.pendingWaitingToolBoundaryTip",
-          "等待最近一次工具调用完成；如果本轮不再调用工具，将改为回复结束后发送。",
+          "等待本批正在执行的工具全部完成后插入；如果本轮不再进入工具边界，将在回复结束后发送。",
         )
       case "fallback_after_reply":
         return t("chat.pendingFallbackAfterReplyTip", "未遇到工具完成点，将在当前回复结束后发送。")
       case "inserting":
-        return t("chat.pendingInsertingTip", "已进入工具完成边界，暂时不能编辑或删除。")
+        return t("chat.pendingInsertingTip", "已到达安全插入边界，暂时不能编辑或删除。")
       case "dispatching":
         return t("chat.pendingDispatchingTip", "正在从持久队列创建新的对话回合。")
       case "held_after_stop":
-        return t("chat.stopGenerationDone", "生成已停止")
+        return t("chat.pendingHeldAfterStopTip", "当前回复已停止，这条消息不会自动发送。")
       case "queued":
       default:
         return t("chat.pendingQueuedTip", "已加入待发送队列，将在当前回复结束后发送。")
     }
   }
+
+  const pendingStatusIsActive = (item: PendingSendPreview) =>
+    item.status === "saving" ||
+    item.status === "waiting_tool_boundary" ||
+    item.status === "inserting" ||
+    item.status === "dispatching"
 
   const renderInlineAddControls = () => (
     <>
@@ -1828,19 +1934,21 @@ export default function ChatInput({
             draftAttachments={draftKbAttachments}
             onDraftAttachChange={onDraftKbAttachChange}
           />
-          <button
-            type="button"
-            aria-label={goalToggleTip}
-            className={cn(overflowMenuItemClass, goalComposerMode && "text-emerald-600")}
-            disabled={incognitoEnabled}
-            onClick={() => {
-              setShowOverflowMenu(false)
-              handleGoalModeToggle()
-            }}
-          >
-            <Target className="h-4 w-4 shrink-0" />
-            <span className="truncate">{goalToggleLabel}</span>
-          </button>
+          {enableGoalAndPlanModes && (
+            <button
+              type="button"
+              aria-label={goalToggleTip}
+              className={cn(overflowMenuItemClass, goalComposerMode && "text-emerald-600")}
+              disabled={incognitoEnabled}
+              onClick={() => {
+                setShowOverflowMenu(false)
+                handleGoalModeToggle()
+              }}
+            >
+              <Target className="h-4 w-4 shrink-0" />
+              <span className="truncate">{goalToggleLabel}</span>
+            </button>
+          )}
           {loopModeAvailable && (
             <button
               type="button"
@@ -1855,35 +1963,39 @@ export default function ChatInput({
               <span className="truncate">{loopToggleLabel}</span>
             </button>
           )}
-          <div className="rounded-md border border-border/50 bg-background/35 p-1">
-            <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-medium text-muted-foreground">
-              {workflowModeSaving ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              ) : (
-                <WorkflowModeIcon className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="truncate">{workflowToggleLabel}</span>
-              <span className="ml-auto truncate">{workflowModeLabel(t, workflowMode)}</span>
+          {enableWorkflowMode && (
+            <div className="rounded-md border border-border/50 bg-background/35 p-1">
+              <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                {workflowModeSaving ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                ) : (
+                  <WorkflowModeIcon className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span className="truncate">{workflowToggleLabel}</span>
+                <span className="ml-auto truncate">{workflowModeLabel(t, workflowMode)}</span>
+              </div>
+              {renderWorkflowModeMenuItems(() => setShowOverflowMenu(false))}
             </div>
-            {renderWorkflowModeMenuItems(() => setShowOverflowMenu(false))}
-          </div>
-          <button
-            type="button"
-            aria-label={planToggleTip}
-            className={cn(
-              overflowMenuItemClass,
-              planState === "planning" && "text-blue-600",
-              planState === "review" && "text-purple-600",
-              planState === "executing" && "text-green-600",
-            )}
-            onClick={() => {
-              setShowOverflowMenu(false)
-              handlePlanToggle()
-            }}
-          >
-            <ClipboardList className="h-4 w-4 shrink-0" />
-            <span className="truncate">{planToggleLabel}</span>
-          </button>
+          )}
+          {enableGoalAndPlanModes && (
+            <button
+              type="button"
+              aria-label={planToggleTip}
+              className={cn(
+                overflowMenuItemClass,
+                planState === "planning" && "text-blue-600",
+                planState === "review" && "text-purple-600",
+                planState === "executing" && "text-green-600",
+              )}
+              onClick={() => {
+                setShowOverflowMenu(false)
+                handlePlanToggle()
+              }}
+            >
+              <ClipboardList className="h-4 w-4 shrink-0" />
+              <span className="truncate">{planToggleLabel}</span>
+            </button>
+          )}
         </>
       )}
       {permissionCollapsed && (
@@ -1976,6 +2088,9 @@ export default function ChatInput({
           noteCapable={mention.noteCapable}
           skillEntries={mention.skillEntries}
           skillCapable={mention.skillCapable}
+          capabilityEntries={mention.capabilityEntries}
+          capabilitiesLoading={mention.capabilitiesLoading}
+          capabilityCapable={mention.capabilityCapable}
           agentEntries={mention.agentEntries}
           agentCapable={mention.agentCapable}
           selectedIndex={mention.selectedIndex}
@@ -1989,6 +2104,7 @@ export default function ChatInput({
           onSelect={mention.applyEntry}
           onSelectNote={mention.applyNote}
           onSelectSkill={mention.applySkill}
+          onSelectCapability={mention.applyCapability}
           onSelectAgent={mention.applyAgent}
           onHover={mention.setSelectedIndex}
         />
@@ -2069,33 +2185,46 @@ export default function ChatInput({
         <AnimatedCollapse open={!!pendingQuotes?.length}>
           <div className="flex flex-wrap gap-1.5 px-3 pt-2">
             {pendingQuotes?.map((q, index) => {
+              const canJumpToQuote = Boolean(onJumpToQuote && q.revealable !== false)
               const lines =
-                q.startLine === q.endLine ? `${q.startLine}` : `${q.startLine}-${q.endLine}`
+                q.startLine <= 0 || q.endLine <= 0
+                  ? null
+                  : q.startLine === q.endLine
+                    ? `${q.startLine}`
+                    : `${q.startLine}-${q.endLine}`
               // Code-point-safe truncation so the preview can't split a surrogate
               // pair (emoji / astral CJK) and render a � at the cut.
               const cps = Array.from(q.content)
               const preview = cps.length > 400 ? `${cps.slice(0, 400).join("")}…` : q.content
               return (
                 <span
-                  key={`${q.path}:${lines}:${index}`}
+                  key={`${q.path}:${lines ?? "context"}:${index}`}
                   className="inline-flex max-w-[260px] items-center gap-0.5 rounded-md border border-border/60 bg-secondary/40 py-0.5 pl-1 pr-1 text-xs text-foreground/80"
                 >
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
-                        onClick={() => onJumpToQuote?.(q)}
-                        disabled={!onJumpToQuote}
-                        className="inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-background/70 disabled:pointer-events-none"
+                        onClick={() => {
+                          if (canJumpToQuote) onJumpToQuote?.(q)
+                        }}
+                        aria-disabled={!canJumpToQuote}
+                        tabIndex={canJumpToQuote ? 0 : -1}
+                        className={cn(
+                          "inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 transition-colors",
+                          canJumpToQuote ? "hover:bg-background/70" : "cursor-default",
+                        )}
                       >
                         <Quote className="h-3 w-3 shrink-0 text-muted-foreground" />
                         <span className="truncate">
                           {q.name}
-                          <span className="ml-1 text-muted-foreground">L{lines}</span>
+                          {lines ? (
+                            <span className="ml-1 text-muted-foreground">L{lines}</span>
+                          ) : null}
                         </span>
                       </button>
                     </TooltipTrigger>
-                    {/* Hover preview of the quoted text (click jumps to it). */}
+                    {/* Hover always previews; revealable file references can also jump to source. */}
                     <TooltipContent side="top" className="max-w-[340px]">
                       <span className="block max-h-40 overflow-hidden whitespace-pre-wrap text-xs">
                         {preview}
@@ -2120,9 +2249,8 @@ export default function ChatInput({
         {/* Pending send queue */}
         <AnimatedCollapse open={hasPendingQueue}>
           <div className="px-3 pt-2.5 pb-0 animate-in fade-in-0 slide-in-from-top-1 duration-200">
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 px-2.5 py-2">
-              <div className="mb-1.5 flex items-center gap-2">
-                <BetweenHorizontalStart className="h-4 w-4 shrink-0 text-amber-500" />
+            <div className="rounded-lg border border-border/60 bg-secondary/20 px-2.5 py-2">
+              <div className="mb-1 flex items-center gap-2 px-1">
                 <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/80">
                   {t("chat.pendingQueueTitle", "待发送")} · {pendingQueueItems.length}
                 </span>
@@ -2132,74 +2260,121 @@ export default function ChatInput({
                       pendingExpanded ? t("common.collapse", "收起") : t("common.expand", "展开")
                     }
                   >
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={
+                        pendingExpanded ? t("common.collapse", "收起") : t("common.expand", "展开")
+                      }
                       onClick={() => setPendingExpanded((v) => !v)}
-                      className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-background/70 hover:text-foreground"
+                      className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground"
                     >
                       {pendingExpanded ? (
                         <ChevronUp className="h-3.5 w-3.5" />
                       ) : (
                         <ChevronDown className="h-3.5 w-3.5" />
                       )}
-                    </button>
+                    </Button>
                   </IconTip>
                 )}
               </div>
-              <div className="flex flex-col gap-1.5">
+              <div
+                role="list"
+                aria-label={t("chat.pendingQueueTitle", "待发送")}
+                className="divide-y divide-border/40"
+              >
                 {pendingVisibleItems.map((item) => {
                   const beginEdit = () => {
                     if (item.id === "__legacy__") {
                       onCancelPending?.()
                       return
                     }
+                    clearPendingEditSaveStatusTimer()
+                    setPendingEditSaveStatus("idle")
+                    setPendingEditSaveStatusId(item.id)
                     setEditingPendingId(item.id)
                     setPendingEditValue(item.text)
                   }
                   const saveEdit = async () => {
                     const next = pendingEditValue.trim()
                     if (!next || !onEditPending) return
-                    setPendingEditSaving(true)
+                    updatePendingEditSaveStatus(item.id, "saving")
                     try {
                       const changed = await onEditPending(item.id, next)
-                      if (changed) setEditingPendingId(null)
-                    } finally {
-                      setPendingEditSaving(false)
+                      if (changed) {
+                        updatePendingEditSaveStatus(item.id, "saved")
+                        setEditingPendingId((current) => (current === item.id ? null : current))
+                      } else {
+                        updatePendingEditSaveStatus(item.id, "failed")
+                      }
+                    } catch (error) {
+                      logger.warn(
+                        "chat",
+                        "ChatInput::savePendingEdit",
+                        "Failed to update queued message",
+                        error,
+                      )
+                      updatePendingEditSaveStatus(item.id, "failed")
                     }
                   }
                   const discard = () =>
                     item.id === "__legacy__"
                       ? onDiscardPending?.()
                       : onDiscardPendingItem?.(item.id)
-                  const readonly =
-                    item.managedBy === "channel" ||
+                  const backendManaged = item.managedBy != null
+                  const menuLocked =
                     item.status === "saving" ||
                     item.status === "inserting" ||
                     item.status === "dispatching"
+                  const canEdit =
+                    !backendManaged &&
+                    !menuLocked &&
+                    item.status !== "held_after_stop" &&
+                    item.editable !== false
+                  // Defensive compatibility for legacy/local projections: ownerless held
+                  // rows may still be deleted, while backend-managed rows stay read-only.
+                  const canDelete = !backendManaged && !menuLocked
                   const canCancelForce =
-                    item.managedBy !== "channel" &&
+                    !backendManaged &&
                     item.mode === "force_insert" &&
                     item.status === "waiting_tool_boundary"
+                  const canForceInsert =
+                    !backendManaged &&
+                    loading &&
+                    item.canForceInsert &&
+                    (item.status === "queued" || item.status === "fallback_after_reply")
                   const canSendNow =
+                    !backendManaged &&
                     !loading &&
+                    !!onSendPending &&
                     item.id === nextSendablePendingId &&
                     (item.status === "queued" || item.status === "fallback_after_reply")
-                  const isEditing = editingPendingId === item.id
+                  const hasMenu = canEdit || canCancelForce || canDelete
+                  const isEditing = editingPendingId === item.id && canEdit
+                  const editSaveStatus =
+                    pendingEditSaveStatusId === item.id ? pendingEditSaveStatus : "idle"
+                  const editSaving = editSaveStatus === "saving"
+                  const editSaveLabel =
+                    editSaveStatus === "saving"
+                      ? t("common.saving", "正在保存…")
+                      : editSaveStatus === "failed"
+                        ? t("common.saveFailed", "保存失败")
+                        : editSaveStatus === "saved"
+                          ? t("common.saved", "已保存")
+                          : t("common.save", "保存")
                   return (
                     <div
                       key={item.id}
-                      className="flex min-w-0 items-center gap-1.5 rounded-md bg-background/45 px-2 py-1.5"
+                      role="listitem"
+                      className="group flex min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-secondary/35"
                     >
-                      <IconTip label={pendingStatusTip(item)}>
-                        <span className="shrink-0 rounded-sm bg-amber-500/12 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
-                          {pendingStatusLabel(item)}
-                        </span>
-                      </IconTip>
                       {isEditing ? (
                         <Input
                           autoFocus
+                          aria-label={t("chat.pendingEdit", "编辑消息")}
                           value={pendingEditValue}
-                          disabled={pendingEditSaving}
+                          disabled={editSaving}
                           className="h-7 min-w-0 flex-1 px-2 text-sm"
                           onChange={(event) => setPendingEditValue(event.target.value)}
                           onKeyDown={(event) => {
@@ -2213,6 +2388,11 @@ export default function ChatInput({
                         />
                       ) : (
                         <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">
+                          {item.managedBy === "scheduled" && (
+                            <IconTip label={t("chat.cronTrigger")}>
+                              <Timer className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-primary" />
+                            </IconTip>
+                          )}
                           {item.text}
                           {(item.attachmentCount > 0 || item.quoteCount > 0) && (
                             <span className="ml-1 text-xs text-muted-foreground">
@@ -2221,93 +2401,158 @@ export default function ChatInput({
                           )}
                         </span>
                       )}
+                      <IconTip label={pendingStatusTip(item)}>
+                        <span
+                          aria-live="polite"
+                          aria-atomic="true"
+                          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground"
+                        >
+                          {pendingStatusIsActive(item) && (
+                            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          )}
+                          {pendingStatusLabel(item)}
+                        </span>
+                      </IconTip>
                       {isEditing ? (
                         <>
-                          <button
-                            type="button"
-                            disabled={pendingEditSaving || !pendingEditValue.trim()}
-                            className="rounded-md p-1 text-emerald-600 hover:bg-emerald-500/10 disabled:opacity-40"
-                            onClick={() => void saveEdit()}
-                          >
-                            {pendingEditSaving ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Check className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-md p-1 text-muted-foreground hover:bg-secondary"
-                            onClick={() => setEditingPendingId(null)}
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
+                          {editSaveStatus !== "idle" && (
+                            <span role="status" aria-live="polite" className="sr-only">
+                              {editSaveLabel}
+                            </span>
+                          )}
+                          <IconTip label={editSaveLabel}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={editSaveLabel}
+                              disabled={editSaving || !pendingEditValue.trim()}
+                              className={cn(
+                                "h-7 w-7 rounded-md disabled:opacity-40",
+                                editSaveStatus === "failed"
+                                  ? "text-destructive hover:bg-destructive/10"
+                                  : "text-emerald-600 hover:bg-emerald-500/10",
+                              )}
+                              onClick={() => void saveEdit()}
+                            >
+                              {editSaving ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : editSaveStatus === "failed" ? (
+                                <X className="h-3.5 w-3.5" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </IconTip>
+                          <IconTip label={t("common.cancel", "取消")}>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("common.cancel", "取消")}
+                              disabled={editSaving}
+                              className="h-7 w-7 rounded-md text-muted-foreground"
+                              onClick={() => setEditingPendingId(null)}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </IconTip>
                         </>
                       ) : null}
-                      {!isEditing && canSendNow && (
-                        <IconTip label={t("chat.pendingSendNow", "立即发送")}>
-                          <button
-                            type="button"
-                            className="rounded-md p-1 text-emerald-600 transition-colors hover:bg-emerald-500/10"
-                            onClick={() => onSendPending?.(item.id)}
+                      {!isEditing && editSaveStatus === "saved" && (
+                        <IconTip label={editSaveLabel}>
+                          <span
+                            role="status"
+                            aria-live="polite"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center text-emerald-600"
                           >
-                            <PlayCircle className="h-3.5 w-3.5" />
-                          </button>
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="sr-only">{editSaveLabel}</span>
+                          </span>
                         </IconTip>
                       )}
-                      {!isEditing &&
-                        (canCancelForce ? (
-                          <IconTip label={t("chat.pendingCancelForceInsert", "取消插入本轮")}>
-                            <button
-                              type="button"
-                              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                              onClick={() => onCancelForceInsertPending?.(item.id)}
-                            >
-                              <Undo2 className="h-3.5 w-3.5" />
-                            </button>
-                          </IconTip>
-                        ) : (
-                          loading &&
-                          item.canForceInsert && (
-                            <IconTip
-                              label={t(
-                                "chat.pendingForceInsertTip",
-                                "会等正在执行的工具完成后插入给模型，不会打断当前工具。",
-                              )}
-                            >
-                              <button
-                                type="button"
-                                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                                onClick={() => onForceInsertPending?.(item.id)}
-                              >
-                                <BetweenHorizontalStart className="h-3.5 w-3.5" />
-                              </button>
-                            </IconTip>
-                          )
-                        ))}
-                      {!isEditing && !readonly && (
-                        <>
-                          {item.editable !== false && (
-                            <IconTip label={t("chat.pendingEdit")}>
-                              <button
-                                type="button"
-                                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                                onClick={beginEdit}
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                            </IconTip>
+                      {!isEditing && canSendNow && (
+                        <IconTip label={t("chat.pendingSendNow", "立即发送")}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={t("chat.pendingSendNow", "立即发送")}
+                            className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-foreground/75 hover:text-foreground"
+                            onClick={() => onSendPending(item.id)}
+                          >
+                            <PlayCircle className="h-3.5 w-3.5" />
+                            <span>{t("chat.pendingSendNow", "立即发送")}</span>
+                          </Button>
+                        </IconTip>
+                      )}
+                      {!isEditing && canForceInsert && (
+                        <IconTip
+                          label={t(
+                            "chat.pendingForceInsertTip",
+                            "等本批正在执行的工具全部完成后插入给模型，不会中断这些工具；如果本轮不再进入工具边界，则在回复结束后发送。",
                           )}
-                          <IconTip label={t("chat.pendingDelete")}>
-                            <button
-                              type="button"
-                              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                              onClick={discard}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                        >
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            aria-label={t("chat.pendingInsert", "插入")}
+                            className="h-7 shrink-0 gap-1 rounded-md px-2 text-xs text-foreground/75 hover:text-foreground"
+                            onClick={() => onForceInsertPending?.(item.id)}
+                          >
+                            <BetweenHorizontalStart className="h-3.5 w-3.5" />
+                            <span>{t("chat.pendingInsert", "插入")}</span>
+                          </Button>
+                        </IconTip>
+                      )}
+                      {!isEditing && hasMenu && (
+                        <DropdownMenu>
+                          <IconTip label={t("chat.pendingMoreActions", "更多消息操作")}>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t("chat.pendingMoreActions", "更多消息操作")}
+                                className="h-7 w-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+                              >
+                                <MoreHorizontal className="h-3.5 w-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
                           </IconTip>
-                        </>
+                          <DropdownMenuContent
+                            variant="floating"
+                            side="top"
+                            align="end"
+                            sideOffset={6}
+                          >
+                            {canEdit && (
+                              <DropdownMenuItem onSelect={beginEdit} className="gap-2">
+                                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                                {t("chat.pendingEdit", "编辑消息")}
+                              </DropdownMenuItem>
+                            )}
+                            {canCancelForce && (
+                              <DropdownMenuItem
+                                onSelect={() => onCancelForceInsertPending?.(item.id)}
+                                className="gap-2"
+                              >
+                                <Undo2 className="h-3.5 w-3.5 text-muted-foreground" />
+                                {t("chat.pendingCancelForceInsert", "改为回复后发送")}
+                              </DropdownMenuItem>
+                            )}
+                            {canDelete && (
+                              <DropdownMenuItem
+                                onSelect={discard}
+                                className="gap-2 text-destructive focus:text-destructive"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                {t("chat.pendingDelete", "删除消息")}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </div>
                   )
@@ -2790,6 +3035,7 @@ export default function ChatInput({
                       : t("chat.askAnything")
             }
             value={input}
+            typedMentions={structuredMentions}
             onChange={setComposerInput}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
@@ -2802,6 +3048,7 @@ export default function ChatInput({
             fileEnabled={!!workingDir}
             noteEnabled={enableNoteMention}
             skillEnabled={enableSkillMention}
+            capabilityEnabled
             agentMentionEnabled={enableAgentMention}
             agents={agents}
             hero={hero}
@@ -2941,24 +3188,26 @@ export default function ChatInput({
                       onDraftAttachChange={onDraftKbAttachChange}
                     />
 
-                    <IconTip label={goalToggleTip}>
-                      <button
-                        aria-label={goalToggleTip}
-                        onClick={handleGoalModeToggle}
-                        disabled={incognitoEnabled}
-                        className={cn(
-                          "flex items-center gap-1 bg-transparent text-xs font-medium px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-secondary shrink-0 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50",
-                          goalComposerMode
-                            ? "text-emerald-600 bg-emerald-500/10"
-                            : activeGoal
-                              ? "text-emerald-600/90 hover:text-emerald-700"
-                              : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        <Target className="h-4 w-4 shrink-0" />
-                        <span>{goalToggleLabel}</span>
-                      </button>
-                    </IconTip>
+                    {enableGoalAndPlanModes && (
+                      <IconTip label={goalToggleTip}>
+                        <button
+                          aria-label={goalToggleTip}
+                          onClick={handleGoalModeToggle}
+                          disabled={incognitoEnabled}
+                          className={cn(
+                            "flex items-center gap-1 bg-transparent text-xs font-medium px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-secondary shrink-0 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50",
+                            goalComposerMode
+                              ? "text-emerald-600 bg-emerald-500/10"
+                              : activeGoal
+                                ? "text-emerald-600/90 hover:text-emerald-700"
+                                : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <Target className="h-4 w-4 shrink-0" />
+                          <span>{goalToggleLabel}</span>
+                        </button>
+                      </IconTip>
+                    )}
 
                     {loopModeAvailable && (
                       <IconTip label={loopToggleTip}>
@@ -2980,58 +3229,62 @@ export default function ChatInput({
                       </IconTip>
                     )}
 
-                    <DropdownMenu open={workflowMenuOpen} onOpenChange={setWorkflowMenuOpen}>
-                      <IconTip label={workflowMenuLabel}>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            aria-label={workflowMenuLabel}
-                            disabled={workflowMenuDisabled}
-                            className={cn(
-                              "flex items-center gap-1 bg-transparent text-xs font-medium px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-secondary shrink-0 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-secondary",
-                              workflowButtonTone,
-                            )}
-                          >
-                            {workflowModeSaving ? (
-                              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                            ) : (
-                              <WorkflowModeIcon className="h-4 w-4 shrink-0" />
-                            )}
-                            <span>{workflowButtonLabel}</span>
-                            <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
-                          </button>
-                        </DropdownMenuTrigger>
-                      </IconTip>
-                      <DropdownMenuContent
-                        variant="floating"
-                        className="min-w-[280px]"
-                        side="top"
-                        align="start"
-                        sideOffset={8}
-                      >
-                        {renderWorkflowModeMenuItems(() => setWorkflowMenuOpen(false))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {enableWorkflowMode && (
+                      <DropdownMenu open={workflowMenuOpen} onOpenChange={setWorkflowMenuOpen}>
+                        <IconTip label={workflowMenuLabel}>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label={workflowMenuLabel}
+                              disabled={workflowMenuDisabled}
+                              className={cn(
+                                "flex items-center gap-1 bg-transparent text-xs font-medium px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-secondary shrink-0 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:bg-secondary",
+                                workflowButtonTone,
+                              )}
+                            >
+                              {workflowModeSaving ? (
+                                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                              ) : (
+                                <WorkflowModeIcon className="h-4 w-4 shrink-0" />
+                              )}
+                              <span>{workflowButtonLabel}</span>
+                              <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                            </button>
+                          </DropdownMenuTrigger>
+                        </IconTip>
+                        <DropdownMenuContent
+                          variant="floating"
+                          className="min-w-[280px]"
+                          side="top"
+                          align="start"
+                          sideOffset={8}
+                        >
+                          {renderWorkflowModeMenuItems(() => setWorkflowMenuOpen(false))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
 
-                    <IconTip label={planToggleTip}>
-                      <button
-                        aria-label={planToggleTip}
-                        onClick={handlePlanToggle}
-                        className={cn(
-                          "flex items-center gap-1 bg-transparent text-xs font-medium px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-secondary shrink-0 whitespace-nowrap",
-                          planState === "planning"
-                            ? "text-blue-600 bg-blue-500/10"
-                            : planState === "review"
-                              ? "text-purple-600 bg-purple-500/10"
-                              : planState === "executing"
-                                ? "text-green-600 bg-green-500/10"
-                                : "text-muted-foreground hover:text-foreground",
-                        )}
-                      >
-                        <ClipboardList className="h-4 w-4 shrink-0" />
-                        <span>{planToggleLabel}</span>
-                      </button>
-                    </IconTip>
+                    {enableGoalAndPlanModes && (
+                      <IconTip label={planToggleTip}>
+                        <button
+                          aria-label={planToggleTip}
+                          onClick={handlePlanToggle}
+                          className={cn(
+                            "flex items-center gap-1 bg-transparent text-xs font-medium px-2 py-1 rounded-lg cursor-pointer transition-colors hover:bg-secondary shrink-0 whitespace-nowrap",
+                            planState === "planning"
+                              ? "text-blue-600 bg-blue-500/10"
+                              : planState === "review"
+                                ? "text-purple-600 bg-purple-500/10"
+                                : planState === "executing"
+                                  ? "text-green-600 bg-green-500/10"
+                                  : "text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <ClipboardList className="h-4 w-4 shrink-0" />
+                          <span>{planToggleLabel}</span>
+                        </button>
+                      </IconTip>
+                    )}
                   </div>
                 )}
 
@@ -3076,11 +3329,27 @@ export default function ChatInput({
                       <Button
                         size="icon"
                         variant="destructive"
-                        className="h-8 w-8 rounded-full shrink-0"
+                        className="h-7 w-7 shrink-0 rounded-full"
                         onClick={onStop}
+                        disabled={stopPending}
                         aria-label={t("chat.stopReply")}
                       >
                         <Square className="h-4 w-4 fill-white stroke-white" />
+                      </Button>
+                    </IconTip>
+                  </div>
+                )}
+                {!loading && autonomyPaused && onContinue && (
+                  <div className="animate-in fade-in-0 zoom-in-90 duration-150">
+                    <IconTip label={t("chat.continuePausedWork")}>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-8 w-8 shrink-0 rounded-full"
+                        onClick={onContinue}
+                        aria-label={t("chat.continuePausedWork")}
+                      >
+                        <PlayCircle className="h-4 w-4" />
                       </Button>
                     </IconTip>
                   </div>
@@ -3095,7 +3364,7 @@ export default function ChatInput({
                 >
                   <Button
                     size="icon"
-                    className="h-8 w-8 rounded-full shrink-0"
+                    className="h-7 w-7 shrink-0 rounded-full"
                     onClick={handleSend}
                     disabled={sendUnavailable || goalSubmitting || loopSubmitting}
                     aria-label={

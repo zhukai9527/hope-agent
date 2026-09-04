@@ -190,14 +190,6 @@
     "labelPlaceholder": "Label (e.g. Org A Key)",
     "title": "API Key Rotation Profiles"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "Answer needed",
-      "detail": "{{count}} questions are waiting in the conversation",
-      "detail_one": "A question is waiting in the conversation",
-      "openAction": "Answer now"
-    }
-  },
   "canvas": {
     "close": "Close",
     "export": "Export",
@@ -318,6 +310,16 @@
     "removeConfig": "Remove",
     "running": "Running",
     "selectChannel": "Select Channel",
+    "nativeReply": "Native streaming replies",
+    "nativeReplyHint": "Use the provider's native reply stream. Turn this off to immediately fall back to ordinary messages.",
+    "imsgProtocolV1": "Reliable imsg protocol",
+    "imsgProtocolV1Hint": "Negotiate protocol v1, recover watch overflows, and supervise child-process restarts. Turn off to use legacy RPC.",
+    "googleChatStandardMarkdown": "Standard Markdown",
+    "googleChatStandardMarkdownHint": "Use Google Chat's standard Markdown for newly created text messages. Turn off to use the legacy Chat syntax.",
+    "discordChannelObfuscation": "Test private-channel obfuscation",
+    "discordChannelObfuscationHint": "Opt this account into Discord's temporary Gateway behavior. Hidden channels are never selectable or processed.",
+    "discordFileRequests": "Discord native file requests",
+    "discordFileRequestsHint": "Let structured questions open a single-file upload modal. The server still revalidates type, size, and conversation binding.",
     "showThinking": "Show thinking in IM messages",
     "showThinkingHint": "When enabled, the model's reasoning is rendered as a quoted block before each round's reply. Default off — reasoning stays out of IM.",
     "signalAccount": "Phone Number",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark (International)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "Message sent to “{{title}}”",
+      "receivedFrom": "Sent from “{{title}}”",
+      "untitled": "Untitled conversation",
+      "details": "View message details"
+    },
     "addWorkingDirectory": "Add working directory",
     "askAnything": "Tell me your idea, @ finds files/notes/skills, # quick prompts, / quick commands...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "Continue in new session",
       "continuedFrom": "Continued from",
       "created": "Continued in a new session",
+      "createdButNotOpened": "Fork `{{id}}` was created but not opened. Select it from the session list to continue.",
       "failed": "Couldn't continue in a new session",
       "sourceFallback": "source session"
+    },
+    "sideChat": {
+      "label": "Side chat",
+      "untitled": "Side chat {{index}}",
+      "new": "New side chat",
+      "close": "Close side chat panel",
+      "nonBlocking": "Ask independently without interrupting the main chat",
+      "askSelection": "Ask in side chat",
+      "createFailed": "Couldn't create side chat"
     },
     "browserPanel": {
       "backendBadgeTooltip": "Browser backend: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "Compressing earlier context",
     "contextCompactedMsgs": "{{count}} older msgs",
     "contextCompactionFailedTitle": "Context compression paused",
+    "contextCompactionRetry": "Retry compression",
     "contextCompaction": {
       "preparing": "Compressing earlier context",
       "summarizing": "Generating session summary",
@@ -553,6 +572,7 @@
       "noMatches": "No matching quick prompts"
     },
     "cronTaskStarted": "A scheduled task was triggered",
+    "scheduledOrigin": "Scheduled task: {{name}}",
     "cronTrigger": "Scheduled Task",
     "loopTriggered": "Triggered one loop step",
     "loopTrigger": "Loop",
@@ -651,6 +671,7 @@
     "markAllRead": "Mark all as read",
     "markAsRead": "Mark as read",
     "pinSession": "Pin",
+    "pinnedSessions": "Pinned",
     "unpinSession": "Unpin",
     "minutesAgo": "{{count}}min ago",
     "modelsCount": "{{count}} models",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "Sandbox",
       "off": {
-        "desc": "Automatically choose the host, WSL, or an isolated environment.",
-        "label": "Automatic"
+        "desc": "Run on the host; approval behavior is unchanged.",
+        "label": "Sandbox Off"
       },
       "setupTitle": "Configure Docker to enable sandbox",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "Authentication failed",
     "reasonBilling": "Billing / quota exceeded",
     "reasonContextOverflow": "Context overflow",
+    "reasonDispatchUnknown": "Dispatch outcome unknown — not retried automatically",
     "reasonModelNotFound": "Model not found",
     "reasonOverloaded": "Service overloaded",
     "reasonRateLimit": "Rate limit exceeded",
@@ -899,6 +921,7 @@
     "statusThinking": "Thinking",
     "statusUpdated": "Updated",
     "stopReply": "Stop reply",
+    "continuePausedWork": "Continue paused work",
     "stopGenerationDone": "Generation stopped",
     "subagentFrom": "Invoked by {{agent}}",
     "subagentResultCompleted": "Completed",
@@ -923,6 +946,7 @@
     "thinking": "Running...",
     "thinkingAutoDisabled": "{{provider}} / {{model}} does not support the current thinking mode. Thinking was disabled automatically and the request was retried.",
     "visionAutoDisabled": "{{provider}} / {{model}} does not support image input. The image was ignored and the reply continued.",
+    "visionBridgeConfigureAction": "Configure vision bridge",
     "toolCalling": "Calling tools...",
     "totalTokens": "Total",
     "unknownProvider": "Unknown provider",
@@ -983,6 +1007,9 @@
       "failed": "Failed to export the conversation.",
       "untitled": "Untitled"
     },
+    "capabilityMention": {
+      "heading": "Plugins & connectors"
+    },
     "skillMention": {
       "heading": "Skills",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Chrome extension required"
     },
     "conversationEmpty": "No messages in this conversation",
-    "pendingCancelForceInsert": "Cancel insertion of this round",
+    "pendingCancelForceInsert": "Send after reply instead",
     "pendingSaving": "Saving",
     "pendingSavingTip": "Saving the message and attachments to the recoverable queue.",
     "pendingInserting": "Inserting",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "Send now",
     "pendingFallbackAfterReply": "Send after reply",
     "pendingFallbackAfterReplyTip": "The tool completion point has not been encountered and will be sent after the current reply ends.",
-    "pendingForceInsertTip": "It will wait until the tool being executed is completed and then insert it into the model without interrupting the current tool.",
+    "pendingForceInsertTip": "Insert it for the model after every tool currently running in this batch finishes. This won’t interrupt those tools; if this turn reaches no further tool boundary, it will send after the reply.",
+    "pendingInsert": "Insert",
     "pendingInserted": "inserted",
     "pendingInsertedTip": "It has been inserted into the model after this round of tooling is completed.",
-    "pendingQueuedShort": "Queuing",
+    "pendingHeldAfterStop": "Sending paused",
+    "pendingHeldAfterStopTip": "The current reply was stopped, so this message will not be sent automatically.",
+    "pendingMoreActions": "More message actions",
+    "pendingQueuedShort": "Send after reply",
     "pendingQueuedTip": "It has been added to the waiting queue and will be sent after the current reply ends.",
     "pendingQueueTitle": "To be sent",
-    "pendingWaitingToolBoundary": "Wait for tool completion point",
-    "pendingWaitingToolBoundaryTip": "Wait for the latest tool call to be completed; if the tool is no longer called this round, it will be sent after the reply is completed.",
+    "pendingWaitingToolBoundary": "Waiting to insert",
+    "pendingWaitingToolBoundaryTip": "Waiting for every tool currently running in this batch to finish before inserting; if this turn reaches no further tool boundary, it will send after the reply.",
     "processNotification": "process ended",
     "rightPanel": {
       "collapse": "Collapse right panel",
       "expand": "Expand right panel",
       "switch": "Switch right panel",
       "dock": "Right panel dock",
-      "openPanel": "Open {{panel}}",
-      "switchToPanel": "Switch to {{panel}}",
-      "collapsePanel": "Collapse {{panel}}",
-      "expandPanel": "Expand {{panel}}",
+      "resize": "Resize workbench",
       "workflowActiveCount": "{{count}} active workflows",
       "workflowAttentionCount": "{{count}} workflows need attention",
       "backgroundRunningCount": "{{count}} background tasks running",
-      "subagentRunningCount": "{{count}} sub-agents running"
+      "subagentRunningCount": "{{count}} sub-agents running",
+      "openPanel": "Open {{panel}}",
+      "switchToPanel": "Switch to {{panel}}",
+      "collapsePanel": "Collapse {{panel}}",
+      "expandPanel": "Expand {{panel}}"
     },
     "visionBridgeEngaged": "The primary model can't view images, so {{model}} described them for it.",
     "visionBridgeUnavailable": "The vision model couldn't describe the image, so it was left out.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "Add target",
     "agent": "Agent",
     "archivedProject": "(archived)",
+    "workspaceModePersistent": "Persistent worktree",
+    "workspaceCleanup": "After each run",
+    "workspaceCleanupOption": {
+      "retain": "Keep",
+      "discardIfClean": "Remove if unchanged",
+      "always": "Always remove"
+    },
+    "workspaceCleanupHint": {
+      "retain": "Every run keeps its Worktree until you archive or discard it.",
+      "discardIfClean": "The Worktree is removed only when the run left no changes and no new commits — nothing you could still need is ever deleted.",
+      "always": "The Worktree is removed after every run, including its uncommitted changes. Use only when the real output is delivered elsewhere."
+    },
+    "workspaceModeHint": "Project uses its directory; New creates one worktree per run; Persistent reuses one per task. Base branch applies to worktrees.",
+    "workspaceActionBlocked": "Unavailable: {{reason}}",
+    "workspaceActionReturn": "Return",
+    "workspaceActionResume": "Return & resume",
+    "workspaceActionDone": "{{action}} completed",
     "atGrace": "Grace (s)",
     "atGraceHint": "Late-fire window: a one-shot 'at' task that came due while the app was closed still runs if it's no more than this many seconds overdue; beyond that it's marked missed (0 = strict, no late-fire).",
     "atMinute": "At minute",
     "atTime": "At",
     "autoAgent": "Auto (Project/default)",
+    "cancelRunFailed": "Failed to stop this run",
     "completed": "Completed",
     "conversationEmpty": "No messages in this conversation",
     "conversationsSelectHint": "Select a run to view",
@@ -1463,7 +1513,7 @@
     "cronHelp": "Format: sec min hour day month weekday (e.g. 0 0 9 * * 1-5 = weekdays 9am)",
     "dateTime": "Date & Time",
     "daySuffix": "",
-    "deleteConfirmDesc": "This will permanently remove the scheduled task and its run history.",
+    "deleteConfirmDesc": "Deleting only stops future scheduling. Run history, conversations, and worktrees will be retained.",
     "deleteConfirmTitle": "Delete \"{{name}}\"?",
     "deleteFailed": "Failed to delete \"{{name}}\"",
     "deleteSuccess": "Deleted \"{{name}}\"",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "Every month on the",
     "failures": "Failures",
     "filterAll": "All",
+    "filterAttention": "Needs attention",
+    "schedulerPrimary": "Scheduler: primary process",
+    "schedulerSecondary": "Scheduler: secondary process (cannot run tasks)",
+    "schedulerRunning": "Running {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "Auto-disabled after {{failures}}/{{max}} consecutive failures",
+      "runFailed": "Last run failed",
+      "missed": "Missed its scheduled run",
+      "deliveryStale": "A delivery target is no longer valid",
+      "failing": "{{failures}}/{{max}} consecutive failures"
+    },
     "freq_custom": "Custom",
     "freq_daily": "Daily",
     "freq_hourly": "Hourly",
@@ -1521,6 +1582,19 @@
     "name": "Task Name",
     "namePlaceholder": "e.g. Daily Summary",
     "newJob": "New Task",
+    "conversationTarget": "Run in",
+    "conversationTargetNew": "New chat each run",
+    "conversationTargetExisting": "An existing chat",
+    "sessionTargetPlaceholder": "Select a chat",
+    "sessionTargetSearchPlaceholder": "Search chats",
+    "sessionTargetEmpty": "No matching chats",
+    "errorSessionTargetRequired": "Select the chat this task should run in",
+    "copyAsNewTask": "Copy as New Task",
+    "deletedTaskHint": "This task is deleted: history is kept and no further runs are scheduled.",
+    "runAgain": "Run Again",
+    "createWithModel": "Create with Model",
+    "manualSetup": "Set Up Manually",
+    "createWithModelPrompt": "Help me create a scheduled task. I want it to automatically ... when ...",
     "nextRun": "Next Run",
     "noConversations": "No run history yet",
     "noConversationsYet": "This account has no recorded conversations yet (have the bot receive a message first)",
@@ -1536,8 +1610,13 @@
     "paused": "Paused",
     "prefixDeliveryWithName": "Prefix with task name",
     "prefixDeliveryWithNameDesc": "Prefix successful deliveries with [Cron] {name} so multiple tasks delivering to the same chat stay distinguishable",
+    "preflightTitle": "Preflight",
+    "preflightDescription": "Review the resolved schedule and execution environment before continuing.",
+    "preflightIssue": "Check required: {{code}}",
     "project": "Project",
+    "reloadLatest": "Reload latest",
     "removeTarget": "Remove target",
+    "revisionConflict": "This task changed elsewhere. Your draft is preserved; only reload the latest version when you are ready to replace it.",
     "resume": "Resume",
     "runHistory": "Run History",
     "runNow": "Run Now",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "Running",
     "runStatusSuccess": "Success",
     "schedule": "Schedule",
+    "scheduleSession": "Schedule this chat",
+    "sessionTurnTarget": "Target chat",
+    "sessionTurnLiveHint": "Agent, Project, knowledge spaces, working directory, permission mode, and sandbox are read live from this chat at each run.",
     "scheduleAt": "One-time",
     "scheduleCron": "Scheduled",
     "scheduleEvery": "Recurring",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "Unlimited run",
+      "unlimitedModeWarning": "Disables evaluation cost, time, token, call, agent, and concurrency limits. The run may continue indefinitely and incur uncontrolled Provider charges; permission, security, isolation, cancellation, and cleanup protections remain active.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "Preview",
-    "resizePanel": "Resize preview panel"
+    "resizePanel": "Resize preview panel",
+    "pathBreadcrumb": "File path",
+    "revealFolder": "Show folder in Files",
+    "copyPath": "Copy full path"
   },
   "fileBrowser": {
     "panelTitle": "Files",
+    "primaryFolder": "Primary",
+    "defaultProjectFolder": "Default project folder",
     "jumpToFile": "Show in file browser",
     "copied": "Copied",
     "copyFailed": "Copy failed",
@@ -2733,7 +2850,10 @@
     "zoomOut": "Zoom out",
     "zoomIn": "Zoom in",
     "fitWidth": "Fit width",
-    "officeNoContent": "No content could be extracted from this file."
+    "officeNoContent": "No content could be extracted from this file.",
+    "openInNewTab": "Open in a new tab",
+    "collapseTree": "Hide file list",
+    "expandTree": "Show file list"
   },
   "diffPanel": {
     "fileTooLarge": "File too large, only the first 256KB is rendered",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "High",
     "low": "Low",
+    "max": "Max",
     "medium": "Medium",
     "minimal": "Minimal",
     "none": "Off",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "Processed"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "close {{count}} agent",
+          "close_other": "close {{count}} agents",
+          "closeAll": "close all agents",
+          "message_one": "message {{count}} agent",
+          "message_other": "message {{count}} agents",
+          "observe_one": "check {{count}} agent",
+          "observe_other": "check {{count}} agents",
+          "resume_one": "resume {{count}} agent",
+          "resume_other": "resume {{count}} agents"
+        },
+        "cron": {
+          "pause_one": "pause {{count}} schedule",
+          "pause_other": "pause {{count}} schedules",
+          "resume_one": "resume {{count}} schedule",
+          "resume_other": "resume {{count}} schedules"
+        },
+        "job": {
+          "cancel_one": "cancel {{count}} task",
+          "cancel_other": "cancel {{count}} tasks"
+        },
+        "process": {
+          "close_one": "close {{count}} process",
+          "close_other": "close {{count}} processes"
+        },
+        "team": {
+          "pause_one": "pause {{count}} team",
+          "pause_other": "pause {{count}} teams",
+          "resume_one": "resume {{count}} team",
+          "resume_other": "resume {{count}} teams"
+        },
+        "workflow": {
+          "cancel_one": "cancel {{count}} workflow",
+          "cancel_other": "cancel {{count}} workflows",
+          "pause_one": "pause {{count}} workflow",
+          "pause_other": "pause {{count}} workflows",
+          "resume_one": "resume {{count}} workflow",
+          "resume_other": "resume {{count}} workflows"
+        }
+      },
+      "aggregate": {
+        "failed_one": "{{count}} failed",
+        "failed_other": "{{count}} failed",
+        "pending_one": "{{count}} pending",
+        "pending_other": "{{count}} pending",
+        "refused_one": "{{count}} refused",
+        "refused_other": "{{count}} refused",
+        "requested_one": "{{count}} requested",
+        "requested_other": "{{count}} requested",
+        "resumed_one": "{{count}} resumed",
+        "resumed_other": "{{count}} resumed",
+        "terminal_one": "{{count}} terminal",
+        "terminal_other": "{{count}} terminal"
+      },
+      "allTargets": "All agents",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} already finished",
+        "alreadyTerminal_other": "{{count}} already finished",
+        "refused_one": "{{count}} refused",
+        "refused_other": "{{count}} refused"
+      },
+      "failureDetails": "Resume failures",
+      "state": {
+        "accepted": "Requested · {{action}}",
+        "alreadyTerminal_one": "{{count}} target was already finished",
+        "alreadyTerminal_other": "{{count}} targets were already finished",
+        "completed": "Completed · {{action}}",
+        "failed": "Failed · {{action}}",
+        "noAgentsToClose": "No agents need closing",
+        "noResumeNeeded": "Team already complete · no resume needed",
+        "partial": "Partially completed · {{action}}",
+        "refused": "Refused · {{action}}",
+        "running": "In progress · {{action}}"
+      }
     },
     "skill": {
       "completed": "Loaded skill: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "Completed {{name}}",
           "failed": "{{name}} failed",
           "running": "Running {{name}}"
+        },
+        "sessions_create": {
+          "completed": "Created {{name}}",
+          "failed": "Failed to create {{name}}",
+          "running": "Creating {{name}}"
         },
         "sessions_list": {
           "completed": "Completed {{name}}",
@@ -3587,13 +3790,16 @@
     "popOutActive": "Opened in a separate window",
     "question": {
       "answered": "Answered",
+      "customAnswer": "Additional input",
       "customPlaceholder": "Enter custom answer...",
       "customRequired": "Enter a custom answer, or choose another option.",
       "default": "default",
       "multiSelect": "multi",
+      "options": "Original options",
       "pending": "Waiting for your answer…",
       "preview": "Preview",
       "recommended": "Recommended",
+      "response": "Your answer",
       "retry": "Retry",
       "submit": "Submit Answers",
       "timedOut": "timed out",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "Unarchive",
     "unassigned": "Unassigned",
     "uploadLogo": "Upload logo",
+    "linkedDirs": {
+      "add": "Add folder",
+      "defaultPrimary": "Default project folder (created automatically)",
+      "empty": "No additional folders linked",
+      "folderActions": "Folder actions",
+      "hint": "Attach the folders this project needs. New chats, relative paths, Git, and project instructions use the primary folder.",
+      "invalid": "Invalid linked folder",
+      "label": "Source folders",
+      "makePrimary": "Make primary",
+      "primary": "Primary",
+      "remove": "Remove {{path}}",
+      "removeFolder": "Remove folder"
+    },
     "workingDir": {
       "clear": "Clear",
       "hint": "Choose an existing directory or create a new one. Leave empty to auto-create the default project directory.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "ACP Backends",
     "acpBinary": "Binary",
+    "acpDistribution": "Distribution descriptor",
+    "acpDistributionPackage": "Package or product",
+    "acpDistributionRequired": "This legacy backend is blocked until its launch distribution is explicitly defined.",
+    "acpDistributionVersion": "Pinned version",
+    "acpLaunchArgs": "Launch arguments",
+    "acpProtocol": "Protocol",
+    "acpTrustDistribution": "Define distribution",
     "acpControl": "ACP Control Plane",
     "acpControlDesc": "Manage external ACP agents (Claude Code, Codex CLI, Gemini CLI, etc.)",
     "acpEnabled": "Enable ACP Control Plane",
@@ -4194,6 +4420,7 @@
         "send_attachment": "Send a file attachment to IM channels",
         "session_status": "Query the current state of a session",
         "sessions_history": "Read message history from other sessions",
+        "sessions_create": "Create a new regular chat session",
         "sessions_list": "List metadata for all sessions",
         "sessions_send": "Send a message to another session to trigger work",
         "update_settings": "Modify AppConfig settings",
@@ -4213,6 +4440,7 @@
         "send_attachment": "Send Attachment",
         "session_status": "Session Status",
         "sessions_history": "Session History",
+        "sessions_create": "Create Session",
         "sessions_list": "List Sessions",
         "sessions_send": "Cross-Session Send",
         "update_settings": "Update Settings",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Manage Telegram, WeChat, Feishu, Discord, Slack and other IM channel integrations",
     "charLimitExceeded": "Exceeded limit, excess content will be truncated",
     "chat": "Chat & Context",
+    "chatEnterToSend": "Press Enter to send",
+    "chatEnterToSendDesc": "When on, Enter sends and Shift+Enter adds a new line. When off, Enter adds a new line and Ctrl+Enter sends.",
     "chatAutoExpandThinking": "Auto-expand thinking process",
     "chatAutoExpandThinkingDesc": "Automatically expand thinking blocks in chat bubbles. When off, click to expand manually.",
     "chatAutoCollapseCompletedTurns": "Collapse completed turns",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "Max share of context window a single tool result can occupy (10%–60%). Increase to preserve larger file reads and web fetches",
     "contextCompactMicrocompact": "Microcompaction",
     "contextCompactMicrocompactEnabled": "Enable microcompaction",
-    "contextCompactMicrocompactEnabledDesc": "Zero-cost clearing of old ephemeral tool results (ls/grep/find etc.), runs before other compression tiers",
+    "contextCompactMicrocompactEnabledDesc": "Clear old ephemeral tool results (ls/grep/find, etc.) without an additional model call; runs before other compaction tiers",
     "contextCompactMicrocompactTools": "Microcompact tool list",
     "contextCompactMicrocompactToolsDesc": "Old results from selected tools will be automatically cleared",
     "contextCompactMinPrunableChars": "Min prunable total",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "Protect the last N message rounds and expand to the owning user turn",
     "contextCompactPruning": "Tool Result Pruning",
     "contextCompactReactiveMicrocompact": "Reactive microcompact",
-    "contextCompactReactiveMicrocompactDesc": "Between tool loop rounds, when usage crosses the threshold, clear ephemeral tool_results (ls/grep/find/…). Tier 0 — zero cost, keeps prompt cache valid.",
+    "contextCompactReactiveMicrocompactDesc": "Between tool-loop rounds, clear ephemeral tool_results (ls/grep/find/…) when usage crosses the threshold. Tier 0 does not make an additional model call, but changing request history can invalidate the prompt cache after the modified point.",
     "contextCompactReactiveTriggerRatio": "Trigger ratio",
     "contextCompactReactiveTriggerRatioDesc": "Usage ratio that triggers reactive microcompaction (default 75%).",
     "contextCompactSaved": "Settings saved",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "Default agent",
     "defaultModel": "Default Model",
     "defaultModelDesc": "The primary model to use",
-    "deferredToolsEnabled": "Deferred tool loading",
-    "deferredToolsEnabledDesc": "Enable tool_search-based loading. Tools remain injected until you defer them below. Takes effect on the next conversation.",
-    "deferredToolsPerToolDesc": "Turn on only the tools whose schemas should be discovered via tool_search instead of sent up front.",
+    "deferredToolsEnabled": "Tool schema loading",
+    "deferredToolsEnabledDesc": "Recommended defers non-essential built-ins and all dynamic MCP tools to tool_search. Built-ins eager still honors each MCP server's own Defer schemas switch.",
+    "deferredToolsModeCustom": "Custom",
+    "deferredToolsModeDisabled": "Built-ins eager",
+    "deferredToolsModeRecommended": "Recommended",
+    "deferredToolsPerToolDesc": "These built-in tools load through tool_search. Changing a switch selects Custom mode.",
     "deferredToolsPerToolTitle": "Deferred built-in tools",
     "devClearAll": "Clear All",
     "devClearAllDesc": "Clear all data and reset to defaults",
@@ -5253,8 +5486,12 @@
       "intro": "Run custom commands, HTTP calls, prompts or sub-agents at lifecycle events. Field-level compatible with Claude Code hooks.",
       "disableAll": "Disable all hooks",
       "disableAllDesc": "Master switch — turns off every hook across all scopes.",
-      "allowProjectScope": "Allow project & local hooks",
-      "allowProjectScopeDesc": "Lets a working directory's .hope-agent/hooks.json and hooks.local.json add hooks — handy for sharing with your team. Off by default because these can run commands on their own, so switch it on only for projects you trust.",
+      "trustedProjectScopes": "Trusted Hook workspaces",
+      "trustedProjectScopesDesc": "Approve project and local Hook files one workspace at a time. Enter the exact absolute workspace path; aliases and symlinks are rejected.",
+      "workspacePath": "Absolute workspace path",
+      "trustWorkspace": "Trust contents",
+      "noTrustedWorkspaces": "No workspace Hook files are trusted.",
+      "trustContentBound": "Trust is bound to the Hook file contents captured when the workspace is added. A change, move, or path alias disables it. To reapprove, remove and save the workspace, then add and save it again.",
       "scopeNote": "This panel edits user-scope hooks. Project (.hope-agent/hooks.json, repo-shared), local (hooks.local.json) and managed (/etc/hope-agent/hooks.json) scopes are file-based and merged on top.",
       "pickEvent": "Select an event…",
       "addHook": "Add hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "This handler runs an LLM / sub-agent inline and will delay every time this blocking event fires. Prefer command / http here, or move it to an observation event (e.g. PostToolUse).",
       "invalidJson": "Invalid JSON",
       "modelInheritDefault": "Follow automation default",
-      "defaultShell": "Default"
+      "defaultShell": "Default",
+      "allowProjectScope": "Allow project & local hooks",
+      "allowProjectScopeDesc": "Lets a working directory's .hope-agent/hooks.json and hooks.local.json add hooks — handy for sharing with your team. Off by default because these can run commands on their own, so switch it on only for projects you trust."
     },
     "hours": "hr",
     "inheritGlobal": "Inherit Global Settings",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "Delete server \"{{name}}\"? This cannot be undone.",
       "confirmDeleteTitle": "Delete \"{{name}}\"?",
       "connectTimeout": "Connect timeout (s)",
+      "connectionSettings": "Connection strategy",
       "cwdLabel": "Working directory (optional)",
       "cwdPlaceholder": "inherit app cwd",
       "deferredToolsLabel": "Defer tool schemas",
+      "directToolsLabel": "Load tool schemas directly",
       "deleted": "Server \"{{name}}\" deleted",
       "deniedTools": "Tool denylist",
       "descriptionLabel": "Description (optional)",
       "descriptionPlaceholder": "What does this server do",
       "disabled": "disabled",
       "eagerLabel": "Connect eagerly at startup",
+      "effectiveDeferredByGlobal": "The global Recommended policy already defers this server's tools.",
       "edit": "Edit",
       "editTitle": "Edit MCP Server — {{name}}",
       "emptyDesc": "Add an MCP server or import one from a Claude Desktop config. stdio servers work today; remote HTTP/SSE/WebSocket transports arrive in a later phase.",
@@ -5749,11 +5991,13 @@
       "importJson": "Import JSON",
       "invalidName": "Name must match ^[a-z0-9_-]{1,32}$ (lowercase letters, digits, underscore, hyphen)",
       "loadFailed": "Failed to load servers",
+      "lazyLabel": "Connect on demand",
       "nameImmutable": "Name cannot be changed after creation. Delete and re-add to rename.",
       "nameLabel": "Name",
       "reconnect": "Reconnect",
       "remoteTransportPhase4": "HTTP / SSE / WebSocket transports will land in Phase 4.",
       "saved": "Saved",
+      "securitySettings": "Security and approvals",
       "signOut": "Sign out",
       "signOutSuccess": "Cleared credentials for \"{{name}}\"",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "Configure Docker container sandbox isolation for secure command execution",
     "sandboxDockerAvailable": "Docker available",
     "sandboxDockerChecking": "Checking...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Get Docker Desktop",
     "sandboxDockerNotInstalled": "Docker not detected, please install Docker Desktop first",
     "sandboxDockerNotRunning": "Docker is installed but not running, please start Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker unavailable",
     "sandboxImage": "Image",
     "sandboxImageDesc": "Docker image used for sandbox containers",
+    "sandboxImageDigestRequired": "Pin the image as name@sha256:<64-digit digest>; mutable tags are rejected.",
     "sandboxMemoryLimit": "Memory Limit",
     "sandboxNetworkBridge": "Bridge",
     "sandboxNetworkHost": "Host",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "Container",
     "sandboxSectionResources": "Resource Limits",
     "sandboxSectionSecurity": "Security Hardening",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "sec",
     "security": "Security Policy",
     "selectDefaultModel": "Select default model",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "Maximum child agents from this parent session that can run at the same time. Extra children wait in the queue.",
     "subagentMaxDepth": "Max nesting depth",
     "subagentMaxDepthDesc": "How many levels of sub-agent delegation are allowed under this agent. Higher values permit child agents to spawn their own children.",
+    "subagentProviderRetryAttempts": "Gateway recovery retries",
+    "subagentProviderRetryAttemptsDesc": "Additional continuation attempts after all configured provider and model fallbacks fail. 0 disables outer recovery.",
+    "subagentProviderRetryBackoff": "Gateway retry base delay",
+    "subagentProviderRetryBackoffDesc": "Initial delay before retrying an exhausted gateway. Later retries back off exponentially.",
     "subagentTimeout": "Default timeout",
     "subagentTimeoutDesc": "Maximum runtime for a spawned child agent. 0 means no timeout. Used when the call does not set its own timeout_secs.",
     "subagentTimeoutUnit": "seconds",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "Apply Patch",
     "toolAskUserQuestionDesc": "Send structured multiple-choice or free-form questions to the user",
     "toolAskUserQuestionName": "Ask User",
+    "toolAudioGenerateDesc": "Generate speech, music, or sound effects from text",
     "toolBrowserDesc": "Control browser to perform actions",
     "toolBrowserName": "Browser",
     "toolCallNarration": "Progress updates",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "Process Manager",
     "toolProjectReadFileDesc": "Read uploaded files attached to the current session's project",
     "toolProjectReadFileName": "Read Project File",
+    "toolReadContextResourceDesc": "Read an immutable @file or @plan snapshot bound to the current turn",
     "toolReadDesc": "Read file contents with pagination and image detection",
     "toolReadName": "Read File",
     "toolRecallMemoryDesc": "Search and retrieve saved memories",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "Send Attachment",
     "toolSendNotificationDesc": "Send desktop notification messages",
     "toolSendNotificationName": "Send Notification",
+    "toolSessionContinueDesc": "Resume a paused conversation only after an explicit user request",
     "toolSessionStatusDesc": "Query a session's agent, model, message count, and timestamps",
     "toolSessionStatusName": "Session Status",
     "toolSessionToNoteDesc": "Distill the conversation into a structured note.",
     "toolSessionToNoteName": "Session to Note",
     "toolSessionsHistoryDesc": "Paginate through a session's message history",
     "toolSessionsHistoryName": "Sessions History",
+    "toolSessionsCreateDesc": "Create a regular chat session, optionally associate it with a Project, and start the Agent with an initial message or attachment",
     "toolSessionsListDesc": "List other sessions (title, agent, model, message count)",
     "toolSessionsListName": "Sessions List",
     "toolSessionsSearchDesc": "Search persisted chat messages and return matched context windows",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "Send to Session",
     "toolSubagentDesc": "Invoke a sub-agent to execute a task",
     "toolSubagentName": "Subagent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "Create a trackable task for the current session",
     "toolTaskCreateName": "Create Task",
     "toolTaskListDesc": "List all tasks in the current session",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "Updated",
     "weatherWind": "Wind",
     "webFetch": "Web Fetch",
+    "webFetchMaxTokensCap": "Max Token Budget",
+    "webFetchMaxTokensCapDesc": "Hard limit for max_tokens requested by a tool call",
+    "webFetchMaxConcurrentPerHost": "Concurrent Requests per Host",
+    "webFetchMinHostDelay": "Minimum Host Delay (ms)",
+    "webFetchSectionRendering": "Dynamic Rendering",
+    "webFetchRenderMode": "Default Render Mode",
+    "webFetchRenderNever": "Never (direct only)",
+    "webFetchRenderAuto": "Auto (when needed)",
+    "webFetchRenderAlways": "Always",
+    "webFetchRenderModeDesc": "Rendering uses a fresh isolated browser without your cookies or account state",
+    "webFetchRenderTimeout": "Render Timeout (seconds)",
+    "webFetchCacheEntries": "Cache Snapshots",
     "webFetchCacheTtl": "Cache TTL (minutes)",
     "webFetchCacheTtlDesc": "How long to cache fetched pages. Set to 0 to disable caching.",
     "webFetchDesc": "Configure how the web_fetch tool extracts content from URLs, including caching, security, and content limits.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "Endpoint missing",
     "memoryExternalProviderBlockPolicyUnsupported": "Policy unsupported",
     "memoryExternalProviderBlockAdapterUnavailable": "Adapter unavailable",
+    "memoryExternalProviderBlockCompatibilityUnverified": "Compatibility unverified",
+    "memoryExternalProviderBlockCompatibilityBlocked": "Unsafe provider version",
     "memoryExternalProviderBlockLastError": "Last error",
     "memoryExternalProviderErrors": {
       "load": "Failed to load external memory providers",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "Failed to load external memory provider connection",
       "saveCredentials": "Failed to save external memory provider connection",
       "clearCredentials": "Failed to clear external memory provider connection",
+      "testConnection": "Failed to test external memory provider connection",
       "copyPreflightDiagnostics": "Failed to copy external memory provider preflight",
       "copySyncDiagnostics": "Failed to copy external memory provider sync report",
       "detail": "Details: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "Credentials are stored separately with restricted file permissions.",
     "memoryExternalProviderConnectionSaved": "Connection saved",
     "memoryExternalProviderConnectionCleared": "Connection cleared",
+    "memoryExternalProviderConnectionTest": "Test connection",
+    "memoryExternalProviderCompatibilityPassed": "Connection and compatibility check passed",
+    "memoryExternalProviderCompatibilityUnverified": "Connection reached, but the provider version could not be verified",
+    "memoryExternalProviderCompatibilityBlocked": "Provider version is below the safe minimum",
+    "memoryExternalProviderCompatibilitySummary": "Status: {{status}} · detected {{detected}} · minimum {{minimum}}",
     "memoryExternalProviderEndpoint": "Endpoint",
     "memoryExternalProviderEndpointKeep": "Stored: {{origin}} · leave blank to keep",
     "memoryExternalProviderSubjectId": "Remote scope ID",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "Default duration",
       "durationOption": "{{seconds}}s"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "Delete a memory"
     },
+    "fork": {
+      "description": "Continue in a new session"
+    },
     "handover": {
       "description": "Hand the session over to an IM chat"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "Start a new chat"
+    },
+    "side": {
+      "description": "Start a side chat without interrupting the main chat"
     },
     "noResults": "No matching commands",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "Paused",
     "progress": "Progress",
     "resume": "Resume",
+    "resumeFeedback": {
+      "counts": "{{resumed}} resumed · {{failed}} failed",
+      "noOpDescription": "All team members have already completed; no new attempts were started.",
+      "noOpTitle": "No resume needed",
+      "partialTitle": "Team partially resumed",
+      "refusedTitle": "Team resume refused",
+      "resumedTitle": "Team resumed",
+      "resuming": "Resuming…"
+    },
     "review": "Review",
     "reviewer": "Reviewer",
     "send": "Send",
@@ -9282,6 +9572,7 @@
       "timed_out": "Timed out — default values applied"
     },
     "ask_user_question": "Ask User",
+    "audio_generate": "Generate Audio",
     "browser": "Browser",
     "canvas": "Canvas",
     "delete_memory": "Delete Memory",
@@ -9313,13 +9604,16 @@
     "process": "Process Manager",
     "rawCall": "View raw call",
     "read": "Read File",
+    "read_context_resource": "Read Context Resource",
     "recall_memory": "Recall Memory",
     "restore_settings_backup": "Restore Settings Backup",
     "save_memory": "Save Memory",
     "send_attachment": "Send Attachment",
     "send_notification": "Send Notification",
+    "session_continue": "Continue Session",
     "session_status": "Session Status",
     "sessions_history": "Session History",
+    "sessions_create": "Create Session",
     "sessions_list": "List Sessions",
     "sessions_send": "Send to Session",
     "skill": "Load Skill",
@@ -9329,6 +9623,8 @@
     "task_list": "List Tasks",
     "task_update": "Update Task",
     "team": "Agent Team",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "Search Tools",
     "update_core_memory": "Update Core Memory",
     "update_memory": "Update Memory",
@@ -9589,6 +9885,9 @@
     "openPanel": "Open workspace",
     "resizePanel": "Resize workspace panel",
     "sourceFromSearch": "Search",
+    "sourceFetchDirect": "Fetch",
+    "sourceFetchRendered": "Render",
+    "sourceFetchCache": "Cache",
     "sourceFromUser": "User",
     "sourceFromAttachment": "Attachment",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "Guard",
     "defaultName": "Artifact"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "Background Tasks",
     "openPanel": "Background tasks",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "Fix with AI",
       "fixStarted": "AI is fixing it now",
       "fixBusy": "A conversation is in progress, please try again shortly",
-      "fixPrompt": "Please fix the issue found by the design self-check: {{detail}}. Use design-system tokens (var(--ds-*)) to consolidate colors and replace hard-coded styles. Make only the minimal necessary changes and keep everything else in the design intact."
+      "fixPrompt": "Please fix the issue found by the design self-check: {{detail}}. Use design-system tokens (var(--ds-*)) to consolidate colors and replace hard-coded styles. Make only the minimal necessary changes and keep everything else in the design intact.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "Design system kit",
@@ -12533,7 +12836,15 @@
       "copyLink": "Copy link",
       "copied2": "Copied",
       "loadErr": "Failed to load share status",
-      "shareTo": "Share to"
+      "shareTo": "Share to",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Deploy to Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "All artifacts match their code",
       "checkStale": "{{n}} artifact(s) have code updates",
       "chatPrompt": "The implemented code has diverged from this design. Update the current design to reflect the referenced code changes, keeping the design intent and everything else unchanged."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "Name",
       "shortDescription": "Short description (optional)",
       "prompt": "What should your pet look like?",
+      "version": "Sprite version",
+      "versionV2": "v2 · Recommended",
+      "versionV1": "v1 · Legacy",
+      "versionV2Description": "Includes the 16 clockwise look directions used by Codex v2.",
+      "versionV1Description": "Creates the original nine-row atlas for older clients.",
       "generate": "Generate preview",
       "generating": "Creating preview…",
       "failed": "Could not create this pet"
+    },
+    "upgrade": {
+      "action": "Upgrade to v2",
+      "upgraded": "v2 copy created. Your original v1 pet is still available.",
+      "alreadyExists": "This v2 upgrade is already in your library.",
+      "failed": "Could not upgrade this pet to v2"
     },
     "export": {
       "action": "Export for Codex",
@@ -12848,7 +13218,7 @@
       "failed": "Could not export this pet"
     },
     "window": {
-      "interact": "Interact with Hope pet",
+      "interact": "Interact with {{name}}",
       "tuckAway": "Tuck away pet"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "Configuration",
       "user": "User settings"
     }
+  },
+  "toolchainDoctor": {
+    "title": "Toolchain Doctor",
+    "description": "Read-only checks for host runtimes and optional development tools. Hope Agent will not install, upgrade, start, or reconfigure anything.",
+    "refresh": "Run checks",
+    "loading": "Checking the local toolchain…",
+    "loadFailed": "Toolchain checks failed",
+    "readOnlyNotice": "Versions, availability, Docker reachability, context class, socket ownership class, and temporary wrappers are reported without exposing host paths or credentials.",
+    "detectedVersion": "Detected {{version}}",
+    "notDetected": "Not detected",
+    "minimumVersion": "Minimum {{version}}",
+    "diagnosticFacts": "Diagnostic codes",
+    "status": {
+      "detected": "Detected",
+      "supported": "Supported",
+      "degraded": "Degraded",
+      "blocked": "Blocked"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Answer needed",
+      "detail": "{{count}} questions are waiting in the conversation",
+      "detail_one": "A question is waiting in the conversation",
+      "openAction": "Answer now"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

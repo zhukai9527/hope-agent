@@ -14,6 +14,7 @@ import { Ollama } from "@lobehub/icons"
 import { Button } from "@/components/ui/button"
 import { getTransport } from "@/lib/transport-provider"
 import { openExternalUrl } from "@/lib/openExternalUrl"
+import { prepareLocalModelJob } from "@/lib/prepareLocalModelJob"
 import { parsePayload } from "@/lib/transport"
 import { logger } from "@/lib/logger"
 import { formatBytesFromMb, formatGbFromMb } from "@/lib/format"
@@ -33,7 +34,7 @@ import {
 } from "@/types/local-model-jobs"
 import type { LocalOllamaModel } from "@/types/local-llm"
 
-// ── Wire types (mirror ha_core::local_llm::types) ─────────────────
+// ── Wire types (mirror ha_local_llm::local_llm::types) ────────────
 
 type BudgetSource = "unified-memory" | "dedicated-vram" | "system-memory"
 type OllamaPhase = "not-installed" | "installed" | "running"
@@ -220,6 +221,7 @@ export default function LocalLlmAssistantCard({
     setSubmitting(true)
     setError(null)
     try {
+      if (!await prepareLocalModelJob("chat_model")) return
       const job = await getTransport().call<LocalModelJobSnapshot>(
         "local_model_job_start_chat_model",
         { model },

@@ -190,14 +190,6 @@
     "labelPlaceholder": "Etiqueta (p. ej. Clave Org A)",
     "title": "Perfiles de rotación de API Key"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "Se necesita respuesta",
-      "detail": "{{count}} preguntas están esperando en la conversación",
-      "detail_one": "Una pregunta está esperando en la conversación",
-      "openAction": "Responder ahora"
-    }
-  },
   "canvas": {
     "close": "Cerrar",
     "export": "Exportar",
@@ -318,6 +310,16 @@
     "removeConfig": "Eliminar",
     "running": "En ejecución",
     "selectChannel": "Seleccionar canal",
+    "nativeReply": "Respuestas nativas en streaming",
+    "nativeReplyHint": "Usa el flujo de respuestas nativo de la plataforma. Al desactivarlo, vuelve inmediatamente a mensajes normales.",
+    "imsgProtocolV1": "Protocolo imsg fiable",
+    "imsgProtocolV1Hint": "Negocia el protocolo v1, recupera desbordamientos de watch y supervisa reinicios del subproceso. Desactívalo para usar RPC heredado.",
+    "googleChatStandardMarkdown": "Markdown estándar",
+    "googleChatStandardMarkdownHint": "Usa el Markdown estándar de Google Chat en los mensajes de texto nuevos. Desactívalo para usar la sintaxis heredada de Chat.",
+    "discordChannelObfuscation": "Probar ofuscación de canales privados",
+    "discordChannelObfuscationHint": "Incluye esta cuenta en el comportamiento temporal de Gateway de Discord. Los canales ocultos nunca se seleccionan ni procesan.",
+    "discordFileRequests": "Solicitudes de archivo nativas de Discord",
+    "discordFileRequestsHint": "Permite que las preguntas estructuradas abran una carga de un solo archivo. El servidor vuelve a validar tipo, tamaño y vínculo de conversación.",
     "showThinking": "Mostrar el razonamiento en mensajes de IM",
     "showThinkingHint": "Si está activado, el razonamiento del modelo se muestra como bloque citado antes de cada respuesta. Desactivado por defecto.",
     "signalAccount": "Número de teléfono",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark (Internacional)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "Mensaje enviado a «{{title}}»",
+      "receivedFrom": "Enviado desde la conversación «{{title}}»",
+      "untitled": "Conversación sin título",
+      "details": "Ver detalles del mensaje"
+    },
     "addWorkingDirectory": "Agregar directorio de trabajo",
     "askAnything": "Cuéntame tu idea, @ busca archivos/notas/habilidades, # instrucciones rápidas y / comandos rápidos...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "Continuar en una nueva sesión",
       "continuedFrom": "Continuado desde",
       "created": "Se continuó en una nueva sesión",
+      "createdButNotOpened": "Se creó la bifurcación `{{id}}`, pero no se pudo abrir. Selecciónala en la lista de sesiones para continuar.",
       "failed": "No se pudo continuar en una nueva sesión",
       "sourceFallback": "sesión original"
+    },
+    "sideChat": {
+      "label": "Chat lateral",
+      "untitled": "Chat lateral {{index}}",
+      "new": "Nuevo chat lateral",
+      "close": "Cerrar panel de chat lateral",
+      "nonBlocking": "Pregunta aparte sin interrumpir el chat principal",
+      "askSelection": "Preguntar en un chat lateral",
+      "createFailed": "No se pudo crear el chat lateral"
     },
     "browserPanel": {
       "backendBadgeTooltip": "Backend del navegador: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "Compactando contexto anterior",
     "contextCompactedMsgs": "{{count}} mensajes antiguos",
     "contextCompactionFailedTitle": "Compresión de contexto pausada",
+    "contextCompactionRetry": "Reintentar compresión",
     "contextCompaction": {
       "preparing": "Compactando contexto anterior",
       "summarizing": "Generando resumen de la sesión",
@@ -553,6 +572,7 @@
       "noMatches": "No hay instrucciones rápidas coincidentes"
     },
     "cronTaskStarted": "Se ha activado una tarea programada",
+    "scheduledOrigin": "Tarea programada: {{name}}",
     "cronTrigger": "Tarea programada",
     "loopTriggered": "Se activó un paso del bucle",
     "loopTrigger": "Bucle",
@@ -651,6 +671,7 @@
     "markAllRead": "Marcar todo como leído",
     "markAsRead": "Marcar como leído",
     "pinSession": "Fijar",
+    "pinnedSessions": "Fijadas",
     "unpinSession": "Desfijar",
     "minutesAgo": "hace {{count}}min",
     "modelsCount": "{{count}} modelos",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "Entorno aislado",
       "off": {
-        "desc": "Elegir automáticamente entre el host, WSL o un entorno aislado.",
-        "label": "Automático"
+        "desc": "Ejecutar en el host; el comportamiento de aprobación no cambia.",
+        "label": "Entorno aislado desactivado"
       },
       "setupTitle": "Configura Docker para activar el entorno aislado",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "Error de autenticación",
     "reasonBilling": "Facturación / cuota excedida",
     "reasonContextOverflow": "Desbordamiento de contexto",
+    "reasonDispatchUnknown": "Resultado del envío desconocido — sin reintento automático",
     "reasonModelNotFound": "Modelo no encontrado",
     "reasonOverloaded": "Servicio sobrecargado",
     "reasonRateLimit": "Límite de solicitudes excedido",
@@ -899,6 +921,7 @@
     "statusThinking": "Pensamiento",
     "statusUpdated": "Actualizado",
     "stopReply": "Detener respuesta",
+    "continuePausedWork": "Continuar trabajo pausado",
     "stopGenerationDone": "Generación detenida",
     "subagentFrom": "Delegado por {{agent}}",
     "subagentResultCompleted": "Completado",
@@ -923,6 +946,7 @@
     "thinking": "Pensando...",
     "thinkingAutoDisabled": "{{provider}} / {{model}} no admite el modo de pensamiento actual. El pensamiento se desactivó automáticamente y se volvió a intentar la solicitud.",
     "visionAutoDisabled": "{{provider}} / {{model}} no admite la entrada de imágenes. Se ignoró la imagen y se continuó la respuesta.",
+    "visionBridgeConfigureAction": "Configurar puente visual",
     "toolCalling": "Llamando herramientas...",
     "totalTokens": "Total",
     "unknownProvider": "Proveedor desconocido",
@@ -983,6 +1007,9 @@
       "failed": "No se pudo exportar la conversación.",
       "untitled": "Sin título"
     },
+    "capabilityMention": {
+      "heading": "Plugins y conectores"
+    },
     "skillMention": {
       "heading": "Habilidades",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Se requiere extensión de Chrome"
     },
     "conversationEmpty": "No hay mensajes en esta conversación.",
-    "pendingCancelForceInsert": "Cancelar la inserción de esta ronda",
+    "pendingCancelForceInsert": "Cambiar a enviar después de la respuesta",
     "pendingSaving": "Guardando",
     "pendingSavingTip": "Guardando el mensaje y los archivos adjuntos en la cola recuperable.",
     "pendingInserting": "Insertando",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "Enviar ahora",
     "pendingFallbackAfterReply": "Enviar después de la respuesta",
     "pendingFallbackAfterReplyTip": "No se ha encontrado el punto de finalización de la herramienta y se enviará una vez que finalice la respuesta actual.",
-    "pendingForceInsertTip": "Esperará hasta que se complete la herramienta que se está ejecutando y luego la insertará en el modelo sin interrumpir la herramienta actual.",
+    "pendingForceInsertTip": "Se insertará para el modelo cuando terminen todas las herramientas que se están ejecutando en este lote, sin interrumpirlas; si este turno no alcanza otro límite de herramientas, se enviará después de la respuesta.",
+    "pendingInsert": "Insertar",
     "pendingInserted": "insertado",
     "pendingInsertedTip": "Se insertó en el modelo una vez completada esta ronda de herramientas.",
-    "pendingQueuedShort": "hacer cola",
+    "pendingHeldAfterStop": "Envío pausado",
+    "pendingHeldAfterStopTip": "La respuesta actual se detuvo, por lo que este mensaje no se enviará automáticamente.",
+    "pendingMoreActions": "Más acciones del mensaje",
+    "pendingQueuedShort": "Enviar después de la respuesta",
     "pendingQueuedTip": "Se ha agregado a la cola de espera y se enviará una vez que finalice la respuesta actual.",
     "pendingQueueTitle": "Para ser enviado",
-    "pendingWaitingToolBoundary": "Espere hasta el punto de finalización de la herramienta",
-    "pendingWaitingToolBoundaryTip": "Espere a que se complete la última llamada a la herramienta; Si la herramienta ya no se llama en esta ronda, se enviará una vez completada la respuesta.",
+    "pendingWaitingToolBoundary": "Esperando para insertar",
+    "pendingWaitingToolBoundaryTip": "Esperando a que terminen todas las herramientas que se están ejecutando en este lote antes de insertar; si este turno no alcanza otro límite de herramientas, se enviará después de la respuesta.",
     "processNotification": "proceso finalizado",
     "rightPanel": {
       "collapse": "Contraer panel derecho",
       "expand": "Expandir el panel derecho",
       "switch": "Cambiar panel derecho",
       "dock": "Barra de paneles derechos",
-      "openPanel": "Abrir {{panel}}",
-      "switchToPanel": "Cambiar a {{panel}}",
-      "collapsePanel": "Contraer {{panel}}",
-      "expandPanel": "Expandir {{panel}}",
+      "resize": "Ajustar ancho del área de trabajo",
       "workflowActiveCount": "{{count}} flujos de trabajo activos",
       "workflowAttentionCount": "{{count}} flujos de trabajo requieren atención",
       "backgroundRunningCount": "{{count}} tareas en segundo plano en ejecución",
-      "subagentRunningCount": "{{count}} subagentes en ejecución"
+      "subagentRunningCount": "{{count}} subagentes en ejecución",
+      "openPanel": "Abrir {{panel}}",
+      "switchToPanel": "Cambiar a {{panel}}",
+      "collapsePanel": "Contraer {{panel}}",
+      "expandPanel": "Expandir {{panel}}"
     },
     "visionBridgeEngaged": "El modelo principal no puede ver imágenes, así que {{model}} las describió por él.",
     "visionBridgeUnavailable": "El modelo de visión no pudo describir la imagen, por lo que se omitió.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "Añadir destino",
     "agent": "Agent",
     "archivedProject": "(archivado)",
+    "workspaceModePersistent": "Árbol de trabajo persistente",
+    "workspaceCleanup": "Después de cada ejecución",
+    "workspaceCleanupOption": {
+      "retain": "Conservar",
+      "discardIfClean": "Eliminar si no hay cambios",
+      "always": "Eliminar siempre"
+    },
+    "workspaceCleanupHint": {
+      "retain": "Cada ejecución conserva su Worktree hasta que la archives o descartes.",
+      "discardIfClean": "El Worktree se elimina solo si la ejecución no dejó cambios ni nuevos commits: nunca se borra algo que aún puedas necesitar.",
+      "always": "El Worktree se elimina tras cada ejecución, incluidos los cambios sin confirmar. Úsalo solo si el resultado real se entrega por otro canal."
+    },
+    "workspaceModeHint": "Proyecto usa su directorio; Nuevo crea un árbol por ejecución; Persistente reutiliza uno por tarea. La rama base se aplica a los árboles de trabajo.",
+    "workspaceActionBlocked": "No disponible: {{reason}}",
+    "workspaceActionReturn": "Devolver",
+    "workspaceActionResume": "Devolver y reanudar",
+    "workspaceActionDone": "{{action}} completado",
     "atGrace": "Margen (s)",
     "atGraceHint": "Ventana de ejecución tardía: una tarea única cuya hora venció con la app cerrada aún se ejecuta si el retraso no supera estos segundos; más allá se marca como perdida (0 = estricto, sin ejecución tardía).",
     "atMinute": "En el minuto",
     "atTime": "A las",
     "autoAgent": "Auto (proyecto/predeterminado)",
+    "cancelRunFailed": "No se pudo detener esta ejecución",
     "completed": "Completada",
     "conversationEmpty": "No hay mensajes en esta conversación",
     "conversationsSelectHint": "Selecciona una ejecución para ver",
@@ -1463,7 +1513,7 @@
     "cronHelp": "Formato: seg min hora día mes día_semana (p. ej. 0 0 9 * * 1-5 = lun–vie 9:00)",
     "dateTime": "Fecha y hora",
     "daySuffix": "",
-    "deleteConfirmDesc": "Esto eliminará permanentemente la tarea programada y su historial de ejecuciones.",
+    "deleteConfirmDesc": "Al eliminarla solo se detendrán las ejecuciones programadas futuras. Se conservarán el historial de ejecuciones, las conversaciones y los árboles de trabajo.",
     "deleteConfirmTitle": "¿Eliminar \"{{name}}\"?",
     "deleteFailed": "No se pudo eliminar \"{{name}}\"",
     "deleteSuccess": "Se eliminó \"{{name}}\"",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "Cada mes el día",
     "failures": "Fallos",
     "filterAll": "Todo",
+    "filterAttention": "Requiere atención",
+    "schedulerPrimary": "Programador: proceso principal",
+    "schedulerSecondary": "Programador: proceso secundario (no puede ejecutar tareas)",
+    "schedulerRunning": "En ejecución {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "Desactivada automáticamente tras {{failures}}/{{max}} fallos seguidos",
+      "runFailed": "La última ejecución falló",
+      "missed": "Se perdió su ejecución programada",
+      "deliveryStale": "Un destino de entrega ya no es válido",
+      "failing": "{{failures}}/{{max}} fallos consecutivos"
+    },
     "freq_custom": "Personalizado",
     "freq_daily": "Diario",
     "freq_hourly": "Cada hora",
@@ -1521,6 +1582,19 @@
     "name": "Nombre de la tarea",
     "namePlaceholder": "p. ej. Resumen diario",
     "newJob": "Nueva tarea",
+    "conversationTarget": "Ejecutar en",
+    "conversationTargetNew": "Un chat nuevo cada vez",
+    "conversationTargetExisting": "Un chat existente",
+    "sessionTargetPlaceholder": "Selecciona un chat",
+    "sessionTargetSearchPlaceholder": "Buscar chats",
+    "sessionTargetEmpty": "No hay chats coincidentes",
+    "errorSessionTargetRequired": "Selecciona el chat donde se ejecutará la tarea",
+    "copyAsNewTask": "Copiar como nueva tarea",
+    "deletedTaskHint": "Esta tarea está eliminada: se conserva el historial y no se programan más ejecuciones.",
+    "runAgain": "Ejecutar de nuevo",
+    "createWithModel": "Crear con el modelo",
+    "manualSetup": "Configurar manualmente",
+    "createWithModelPrompt": "Ayúdame a crear una tarea programada. Quiero que, cuando ..., haga ... automáticamente.",
     "nextRun": "Próxima ejecución",
     "noConversations": "Aún no hay historial de ejecuciones",
     "noConversationsYet": "Esta cuenta aún no tiene conversaciones registradas (haz que el bot reciba un mensaje primero)",
@@ -1536,8 +1610,13 @@
     "paused": "Pausada",
     "prefixDeliveryWithName": "Anteponer el nombre de la tarea",
     "prefixDeliveryWithNameDesc": "Antepone [Cron] {name} a las entregas correctas para distinguir varias tareas enviadas al mismo chat.",
+    "preflightTitle": "Comprobación previa",
+    "preflightDescription": "Revisa la programación y el entorno de ejecución real antes de continuar.",
+    "preflightIssue": "Comprobación necesaria: {{code}}",
     "project": "Proyecto",
+    "reloadLatest": "Cargar la versión más reciente",
     "removeTarget": "Quitar destino",
+    "revisionConflict": "Esta tarea cambió en otro lugar. Tu borrador se conserva; carga la versión más reciente solo cuando quieras reemplazarlo.",
     "resume": "Reanudar",
     "runHistory": "Historial de ejecuciones",
     "runNow": "Ejecutar ahora",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "En ejecución",
     "runStatusSuccess": "Éxito",
     "schedule": "Programación",
+    "scheduleSession": "Programar este chat",
+    "sessionTurnTarget": "Chat de destino",
+    "sessionTurnLiveHint": "El agente, el proyecto, los espacios de conocimiento, el directorio de trabajo, los permisos y el entorno aislado se leen de este chat en cada ejecución.",
     "scheduleAt": "Una vez",
     "scheduleCron": "Programada",
     "scheduleEvery": "Recurrente",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "Ejecución sin límites",
+      "unlimitedModeWarning": "Desactiva los límites de evaluación de coste, tiempo, tokens, llamadas, agentes y concurrencia. La ejecución puede continuar indefinidamente y generar cargos de Provider sin control; las protecciones de permisos, seguridad, aislamiento, cancelación y limpieza siguen activas.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "Vista previa",
-    "resizePanel": "Redimensionar panel de vista previa"
+    "resizePanel": "Redimensionar panel de vista previa",
+    "pathBreadcrumb": "Ruta del archivo",
+    "revealFolder": "Mostrar la carpeta en Archivos",
+    "copyPath": "Copiar la ruta completa"
   },
   "fileBrowser": {
     "panelTitle": "Archivos",
+    "primaryFolder": "Principal",
+    "defaultProjectFolder": "Carpeta predeterminada del proyecto",
     "jumpToFile": "Mostrar en el explorador de archivos",
     "copied": "Copiado",
     "copyFailed": "Error al copiar",
@@ -2733,7 +2850,10 @@
     "zoomOut": "Alejar",
     "zoomIn": "Acercar",
     "fitWidth": "Ajustar al ancho",
-    "officeNoContent": "No se pudo extraer contenido de este archivo."
+    "officeNoContent": "No se pudo extraer contenido de este archivo.",
+    "openInNewTab": "Abrir en una pestaña nueva",
+    "collapseTree": "Ocultar la lista de archivos",
+    "expandTree": "Mostrar la lista de archivos"
   },
   "diffPanel": {
     "fileTooLarge": "Archivo demasiado grande, solo se muestran los primeros 256 KB",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "Alto",
     "low": "Bajo",
+    "max": "Máximo",
     "medium": "Medio",
     "minimal": "Mínimo",
     "none": "Apagado",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "Procesado"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "cerrar {{count}} agentes",
+          "close_other": "cerrar {{count}} agentes",
+          "closeAll": "cerrar todos los agentes",
+          "message_one": "enviar mensajes a {{count}} agentes",
+          "message_other": "enviar mensajes a {{count}} agentes",
+          "observe_one": "comprobar {{count}} agentes",
+          "observe_other": "comprobar {{count}} agentes",
+          "resume_one": "reanudar {{count}} agentes",
+          "resume_other": "reanudar {{count}} agentes"
+        },
+        "cron": {
+          "pause_one": "pausar {{count}} programaciones",
+          "pause_other": "pausar {{count}} programaciones",
+          "resume_one": "reanudar {{count}} programaciones",
+          "resume_other": "reanudar {{count}} programaciones"
+        },
+        "job": {
+          "cancel_one": "cancelar {{count}} tareas",
+          "cancel_other": "cancelar {{count}} tareas"
+        },
+        "process": {
+          "close_one": "cerrar {{count}} procesos",
+          "close_other": "cerrar {{count}} procesos"
+        },
+        "team": {
+          "pause_one": "pausar {{count}} equipos",
+          "pause_other": "pausar {{count}} equipos",
+          "resume_one": "reanudar {{count}} equipos",
+          "resume_other": "reanudar {{count}} equipos"
+        },
+        "workflow": {
+          "cancel_one": "cancelar {{count}} flujos de trabajo",
+          "cancel_other": "cancelar {{count}} flujos de trabajo",
+          "pause_one": "pausar {{count}} flujos de trabajo",
+          "pause_other": "pausar {{count}} flujos de trabajo",
+          "resume_one": "reanudar {{count}} flujos de trabajo",
+          "resume_other": "reanudar {{count}} flujos de trabajo"
+        }
+      },
+      "aggregate": {
+        "failed_one": "{{count}} fallidos",
+        "failed_other": "{{count}} fallidos",
+        "pending_one": "{{count}} pendientes",
+        "pending_other": "{{count}} pendientes",
+        "refused_one": "{{count}} rechazados",
+        "refused_other": "{{count}} rechazados",
+        "requested_one": "{{count}} solicitados",
+        "requested_other": "{{count}} solicitados",
+        "resumed_one": "{{count}} reanudados",
+        "resumed_other": "{{count}} reanudados",
+        "terminal_one": "{{count}} finalizados",
+        "terminal_other": "{{count}} finalizados"
+      },
+      "allTargets": "Todos los agentes",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} ya finalizados",
+        "alreadyTerminal_other": "{{count}} ya finalizados",
+        "refused_one": "{{count}} rechazados",
+        "refused_other": "{{count}} rechazados"
+      },
+      "failureDetails": "Fallos al reanudar",
+      "state": {
+        "accepted": "Solicitado · {{action}}",
+        "alreadyTerminal_one": "{{count}} objetivos ya habían finalizado",
+        "alreadyTerminal_other": "{{count}} objetivos ya habían finalizado",
+        "completed": "Completado · {{action}}",
+        "failed": "Falló · {{action}}",
+        "noAgentsToClose": "No hay agentes que necesiten cerrarse",
+        "noResumeNeeded": "El equipo ya terminó · no es necesario reanudar",
+        "partial": "Completado parcialmente · {{action}}",
+        "refused": "Rechazado · {{action}}",
+        "running": "En curso · {{action}}"
+      }
     },
     "skill": {
       "completed": "Habilidad cargada: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "Completado {{name}}",
           "failed": "{{name}} falló",
           "running": "Ejecutando {{name}}"
+        },
+        "sessions_create": {
+          "completed": "Se creó {{name}}",
+          "failed": "No se pudo crear {{name}}",
+          "running": "Creando {{name}}"
         },
         "sessions_list": {
           "completed": "Completado {{name}}",
@@ -3587,13 +3790,16 @@
     "popOutActive": "Abierto en ventana aparte",
     "question": {
       "answered": "Respondido",
+      "customAnswer": "Entrada adicional",
       "customPlaceholder": "Escribe una respuesta personalizada...",
       "customRequired": "Escribe una respuesta personalizada o elige otra opción.",
       "default": "por defecto",
       "multiSelect": "múltiple",
+      "options": "Opciones originales",
       "pending": "Esperando tu respuesta…",
       "preview": "Vista previa",
       "recommended": "Recomendado",
+      "response": "Tu respuesta",
       "retry": "Reintentar",
       "submit": "Enviar respuestas",
       "timedOut": "tiempo agotado",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "Desarchivar",
     "unassigned": "Sin asignar",
     "uploadLogo": "Subir logo",
+    "linkedDirs": {
+      "add": "Añadir carpeta",
+      "defaultPrimary": "Carpeta predeterminada del proyecto (se crea automáticamente)",
+      "empty": "No hay carpetas adicionales vinculadas",
+      "folderActions": "Acciones de carpeta",
+      "hint": "Adjunta las carpetas que necesita el proyecto. Los chats nuevos, las rutas relativas, Git y las instrucciones usan la carpeta principal.",
+      "invalid": "Carpeta vinculada no válida",
+      "label": "Carpetas de origen",
+      "makePrimary": "Establecer como principal",
+      "primary": "Principal",
+      "remove": "Quitar {{path}}",
+      "removeFolder": "Quitar carpeta"
+    },
     "workingDir": {
       "clear": "Limpiar",
       "hint": "Las sesiones de este proyecto usan este directorio por defecto; la configuración de sesión lo anula.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "Backends ACP",
     "acpBinary": "Binario",
+    "acpDistribution": "Descriptor de distribución",
+    "acpDistributionPackage": "Paquete o producto",
+    "acpDistributionRequired": "Este backend heredado está bloqueado hasta definir explícitamente su distribución de inicio.",
+    "acpDistributionVersion": "Versión fijada",
+    "acpLaunchArgs": "Argumentos de inicio",
+    "acpProtocol": "Protocolo",
+    "acpTrustDistribution": "Definir distribución",
     "acpControl": "Plano de control ACP",
     "acpControlDesc": "Gestionar agents ACP externos (Claude Code, Codex CLI, Gemini CLI, etc.)",
     "acpEnabled": "Activar plano de control ACP",
@@ -4194,6 +4420,7 @@
         "send_attachment": "Enviar un archivo adjunto a canales IM",
         "session_status": "Consultar el estado actual de una sesión",
         "sessions_history": "Leer el historial de mensajes de otras sesiones",
+        "sessions_create": "Crear una nueva sesión de chat normal",
         "sessions_list": "Listar metadatos de todas las sesiones",
         "sessions_send": "Enviar un mensaje a otra sesión para activar trabajo",
         "update_settings": "Modificar la configuración AppConfig",
@@ -4213,6 +4440,7 @@
         "send_attachment": "Enviar adjunto",
         "session_status": "Estado de sesión",
         "sessions_history": "Historial de sesión",
+        "sessions_create": "Crear sesión",
         "sessions_list": "Listar sesiones",
         "sessions_send": "Envío entre sesiones",
         "update_settings": "Actualizar configuración",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Gestionar integraciones con Telegram, WeChat, Feishu, Discord, Slack y otros canales IM",
     "charLimitExceeded": "Límite excedido, el contenido excedente será truncado",
     "chat": "Chat",
+    "chatEnterToSend": "Enviar con Enter",
+    "chatEnterToSendDesc": "Activado: Enter envía y Shift+Enter añade una línea. Desactivado: Enter añade una línea y Ctrl+Enter envía.",
     "chatAutoExpandThinking": "Expandir el proceso de pensamiento automáticamente",
     "chatAutoExpandThinkingDesc": "Expandir automáticamente los bloques de pensamiento en las burbujas de chat. Cuando está desactivado, haz clic para expandir manualmente.",
     "chatAutoCollapseCompletedTurns": "Contraer turnos completados",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "Cuota máxima de la ventana de contexto que puede ocupar un único resultado (10%–60%). Aumenta para preservar lecturas de archivos grandes y web fetches",
     "contextCompactMicrocompact": "Microcompactación",
     "contextCompactMicrocompactEnabled": "Activar microcompactación",
-    "contextCompactMicrocompactEnabledDesc": "Borrado de coste cero de resultados de herramientas efímeras antiguos (ls/grep/find, etc.). Se ejecuta antes que las otras capas de compactación",
+    "contextCompactMicrocompactEnabledDesc": "Borra resultados antiguos de herramientas efímeras (ls/grep/find, etc.) sin una llamada adicional al modelo; se ejecuta antes que las otras capas de compactación",
     "contextCompactMicrocompactTools": "Lista de herramientas para microcompactación",
     "contextCompactMicrocompactToolsDesc": "Los resultados antiguos de las herramientas seleccionadas se borran automáticamente",
     "contextCompactMinPrunableChars": "Mínimo recortable total",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "Protege las últimas N rondas de mensajes y las expande al turno de usuario propietario",
     "contextCompactPruning": "Recorte de resultados de herramientas",
     "contextCompactReactiveMicrocompact": "Microcompact reactivo",
-    "contextCompactReactiveMicrocompactDesc": "Entre rondas del bucle de herramientas, cuando el uso supera el umbral, limpia los tool_results efímeros (ls/grep/find/…). Nivel 0: sin coste y con la caché de instrucciones intacta.",
+    "contextCompactReactiveMicrocompactDesc": "Entre rondas del bucle de herramientas, limpia los tool_results efímeros (ls/grep/find/…) cuando el uso supera el umbral. El nivel 0 no realiza una llamada adicional al modelo, pero cambiar el historial de la solicitud puede invalidar la caché de instrucciones después del punto modificado.",
     "contextCompactReactiveTriggerRatio": "Ratio de activación",
     "contextCompactReactiveTriggerRatioDesc": "Ratio de uso que dispara el microcompact reactivo (75% por defecto).",
     "contextCompactSaved": "Ajustes guardados",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "Agente predeterminado",
     "defaultModel": "Modelo Predeterminado",
     "defaultModelDesc": "El modelo principal a usar",
-    "deferredToolsEnabled": "Carga diferida de herramientas",
-    "deferredToolsEnabledDesc": "Activa la carga basada en tool_search. Las herramientas permanecen insertadas hasta que las aplaces abajo. Se aplica en la siguiente conversación.",
-    "deferredToolsPerToolDesc": "Active solo las herramientas cuyos esquemas deben descubrirse a través de tool_search en lugar de enviarse por adelantado.",
+    "deferredToolsEnabled": "Carga de esquemas de herramientas",
+    "deferredToolsEnabledDesc": "Recomendado aplaza las herramientas integradas no esenciales y todas las herramientas MCP dinámicas a tool_search. Integradas directas respeta el ajuste de aplazamiento de cada servidor MCP.",
+    "deferredToolsModeCustom": "Personalizado",
+    "deferredToolsModeDisabled": "Integradas directas",
+    "deferredToolsModeRecommended": "Recomendado",
+    "deferredToolsPerToolDesc": "Estas herramientas integradas se cargan mediante tool_search. Cambiar un interruptor selecciona el modo Personalizado.",
     "deferredToolsPerToolTitle": "Herramientas integradas diferidas",
     "devClearAll": "Borrar todo",
     "devClearAllDesc": "Borrar todos los datos y resetear a los valores por defecto",
@@ -5253,8 +5486,12 @@
       "intro": "Ejecuta comandos personalizados / HTTP / instrucciones / subagentes en eventos del ciclo de vida. Compatible a nivel de campo con los hooks de Claude Code.",
       "disableAll": "Desactivar todos los hooks",
       "disableAllDesc": "Interruptor maestro — desactiva todos los hooks en todos los ámbitos.",
-      "allowProjectScope": "Permitir hooks de proyecto y locales",
-      "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json y hooks.local.json del directorio de trabajo añadan hooks — práctico para compartir con tu equipo. Desactivado por defecto porque pueden ejecutar comandos por su cuenta, así que actívalo solo para proyectos en los que confíes.",
+      "trustedProjectScopes": "Espacios de trabajo Hook de confianza",
+      "trustedProjectScopesDesc": "Autoriza los archivos Hook de proyecto y locales espacio por espacio. Introduce la ruta absoluta exacta; se rechazan alias y enlaces simbólicos.",
+      "workspacePath": "Ruta absoluta del espacio de trabajo",
+      "trustWorkspace": "Confiar en el contenido",
+      "noTrustedWorkspaces": "No hay archivos Hook de espacios de trabajo de confianza.",
+      "trustContentBound": "La confianza se vincula al contenido de los Hook al añadir el espacio de trabajo. Un cambio, traslado o alias la desactiva. Para volver a aprobar, elimina y guarda el espacio, luego añádelo y guárdalo de nuevo.",
       "scopeNote": "Este panel edita los hooks del ámbito user. Los ámbitos project (.hope-agent/hooks.json, compartido por el repositorio), local (hooks.local.json) y managed (/etc/hope-agent/hooks.json) están basados en archivos y se fusionan encima.",
       "pickEvent": "Selecciona un evento…",
       "addHook": "Añadir hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "Este handler ejecuta un LLM / subagente en línea y ralentizará cada vez que se dispare este evento de bloqueo. Prefiere command / http aquí, o muévelo a un evento de observación (p. ej., PostToolUse).",
       "invalidJson": "JSON no válido",
       "modelInheritDefault": "Usar el predeterminado de automatización",
-      "defaultShell": "Predeterminado"
+      "defaultShell": "Predeterminado",
+      "allowProjectScope": "Permitir hooks de proyecto y locales",
+      "allowProjectScopeDesc": "Permite que .hope-agent/hooks.json y hooks.local.json del directorio de trabajo añadan hooks — práctico para compartir con tu equipo. Desactivado por defecto porque pueden ejecutar comandos por su cuenta, así que actívalo solo para proyectos en los que confíes."
     },
     "hours": "h",
     "inheritGlobal": "Heredar configuración global",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "¿Eliminar el servidor \"{{name}}\"? Esto no se puede deshacer.",
       "confirmDeleteTitle": "¿Eliminar \"{{name}}\"?",
       "connectTimeout": "Tiempos de espera de conexión",
+      "connectionSettings": "Estrategia de conexión",
       "cwdLabel": "Directorio de trabajo (opcional)",
       "cwdPlaceholder": "heredar aplicación cwd",
       "deferredToolsLabel": "Diferir esquemas de herramientas",
+      "directToolsLabel": "Cargar esquemas de herramientas directamente",
       "deleted": "Servidor \"{{name}}\" eliminado",
       "deniedTools": "Lista de herramientas rechazadas",
       "descriptionLabel": "Descripción (opcional)",
       "descriptionPlaceholder": "¿Qué hace este servidor?",
       "disabled": "Deshabilitado",
       "eagerLabel": "Conectar al iniciar",
+      "effectiveDeferredByGlobal": "La política global Recomendada ya difiere las herramientas de este servidor.",
       "edit": "Editar",
       "editTitle": "Editar servidor MCP — {{name}}",
       "emptyDesc": "Agregue un servidor MCP o importe uno desde una configuración de escritorio Claude. Los servidores stdio funcionan hoy; Los transportes remotos HTTP/SSE/WebSocket llegan en una fase posterior.",
@@ -5749,11 +5991,13 @@
       "importJson": "Importar JSON",
       "invalidName": "El nombre debe coincidir con ^[a-z0-9_-]{1,32}$ (letras minúsculas, dígitos, guión bajo, guión)",
       "loadFailed": "No se pudieron cargar los servidores",
+      "lazyLabel": "Conectar bajo demanda",
       "nameImmutable": "El nombre no se puede cambiar después de la creación. Eliminar y volver a agregar para cambiar el nombre.",
       "nameLabel": "Nombre",
       "reconnect": "Reconectar",
       "remoteTransportPhase4": "Los transportes HTTP / SSE / WebSocket aterrizarán en la Fase 4.",
       "saved": "Guardado",
+      "securitySettings": "Seguridad y aprobaciones",
       "signOut": "Cerrar sesión",
       "signOutSuccess": "Credenciales de \"{{name}}\" eliminadas",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "Ejecuta herramientas de línea de comandos en un entorno Docker aislado para limitar el acceso al sistema.",
     "sandboxDockerAvailable": "Docker disponible",
     "sandboxDockerChecking": "Comprobando...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Obtener Docker Desktop",
     "sandboxDockerNotInstalled": "No se ha detectado Docker, por favor instala antes Docker Desktop",
     "sandboxDockerNotRunning": "Docker está instalado pero no en ejecución, inicia Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker no disponible",
     "sandboxImage": "Imagen",
     "sandboxImageDesc": "Imagen de Docker utilizada por el entorno aislado.",
+    "sandboxImageDigestRequired": "Fija la imagen como name@sha256:<resumen de 64 dígitos>; se rechazan las etiquetas mutables.",
     "sandboxMemoryLimit": "Límite de memoria",
     "sandboxNetworkBridge": "puente",
     "sandboxNetworkHost": "Anfitrión",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "Contenedor",
     "sandboxSectionResources": "Límites de recursos",
     "sandboxSectionSecurity": "Endurecimiento de seguridad",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "s",
     "security": "Política de Seguridad",
     "selectDefaultModel": "Seleccionar modelo predeterminado",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "Máximo de Agents hijos de esta sesión padre que pueden ejecutarse a la vez. Los extras esperan en la cola.",
     "subagentMaxDepth": "Profundidad máxima de anidamiento",
     "subagentMaxDepthDesc": "Cuántos niveles de delegación sub-agent se permiten bajo este Agent. Valores más altos permiten que los hijos creen sus propios hijos.",
+    "subagentProviderRetryAttempts": "Reintentos de recuperación de la pasarela",
+    "subagentProviderRetryAttemptsDesc": "Intentos adicionales tras fallar todos los proveedores y modelos alternativos. 0 desactiva la recuperación externa.",
+    "subagentProviderRetryBackoff": "Espera base de reintento",
+    "subagentProviderRetryBackoffDesc": "Espera inicial antes de reintentar una pasarela agotada; después aumenta exponencialmente.",
     "subagentTimeout": "Timeout por defecto",
     "subagentTimeoutDesc": "Tiempo máximo de ejecución de un Agent hijo. 0 significa sin timeout. Se usa cuando la llamada no define su propio timeout_secs.",
     "subagentTimeoutUnit": "segundos",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "Aplicar parche",
     "toolAskUserQuestionDesc": "Enviar preguntas estructuradas de opción múltiple o texto libre al usuario",
     "toolAskUserQuestionName": "Preguntar al Usuario",
+    "toolAudioGenerateDesc": "Generar voz, música o efectos de sonido a partir de texto",
     "toolBrowserDesc": "Controlar el navegador para realizar acciones",
     "toolBrowserName": "Navegador",
     "toolCallNarration": "Actualizaciones de progreso",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "Gestión de procesos",
     "toolProjectReadFileDesc": "Leer archivos subidos al proyecto de la sesión actual",
     "toolProjectReadFileName": "Leer Archivo del Proyecto",
+    "toolReadContextResourceDesc": "Leer una instantánea inmutable de @file o @plan vinculada al turno actual",
     "toolReadDesc": "Leer contenido de archivo con paginación y detección de imágenes",
     "toolReadName": "Leer archivo",
     "toolRecallMemoryDesc": "Buscar y recuperar memorias guardadas",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "Enviar Adjunto",
     "toolSendNotificationDesc": "Enviar mensajes de notificación de escritorio",
     "toolSendNotificationName": "Enviar notificación",
+    "toolSessionContinueDesc": "Reanudar una conversación pausada solo tras una solicitud explícita del usuario",
     "toolSessionStatusDesc": "Consultar el agente, modelo, conteo de mensajes y timestamps de una sesión",
     "toolSessionStatusName": "Estado de Sesión",
     "toolSessionToNoteDesc": "Destila la conversación en una nota estructurada.",
     "toolSessionToNoteName": "Sesión a nota",
     "toolSessionsHistoryDesc": "Paginar el historial de mensajes de una sesión",
     "toolSessionsHistoryName": "Historial de Sesión",
+    "toolSessionsCreateDesc": "Crear una sesión de chat normal, asociarla opcionalmente a un proyecto e iniciar el agente con un primer mensaje o archivo adjunto",
     "toolSessionsListDesc": "Listar otras sesiones (título, agente, modelo, conteo de mensajes)",
     "toolSessionsListName": "Lista de Sesiones",
     "toolSessionsSearchDesc": "Buscar mensajes de chat persistidos y devolver ventanas de contexto coincidentes",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "Enviar a Sesión",
     "toolSubagentDesc": "Delegar tareas a un sub-Agent para ejecución",
     "toolSubagentName": "Sub-Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "Crear una tarea trackable para la sesión actual",
     "toolTaskCreateName": "Crear tarea",
     "toolTaskListDesc": "Listar todas las tareas de la sesión actual",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "Actualizado",
     "weatherWind": "Viento",
     "webFetch": "Búsqueda web",
+    "webFetchMaxTokensCap": "Presupuesto máximo de tokens",
+    "webFetchMaxTokensCapDesc": "Límite estricto de max_tokens solicitado por la herramienta",
+    "webFetchMaxConcurrentPerHost": "Solicitudes simultáneas por host",
+    "webFetchMinHostDelay": "Espera mínima por host (ms)",
+    "webFetchSectionRendering": "Renderizado dinámico",
+    "webFetchRenderMode": "Modo de renderizado predeterminado",
+    "webFetchRenderNever": "Nunca (solo directo)",
+    "webFetchRenderAuto": "Automático (cuando haga falta)",
+    "webFetchRenderAlways": "Siempre",
+    "webFetchRenderModeDesc": "Usa un navegador aislado nuevo, sin cookies ni estado de cuenta",
+    "webFetchRenderTimeout": "Tiempo de renderizado (segundos)",
+    "webFetchCacheEntries": "Instantáneas en caché",
     "webFetchCacheTtl": "TTL de caché (minutos)",
     "webFetchCacheTtlDesc": "Cuánto tiempo cachear las páginas. 0 para desactivar la caché.",
     "webFetchDesc": "Configura cómo la herramienta web_fetch extrae contenido de URLs, incluyendo caché, seguridad y límites de contenido.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "Falta el punto de conexión",
     "memoryExternalProviderBlockPolicyUnsupported": "Política no compatible",
     "memoryExternalProviderBlockAdapterUnavailable": "Adaptador no disponible",
+    "memoryExternalProviderBlockCompatibilityUnverified": "Compatibilidad sin verificar",
+    "memoryExternalProviderBlockCompatibilityBlocked": "Versión del proveedor no segura",
     "memoryExternalProviderBlockLastError": "último error",
     "memoryExternalProviderErrors": {
       "load": "No se pudieron cargar los proveedores de memoria externos",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "No se pudo cargar la conexión del proveedor de memoria externa",
       "saveCredentials": "No se pudo guardar la conexión del proveedor de memoria externa",
       "clearCredentials": "No se pudo borrar la conexión del proveedor de memoria externa",
+      "testConnection": "No se pudo probar la conexión del proveedor de memoria externa",
       "copyPreflightDiagnostics": "No se pudo copiar la verificación previa del proveedor de memoria externa",
       "copySyncDiagnostics": "No se pudo copiar el informe de sincronización del proveedor de memoria externa",
       "detail": "Detalles: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "Las credenciales se almacenan por separado con permisos de archivos restringidos.",
     "memoryExternalProviderConnectionSaved": "Conexión guardada",
     "memoryExternalProviderConnectionCleared": "Conexión borrada",
+    "memoryExternalProviderConnectionTest": "Probar conexión",
+    "memoryExternalProviderCompatibilityPassed": "La conexión y la comprobación de compatibilidad se realizaron correctamente",
+    "memoryExternalProviderCompatibilityUnverified": "Se alcanzó la conexión, pero no se pudo verificar la versión del proveedor",
+    "memoryExternalProviderCompatibilityBlocked": "La versión del proveedor es inferior al mínimo seguro",
+    "memoryExternalProviderCompatibilitySummary": "Estado: {{status}} · detectada {{detected}} · mínima {{minimum}}",
     "memoryExternalProviderEndpoint": "Punto de conexión",
     "memoryExternalProviderEndpointKeep": "Almacenado: {{origin}} · dejar en blanco para conservar",
     "memoryExternalProviderSubjectId": "ID de alcance remoto",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "Duración predeterminada",
       "durationOption": "{{seconds}} s"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "Eliminar una memoria"
     },
+    "fork": {
+      "description": "Continuar en una nueva sesión"
+    },
     "handover": {
       "description": "Transferir la sesión a un chat de IM"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "Iniciar un chat nuevo"
+    },
+    "side": {
+      "description": "Iniciar un chat lateral sin interrumpir el chat principal"
     },
     "noResults": "No hay comandos coincidentes",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "Pausado",
     "progress": "Progreso",
     "resume": "Reanudar",
+    "resumeFeedback": {
+      "counts": "{{resumed}} reanudados · {{failed}} fallidos",
+      "noOpDescription": "Todos los miembros del equipo ya terminaron; no se inició ningún intento nuevo.",
+      "noOpTitle": "No es necesario reanudar",
+      "partialTitle": "Equipo reanudado parcialmente",
+      "refusedTitle": "Reanudación del equipo rechazada",
+      "resumedTitle": "Equipo reanudado",
+      "resuming": "Reanudando…"
+    },
     "review": "Revisión",
     "reviewer": "Revisor",
     "send": "Enviar",
@@ -9282,6 +9572,7 @@
       "timed_out": "Tiempo agotado — se aplicaron valores por defecto"
     },
     "ask_user_question": "Preguntar al usuario",
+    "audio_generate": "Generar audio",
     "browser": "Navegador",
     "canvas": "Lienzo",
     "delete_memory": "Eliminar memoria",
@@ -9313,13 +9604,16 @@
     "process": "Gestor de procesos",
     "rawCall": "Ver llamada en bruto",
     "read": "Leer archivo",
+    "read_context_resource": "Leer recurso de contexto",
     "recall_memory": "Recuperar memoria",
     "restore_settings_backup": "Restaurar copia de configuración",
     "save_memory": "Guardar memoria",
     "send_attachment": "Enviar adjunto",
     "send_notification": "Enviar notificación",
+    "session_continue": "Continuar sesión",
     "session_status": "Estado de sesión",
     "sessions_history": "Historial de sesión",
+    "sessions_create": "Crear sesión",
     "sessions_list": "Listar sesiones",
     "sessions_send": "Enviar a sesión",
     "skill": "Cargar habilidad",
@@ -9329,6 +9623,8 @@
     "task_list": "Listar tareas",
     "task_update": "Actualizar tarea",
     "team": "Equipo de agentes",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "Buscar herramientas",
     "update_core_memory": "Actualizar memoria principal",
     "update_memory": "Actualizar memoria",
@@ -9589,6 +9885,9 @@
     "openPanel": "Abrir espacio de trabajo",
     "resizePanel": "Redimensionar panel del espacio de trabajo",
     "sourceFromSearch": "Búsqueda",
+    "sourceFetchDirect": "Obtención",
+    "sourceFetchRendered": "Renderizado",
+    "sourceFetchCache": "Caché",
     "sourceFromUser": "Usuario",
     "sourceFromAttachment": "Adjunto",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "Guardia",
     "defaultName": "Artefacto"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "Tareas en segundo plano",
     "openPanel": "Tareas en segundo plano",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "Corregir con IA",
       "fixStarted": "La IA está corrigiéndolo",
       "fixBusy": "Hay una conversación en curso, inténtalo de nuevo en breve",
-      "fixPrompt": "Corrige el problema detectado por la autoverificación de diseño: {{detail}}. Usa tokens del sistema de diseño (var(--ds-*)) para consolidar los colores y reemplazar estilos codificados. Haz solo los cambios mínimos necesarios y mantén intacto el resto del diseño."
+      "fixPrompt": "Corrige el problema detectado por la autoverificación de diseño: {{detail}}. Usa tokens del sistema de diseño (var(--ds-*)) para consolidar los colores y reemplazar estilos codificados. Haz solo los cambios mínimos necesarios y mantén intacto el resto del diseño.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "Kit del sistema de diseño",
@@ -12533,7 +12836,15 @@
       "copyLink": "Copiar enlace",
       "copied2": "Copiado",
       "loadErr": "Error al cargar el estado",
-      "shareTo": "Compartir en"
+      "shareTo": "Compartir en",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Desplegar en Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "Todos los artefactos coinciden con su código",
       "checkStale": "{{n}} artefactos tienen actualizaciones de código",
       "chatPrompt": "El código implementado se ha desviado de este diseño. Actualiza el diseño actual para reflejar los cambios de código referenciados, manteniendo la intención del diseño y todo lo demás sin cambios."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "Nombre",
       "shortDescription": "Descripción breve (opcional)",
       "prompt": "¿Qué aspecto debería tener tu mascota?",
+      "version": "Versión de sprites",
+      "versionV2": "v2 · Recomendada",
+      "versionV1": "v1 · Heredada",
+      "versionV2Description": "Incluye las 16 direcciones de mirada en sentido horario de Codex v2.",
+      "versionV1Description": "Crea el atlas original de nueve filas para clientes antiguos.",
       "generate": "Generar vista previa",
       "generating": "Creando vista previa…",
       "failed": "No se pudo crear esta mascota"
+    },
+    "upgrade": {
+      "action": "Actualizar a v2",
+      "upgraded": "Se creó una copia v2. La mascota v1 original sigue disponible.",
+      "alreadyExists": "Esta actualización v2 ya está en tu biblioteca.",
+      "failed": "No se pudo actualizar esta mascota a v2"
     },
     "export": {
       "action": "Exportar para Codex",
@@ -12848,7 +13218,7 @@
       "failed": "No se pudo exportar esta mascota"
     },
     "window": {
-      "interact": "Interactuar con la mascota de Hope",
+      "interact": "Interactuar con {{name}}",
       "tuckAway": "Guardar mascota"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "Configuración",
       "user": "Ajustes del usuario"
     }
+  },
+  "toolchainDoctor": {
+    "title": "Diagnóstico de herramientas",
+    "description": "Comprobaciones de solo lectura para los entornos del sistema y las herramientas de desarrollo opcionales. Hope Agent no instalará, actualizará, iniciará ni reconfigurará nada.",
+    "refresh": "Volver a comprobar",
+    "loading": "Comprobando las herramientas locales…",
+    "loadFailed": "Fallaron las comprobaciones de herramientas",
+    "readOnlyNotice": "Se muestran versiones, disponibilidad, acceso a Docker, clase de contexto, clase de propietario del socket y envoltorios temporales sin exponer rutas ni credenciales.",
+    "detectedVersion": "Detectado {{version}}",
+    "notDetected": "No detectado",
+    "minimumVersion": "Mínimo {{version}}",
+    "diagnosticFacts": "Códigos de diagnóstico",
+    "status": {
+      "detected": "Detectado",
+      "supported": "Compatible",
+      "degraded": "Degradado",
+      "blocked": "Bloqueado"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Se necesita respuesta",
+      "detail": "{{count}} preguntas están esperando en la conversación",
+      "detail_one": "Una pregunta está esperando en la conversación",
+      "openAction": "Responder ahora"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

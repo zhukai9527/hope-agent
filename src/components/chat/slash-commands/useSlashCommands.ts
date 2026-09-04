@@ -18,6 +18,8 @@ export interface SlashCommandActions {
   ensureSession?: () => Promise<string | null>
   /** Let the composer submit `/loop <prompt>` directly when this surface supports Loop mode. */
   bypassLoopCreateOnEnter?: boolean
+  /** Whether this surface can reveal the session created by `/side`. */
+  supportsSideChat?: boolean
 }
 
 export interface UseSlashCommandsReturn {
@@ -113,6 +115,7 @@ export function useSlashCommands(
   const [expandedCmd, setExpandedCmd] = useState<SlashCommandDef | null>(null)
   const [selectedOptionIndex, setSelectedOptionIndex] = useState(0)
   const actionsRef = useRef(actions)
+  const catalogRequestRef = useRef(0)
   actionsRef.current = actions
 
   // Fill the composer with `value` and park the caret at the end, so the next
@@ -135,11 +138,19 @@ export function useSlashCommands(
 
   // Load commands from backend (refresh when menu opens to pick up skill changes)
   const loadCommands = useCallback(() => {
+    const requestId = ++catalogRequestRef.current
     getTransport()
-      .call<SlashCommandDef[]>("list_slash_commands")
-      .then(setCommands)
+      .call<SlashCommandDef[]>("list_slash_commands", { sessionId: actions.sessionId })
+      .then((nextCommands) => {
+        if (requestId !== catalogRequestRef.current) return
+        setCommands(
+          actions.supportsSideChat
+            ? nextCommands
+            : nextCommands.filter((command) => command.name !== "side"),
+        )
+      })
       .catch(() => {})
-  }, [])
+  }, [actions.sessionId, actions.supportsSideChat])
 
   useEffect(() => {
     loadCommands()

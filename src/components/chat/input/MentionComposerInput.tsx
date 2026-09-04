@@ -22,11 +22,30 @@ import {
   useState,
 } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { FileText, Folder } from "lucide-react"
+import { Cable, ClipboardList, FileText, Folder, Puzzle } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
-import { AgentAvatarBadge } from "@/components/common/AgentSelectDisplay"
-import { FileTypeIcon } from "@/components/icons/FileTypeIcon"
+import {
+  AgentMentionIcon,
+  AGENT_MENTION_ICON_CLASS,
+  AGENT_MENTION_INLINE_CLASS,
+} from "@/components/chat/agent-mention/AgentMentionChip"
+import {
+  CAPABILITY_MENTION_ICON_CLASS,
+  CAPABILITY_MENTION_INLINE_CLASS,
+} from "@/components/chat/capability-mention/CapabilityMentionChip"
+import {
+  FILE_MENTION_ICON_CLASS,
+  FILE_MENTION_INLINE_CLASS,
+} from "@/components/chat/file-mention/FileMentionChip"
+import {
+  NOTE_MENTION_ICON_CLASS,
+  NOTE_MENTION_INLINE_CLASS,
+} from "@/components/chat/note-mention/NoteMentionChip"
+import {
+  PLAN_MENTION_ICON_CLASS,
+  PLAN_MENTION_INLINE_CLASS,
+} from "@/components/chat/plan-mention/PlanMentionChip"
 import { useFileResource } from "@/components/chat/files/useFileResource"
 import type { PreviewTarget } from "@/components/chat/files/useFilePreview"
 import { basename } from "@/lib/path"
@@ -42,12 +61,23 @@ import {
   parseSkillMentions,
   skillMentionMeta,
 } from "../skill-mention/skillTokens"
+import { parseCapabilityMentions, type ComposerMentionBinding } from "../mentions/typedMentions"
 import type { ComposerInputHandle } from "./composerInputHandle"
 
 type MentionSpan =
   | { kind: "file"; raw: string; relPath: string; start: number; end: number }
+  | { kind: "plan"; raw: string; label: string; start: number; end: number }
   | { kind: "note"; raw: string; start: number; end: number }
   | { kind: "skill"; raw: string; name: string; start: number; end: number }
+  | {
+      kind: "capability"
+      raw: string
+      capabilityKind: "plugin" | "connector"
+      targetId: string
+      label: string
+      start: number
+      end: number
+    }
   | { kind: "agent"; raw: string; agentId: string; start: number; end: number }
 
 export interface ComposerPasteEvent {
@@ -58,12 +88,15 @@ export interface ComposerPasteEvent {
 
 interface MentionComposerInputProps {
   value: string
+  typedMentions?: ComposerMentionBinding[]
   placeholder: string
   workingDir: string | null
   fileEnabled: boolean
   noteEnabled: boolean
   /** Render `@skill:<name>` (allowlisted built-ins) as rose chips. */
   skillEnabled?: boolean
+  /** Render typed Plugin/Connector link tokens as capability chips. */
+  capabilityEnabled?: boolean
   /** Render `@agent` delegation mentions as teal chips. */
   agentMentionEnabled?: boolean
   agents?: AgentSummaryForSidebar[]
@@ -76,10 +109,12 @@ interface MentionComposerInputProps {
 }
 
 interface MentionConfig {
+  typedMentions: ComposerMentionBinding[]
   workingDir: string | null
   fileEnabled: boolean
   noteEnabled: boolean
   skillEnabled: boolean
+  capabilityEnabled: boolean
   agentMentionEnabled: boolean
   /** Resolve a skill id → localized chip label (threaded from `t`). */
   skillLabel: (name: string) => string
@@ -87,15 +122,14 @@ interface MentionConfig {
   agentById: (id: string) => AgentSummaryForSidebar | undefined
 }
 
-const FILE_CHIP_CLASS =
-  "cm-mention-chip cm-mention-file mx-0.5 inline-flex h-6 max-w-[16rem] align-baseline items-center gap-1 rounded-md border border-blue-500/20 bg-blue-500/10 px-1.5 text-sm font-medium text-blue-600 shadow-sm outline-none dark:border-blue-300/20 dark:bg-blue-300/15 dark:text-blue-200"
-const NOTE_CHIP_CLASS =
-  "cm-mention-chip cm-mention-note mx-0.5 inline-flex h-6 max-w-[16rem] align-baseline items-center rounded-md border border-violet-500/20 bg-violet-500/10 px-1.5 text-sm font-medium text-violet-600 shadow-sm dark:border-violet-300/20 dark:bg-violet-300/15 dark:text-violet-200"
+const FILE_CHIP_CLASS = `cm-mention-chip cm-mention-file ${FILE_MENTION_INLINE_CLASS} text-sm outline-none`
+const NOTE_CHIP_CLASS = `cm-mention-chip cm-mention-note ${NOTE_MENTION_INLINE_CLASS} text-sm`
 const SKILL_CHIP_CLASS =
   "cm-mention-chip cm-mention-skill mx-0.5 inline-flex max-w-[16rem] items-baseline gap-1 whitespace-nowrap align-baseline text-sm font-normal"
-const AGENT_CHIP_CLASS =
-  "cm-mention-chip cm-mention-agent mx-0.5 inline-flex h-6 max-w-[16rem] align-baseline items-center gap-1 rounded-md border border-teal-500/20 bg-teal-500/10 px-1.5 text-sm font-medium text-teal-700 shadow-sm dark:border-teal-300/20 dark:bg-teal-300/15 dark:text-teal-200"
-const CHIP_ICON_CLASS = "h-4 w-4 shrink-0"
+const AGENT_CHIP_CLASS = `cm-mention-chip cm-mention-agent ${AGENT_MENTION_INLINE_CLASS} text-sm`
+const CAPABILITY_CHIP_CLASS = `cm-mention-chip cm-mention-capability ${CAPABILITY_MENTION_INLINE_CLASS} text-sm`
+const PLAN_CHIP_CLASS = `cm-mention-chip cm-mention-plan ${PLAN_MENTION_INLINE_CLASS} text-sm`
+const SKILL_ICON_CLASS = "h-[1em] w-[1em] shrink-0 self-center"
 const CHIP_LABEL_CLASS = "truncate"
 const widgetIconRoots = new WeakMap<HTMLElement, Root>()
 
@@ -105,6 +139,14 @@ function isCommittedMention(input: string, end: number): boolean {
 
 function mentionSpans(input: string, config: MentionConfig): MentionSpan[] {
   const spans: MentionSpan[] = []
+  const isTyped = (kind: ComposerMentionBinding["kind"], raw: string, start: number, end: number) =>
+    config.typedMentions.some(
+      (mention) =>
+        mention.kind === kind &&
+        mention.raw === raw &&
+        mention.start === start &&
+        mention.end === end,
+    )
 
   if (config.fileEnabled) {
     for (const mention of parseMentions(input)) {
@@ -113,10 +155,23 @@ function mentionSpans(input: string, config: MentionConfig): MentionSpan[] {
       // the `[@…](#skill:…)` link form — their `@` sits after `[`, so the bare
       // `@token` file grammar never matches them.)
       if (mention.relPath.startsWith("plan:")) continue
+      if (!isTyped("file", mention.raw, mention.start, mention.end)) continue
       spans.push({
         kind: "file",
         raw: mention.raw,
         relPath: mention.relPath,
+        start: mention.start,
+        end: mention.end,
+      })
+    }
+  }
+
+  for (const mention of config.typedMentions) {
+    if (mention.kind === "plan" && input.slice(mention.start, mention.end) === mention.raw) {
+      spans.push({
+        kind: "plan",
+        raw: mention.raw,
+        label: mention.displayLabel,
         start: mention.start,
         end: mention.end,
       })
@@ -134,6 +189,7 @@ function mentionSpans(input: string, config: MentionConfig): MentionSpan[] {
     // commitment gate needed. Only allowlisted built-ins become chips.
     for (const skill of parseSkillMentions(input)) {
       if (!isSkillMentionName(skill.name)) continue
+      if (!isTyped("skill", skill.raw, skill.start, skill.end)) continue
       spans.push({
         kind: "skill",
         raw: skill.raw,
@@ -144,10 +200,27 @@ function mentionSpans(input: string, config: MentionConfig): MentionSpan[] {
     }
   }
 
+  if (config.capabilityEnabled) {
+    spans.push(
+      ...parseCapabilityMentions(input)
+        .filter((mention) => isTyped(mention.kind, mention.raw, mention.start, mention.end))
+        .map((mention) => ({
+          kind: "capability" as const,
+          raw: mention.raw,
+          capabilityKind: mention.kind,
+          targetId: mention.targetId,
+          label: mention.label,
+          start: mention.start,
+          end: mention.end,
+        })),
+    )
+  }
+
   if (config.agentMentionEnabled) {
     // Same markdown-link token shape as `@skill`, so it is self-delimiting and
     // cannot collide with bare `@path` file mentions.
     for (const agent of parseAgentMentions(input)) {
+      if (!isTyped("agent", agent.raw, agent.start, agent.end)) continue
       spans.push({
         kind: "agent",
         raw: agent.raw,
@@ -210,8 +283,14 @@ class MentionWidget extends WidgetType {
       other.span.raw === this.span.raw &&
       (other.span.kind !== "file" ||
         (this.span.kind === "file" && other.span.relPath === this.span.relPath)) &&
+      (other.span.kind !== "plan" ||
+        (this.span.kind === "plan" && other.span.label === this.span.label)) &&
       (other.span.kind !== "agent" ||
         (this.span.kind === "agent" && other.span.agentId === this.span.agentId)) &&
+      (other.span.kind !== "capability" ||
+        (this.span.kind === "capability" &&
+          other.span.capabilityKind === this.span.capabilityKind &&
+          other.span.targetId === this.span.targetId)) &&
       other.workingDir === this.workingDir &&
       other.skillLabel === this.skillLabel &&
       other.agentById === this.agentById
@@ -228,8 +307,24 @@ class MentionWidget extends WidgetType {
       const title = this.span.raw.slice(2, -2)
       root.className = NOTE_CHIP_CLASS
       root.title = this.span.raw
-      appendIcon(root, createElement(FileText, { className: CHIP_ICON_CLASS }))
+      appendIcon(
+        root,
+        createElement(FileText, { className: NOTE_MENTION_ICON_CLASS }),
+        "self-center",
+      )
       appendText(root, CHIP_LABEL_CLASS, title)
+      return root
+    }
+
+    if (this.span.kind === "plan") {
+      root.className = PLAN_CHIP_CLASS
+      root.setAttribute("aria-label", this.span.raw)
+      appendIcon(
+        root,
+        createElement(ClipboardList, { className: PLAN_MENTION_ICON_CLASS }),
+        "self-center",
+      )
+      appendText(root, CHIP_LABEL_CLASS, this.span.label || this.span.raw)
       return root
     }
 
@@ -243,7 +338,7 @@ class MentionWidget extends WidgetType {
       if (meta) {
         appendIcon(
           root,
-          createElement(SkillMentionIcon, { kind: meta.iconKind, className: CHIP_ICON_CLASS }),
+          createElement(SkillMentionIcon, { kind: meta.iconKind, className: SKILL_ICON_CLASS }),
           "self-center",
         )
       }
@@ -258,12 +353,27 @@ class MentionWidget extends WidgetType {
       root.title = label
       appendIcon(
         root,
-        createElement(AgentAvatarBadge, {
-          agent: agent ?? { id: this.span.agentId, name: label },
-          size: "xs",
+        createElement(AgentMentionIcon, {
+          agent,
+          className: AGENT_MENTION_ICON_CLASS,
         }),
+        "self-center",
       )
       appendText(root, CHIP_LABEL_CLASS, label)
+      return root
+    }
+
+    if (this.span.kind === "capability") {
+      root.className = CAPABILITY_CHIP_CLASS
+      root.setAttribute("aria-label", `${this.span.capabilityKind}:${this.span.targetId}`)
+      appendIcon(
+        root,
+        createElement(this.span.capabilityKind === "connector" ? Cable : Puzzle, {
+          className: CAPABILITY_MENTION_ICON_CLASS,
+        }),
+        "self-center",
+      )
+      appendText(root, CHIP_LABEL_CLASS, this.span.label)
       return root
     }
 
@@ -281,8 +391,9 @@ class MentionWidget extends WidgetType {
     appendIcon(
       root,
       isDir
-        ? createElement(Folder, { className: `${CHIP_ICON_CLASS} text-blue-500` })
-        : createElement(FileTypeIcon, { name, className: CHIP_ICON_CLASS }),
+        ? createElement(Folder, { className: FILE_MENTION_ICON_CLASS })
+        : createElement(FileText, { className: FILE_MENTION_ICON_CLASS }),
+      "self-center",
     )
     appendText(root, CHIP_LABEL_CLASS, name)
     return root
@@ -501,9 +612,6 @@ const baseTheme = EditorView.theme({
     verticalAlign: "baseline",
     whiteSpace: "nowrap",
   },
-  ".cm-mention-file:hover": {
-    backgroundColor: "color-mix(in srgb, var(--primary, #3b82f6) 15%, transparent)",
-  },
 })
 
 function sizeTheme(hero: boolean): Extension {
@@ -535,11 +643,13 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
   function MentionComposerInput(
     {
       value,
+      typedMentions = [],
       placeholder,
       workingDir,
       fileEnabled,
       noteEnabled,
       skillEnabled = false,
+      capabilityEnabled = false,
       agentMentionEnabled = false,
       agents = [],
       hero = false,
@@ -569,10 +679,12 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
     const onPasteRef = useRef(onPaste)
     const onSelectionChangeRef = useRef(onSelectionChange)
     const configRef = useRef<MentionConfig>({
+      typedMentions,
       workingDir,
       fileEnabled,
       noteEnabled,
       skillEnabled,
+      capabilityEnabled,
       agentMentionEnabled,
       skillLabel,
       agentById,
@@ -593,10 +705,12 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
     onPasteRef.current = onPaste
     onSelectionChangeRef.current = onSelectionChange
     configRef.current = {
+      typedMentions,
       workingDir,
       fileEnabled,
       noteEnabled,
       skillEnabled,
+      capabilityEnabled,
       agentMentionEnabled,
       skillLabel,
       agentById,
@@ -628,10 +742,19 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
                 history(),
                 // Shift+Enter inserts a soft line break (standard IM
                 // convention). Plain Enter is deliberately left unbound so it
-                // bubbles to ChatInput's onKeyDown, which sends the message —
-                // CM6 without a binding swallows the structural edit, which is
-                // also why the editor could never insert a newline before.
-                keymap.of([{ key: "Shift-Enter", run: insertNewline }, ...historyKeymap]),
+                // bubbles to ChatInput, which either sends or inserts a newline
+                // after open composer menus have had first chance to consume it.
+                keymap.of([
+                  {
+                    key: "Shift-Enter",
+                    run: insertNewline,
+                    // The outer ChatInput owns slash/mention menu shortcuts.
+                    // Do not let a handled soft newline bubble there and also
+                    // commit the currently highlighted menu row.
+                    stopPropagation: true,
+                  },
+                  ...historyKeymap,
+                ]),
                 EditorView.lineWrapping,
                 // WebKit (Tauri) doesn't paint the native caret in an empty
                 // contenteditable; CM6 draws its own reliable, blinking cursor.
@@ -714,10 +837,12 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
     }, [
       agentById,
       agentMentionEnabled,
+      capabilityEnabled,
       fileEnabled,
       noteEnabled,
       skillEnabled,
       skillLabel,
+      typedMentions,
       workingDir,
     ])
 
@@ -726,6 +851,11 @@ const MentionComposerInput = forwardRef<ComposerInputHandle, MentionComposerInpu
       () => ({
         focus: () => viewRef.current?.focus(),
         getValue: () => valueRef.current,
+        insertNewline: () => {
+          const view = viewRef.current
+          if (!view) return
+          insertNewline(view)
+        },
         getSelectionRange: () => {
           const selection = viewRef.current?.state.selection.main
           if (!selection) {

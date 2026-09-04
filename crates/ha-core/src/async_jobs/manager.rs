@@ -23,7 +23,7 @@ use tokio::sync::Notify;
 
 use super::types::{BackgroundJob, BackgroundJobSnapshot, JobKind, JobOrigin, JobStatus};
 use crate::subagent::SubagentStatus;
-use crate::tools::ToolExecContext;
+use crate::tool_defs::ToolExecContext;
 
 const TERMINAL_WAIT_INITIAL_BACKOFF: Duration = Duration::from_millis(100);
 const TERMINAL_WAIT_MAX_BACKOFF: Duration = Duration::from_secs(2);
@@ -433,6 +433,12 @@ impl JobManager {
         super::cancel_job(job_id)
     }
 
+    /// Canonical cancellation result. Model-facing runtime controls must use
+    /// this instead of comparing snapshots around [`Self::cancel`].
+    pub fn cancel_with_outcome(job_id: &str) -> Result<super::JobCancelOutcome> {
+        super::cancel_job_with_outcome(job_id)
+    }
+
     /// Cancel every active job owned by a session (session delete / DELETE-4).
     /// Returns the number cancelled.
     pub fn cancel_for_session(session_id: &str) -> usize {
@@ -451,6 +457,18 @@ impl JobManager {
     /// terminal-but-uninjected jobs to their parent sessions.
     pub fn replay_pending() {
         super::replay_pending_jobs()
+    }
+
+    /// Primary-startup phase 1: converge jobs whose worker process disappeared.
+    /// This performs no ParentInjection and may run before IM accounts are ready.
+    pub(crate) fn recover_interrupted() {
+        super::recover_interrupted_jobs()
+    }
+
+    /// Primary-startup phase 2: dispatch durable terminal results after the
+    /// channel-account readiness barrier has opened.
+    pub(crate) fn replay_pending_injections() {
+        super::replay_pending_job_injections()
     }
 
     /// The per-process (tier-agnostic) queue scheduler loop — promotes queued

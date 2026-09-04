@@ -1,99 +1,19 @@
 use serde_json::Value;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{oneshot, Mutex as AsyncMutex, Notify};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use super::app_update;
-use super::issue_report;
-use super::send_attachment;
-use super::skill;
+use super::exec;
 use super::{
-    acp_spawn, browser, core_memory, cron, goal, loop_tool, mac_control, memory, note,
-    notification, project_memory, settings, subagent, team, weather, web_fetch, web_search,
-    workflow_tool,
-};
-use super::{
-    agents, artifact, ask_user_question, audio_generate, canvas, design, enter_plan_mode, image,
-    image_generate, job_status, pdf, runtime_cancel, schedule_wakeup, sessions, submit_plan, task,
-};
-use super::{apply_patch, edit, exec, find, grep, ls, lsp, process, read, write};
-use super::{
-    approval, TOOL_ACP_SPAWN, TOOL_AGENTS_LIST, TOOL_APPLY_PATCH, TOOL_ARTIFACT,
-    TOOL_ASK_USER_QUESTION, TOOL_AUDIO_GENERATE, TOOL_BROWSER, TOOL_CANVAS, TOOL_CORE_MEMORY,
-    TOOL_DELETE_MEMORY, TOOL_DESIGN, TOOL_EDIT, TOOL_ENTER_PLAN_MODE, TOOL_EXEC, TOOL_FIND,
-    TOOL_GET_SETTINGS, TOOL_GET_WEATHER, TOOL_GOAL_BLOCK_REQUEST, TOOL_GOAL_CHECKPOINT,
-    TOOL_GOAL_EVALUATE, TOOL_GOAL_FINISH_REQUEST, TOOL_GOAL_PREPARE_CONTRACT,
-    TOOL_GOAL_RECORD_EVIDENCE, TOOL_GOAL_STATUS, TOOL_GREP, TOOL_IMAGE, TOOL_IMAGE_GENERATE,
-    TOOL_ISSUE_REPORT, TOOL_JOB_STATUS, TOOL_LIST_SETTINGS_BACKUPS, TOOL_LOOP_RECORD_PROGRESS,
-    TOOL_LOOP_RESCHEDULE, TOOL_LOOP_STATUS, TOOL_LOOP_STOP, TOOL_LOOP_UNWATCH, TOOL_LOOP_WATCH,
-    TOOL_LS, TOOL_LSP, TOOL_MAC_CONTROL, TOOL_MANAGE_CRON, TOOL_MEMORY_GET, TOOL_PDF, TOOL_PROCESS,
-    TOOL_PROJECT_MEMORY, TOOL_READ, TOOL_RECALL_MEMORY, TOOL_RESTORE_SETTINGS_BACKUP,
-    TOOL_RUNTIME_CANCEL, TOOL_SAVE_MEMORY, TOOL_SEND_ATTACHMENT, TOOL_SEND_NOTIFICATION,
-    TOOL_SESSIONS_HISTORY, TOOL_SESSIONS_LIST, TOOL_SESSIONS_SEARCH, TOOL_SESSIONS_SEND,
-    TOOL_SESSION_STATUS, TOOL_SUBAGENT, TOOL_SUBMIT_PLAN, TOOL_TASK_CREATE, TOOL_TASK_LIST,
-    TOOL_TASK_UPDATE, TOOL_TEAM, TOOL_UPDATE_CORE_MEMORY, TOOL_UPDATE_MEMORY, TOOL_UPDATE_SETTINGS,
-    TOOL_WEB_FETCH, TOOL_WEB_SEARCH, TOOL_WORKFLOW, TOOL_WRITE,
-};
-use super::{
-    TOOL_KNOWLEDGE_RECALL, TOOL_NOTE_APPEND, TOOL_NOTE_ASSIGN_BLOCK, TOOL_NOTE_BACKLINKS,
-    TOOL_NOTE_BROKEN_LINKS, TOOL_NOTE_BY_TAG, TOOL_NOTE_CREATE, TOOL_NOTE_DELETE,
-    TOOL_NOTE_DISTILL, TOOL_NOTE_GRAPH, TOOL_NOTE_LINK, TOOL_NOTE_MOC, TOOL_NOTE_MOVE,
-    TOOL_NOTE_ORPHANS, TOOL_NOTE_PATCH, TOOL_NOTE_READ, TOOL_NOTE_RELATED, TOOL_NOTE_RENAME,
-    TOOL_NOTE_SEARCH, TOOL_NOTE_SET_FRONTMATTER, TOOL_NOTE_SIMILAR, TOOL_NOTE_SUGGEST_LINKS,
-    TOOL_NOTE_TAGS, TOOL_NOTE_UPDATE, TOOL_SESSION_TO_NOTE,
+    approval, TOOL_APPLY_PATCH, TOOL_EDIT, TOOL_EXEC, TOOL_LS, TOOL_MAC_CONTROL, TOOL_READ,
+    TOOL_READ_CONTEXT_RESOURCE, TOOL_WORKFLOW, TOOL_WRITE,
 };
 use crate::agent_config::AsyncToolPolicy;
 use crate::async_jobs::{self, JobOrigin};
-
-pub(crate) struct EffectiveArgsUpdate {
-    pub(crate) value: Value,
-    pub(crate) acknowledged: oneshot::Sender<std::result::Result<(), String>>,
-}
-
-/// Per-dispatch rendezvous used to stop a tool between `PreToolUse` argument
-/// rewriting and the first permission/side-effecting operation. The streaming
-/// orchestrator journals the effective arguments, crosses a durability barrier,
-/// and only then acknowledges the update so dispatch may continue.
-#[derive(Default)]
-#[doc(hidden)]
-pub struct EffectiveArgsSink {
-    pending: AsyncMutex<Option<EffectiveArgsUpdate>>,
-    changed: Notify,
-}
-
-impl std::fmt::Debug for EffectiveArgsSink {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EffectiveArgsSink").finish_non_exhaustive()
-    }
-}
-
-impl EffectiveArgsSink {
-    async fn publish_and_wait(&self, value: Value) -> anyhow::Result<()> {
-        let (acknowledged, wait) = oneshot::channel();
-        *self.pending.lock().await = Some(EffectiveArgsUpdate {
-            value,
-            acknowledged,
-        });
-        self.changed.notify_one();
-        match wait.await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => anyhow::bail!(error),
-            Err(_) => anyhow::bail!("effective tool arguments were not acknowledged"),
-        }
-    }
-
-    pub(crate) async fn next(&self) -> EffectiveArgsUpdate {
-        loop {
-            let changed = self.changed.notified();
-            if let Some(update) = self.pending.lock().await.take() {
-                return update;
-            }
-            changed.await;
-        }
-    }
-}
+// 执行上下文契约在 tool_defs（crate-split 阶段 4）；本文件只剩分发逻辑
+// 与下方 dispatch 耦合的第二个 `impl ToolExecContext` 块。`pub(crate)`
+// 再导入保住 tools/ 内部既有 `super::execution::ToolExecContext` 路径。
+pub(crate) use crate::tool_defs::ToolExecContext;
 
 /// Single entry point that builds a [`permission::engine::ResolveContext`]
 /// from a [`ToolExecContext`] and runs `engine::resolve_async`. Both
@@ -105,7 +25,7 @@ impl EffectiveArgsSink {
 /// `AppConfig.permission.smart`; non-Smart skips the config load to keep
 /// the per-dispatch hot path at one ArcSwap::load() (or zero, for the
 /// Default/YOLO majority).
-pub(super) async fn resolve_tool_permission(
+pub async fn resolve_tool_permission(
     tool_name: &str,
     args: &Value,
     ctx: &ToolExecContext,
@@ -116,9 +36,11 @@ pub(super) async fn resolve_tool_permission(
     // model called `enter_plan_mode` mid-turn (user accepted) the live state
     // is now Planning/Review while the snapshot still says Off, so the
     // permission engine would happily run write/edit/apply_patch/canvas. Fall
-    // back to a hard deny on those four mutation tools so the user-sovereignty
-    // contract holds within the same turn — full PlanAgent restrictions kick
-    // in automatically on the next user message when the agent rebuilds.
+    // back to the canonical hard-deny list (including cross-session
+    // delegation, which could otherwise execute mutations in another regular
+    // session) so the user-sovereignty contract holds within the same turn.
+    // Full PlanAgent restrictions kick in automatically on the next user
+    // message when the agent rebuilds.
     if !is_internal_tool && ctx.plan_mode_allowed_tools.is_empty() {
         if let Some(sid) = ctx.session_id.as_deref() {
             let live = crate::plan::get_plan_state(sid).await;
@@ -179,6 +101,7 @@ pub(super) async fn resolve_tool_permission(
         agent_id: ctx.agent_id.as_deref(),
         default_path: Some(ctx.default_path()),
         is_internal_tool,
+        bound_context_resource_read: is_bound_context_resource_read(tool_name, args, ctx),
         smart_config: app_cfg.as_deref().map(|c| &c.permission.smart),
         unattended,
         task_intent: cron_intent.as_deref(),
@@ -220,384 +143,10 @@ fn tool_timeout(ctx: &ToolExecContext) -> Option<Duration> {
 
 const TOOL_TIMEOUT_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 
-// ── Tool Execution Context ────────────────────────────────────────
-
-/// Optional bound session database for non-global agent/runtime paths. A
-/// newtype with a hand-written `Debug` keeps SQLite connection internals out of
-/// logs while letting `ToolExecContext` remain debuggable.
-#[derive(Clone)]
-pub struct SessionDbHandle(pub Arc<crate::session::SessionDB>);
-
-impl std::fmt::Debug for SessionDbHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SessionDbHandle(..)")
-    }
-}
-
-/// Context passed to tool execution for dynamic behavior.
-///
-/// # Concurrency contract
-///
-/// The tool loop runs concurrent-safe tools in parallel via `join_all`,
-/// `clone()`-ing this struct once per concurrent task (see
-/// `crates/ha-core/src/agent/providers/{anthropic,openai_chat,openai_responses,codex}.rs`,
-/// look for `let tool_ctx = tool_ctx.clone();`). All current fields are value
-/// types or owned `Vec`s, so the clone is independent and a tool only ever
-/// observes its own snapshot.
-///
-/// **Do not** add `Mutex`/`RwLock` directly to this struct. Each concurrent
-/// branch holds an independent clone, so writes through such a lock would be
-/// invisible to peers and to subsequent rounds. State that must be shared
-/// across concurrent tools belongs in a process-global
-/// `OnceLock<TokioMutex<...>>` (see
-/// [`super::approval::pending_approvals_per_session`] for the canonical
-/// pattern).
-#[derive(Debug, Clone, Default)]
-pub struct ToolExecContext {
-    /// Model context window in tokens (for dynamic output truncation)
-    pub context_window_tokens: Option<u32>,
-    /// Estimated tokens currently used by system prompt + messages + max_output.
-    /// Used by the read tool to compute remaining context budget for adaptive sizing.
-    pub used_tokens: Option<u32>,
-    /// Agent home directory — per-agent scratch/home directory.
-    pub home_dir: Option<String>,
-    /// User-selected working directory for the current session.
-    /// Path-aware tools prefer this over the agent home when no explicit
-    /// absolute path/cwd is provided.
-    pub session_working_dir: Option<String>,
-    /// Current session ID (for sub-agent spawning context)
-    pub session_id: Option<String>,
-    /// Durable Workflow owner identity for tools invoked by the Workflow host.
-    ///
-    /// This is an execution-context capability, not a model argument. Internal
-    /// Workflow fields such as `__hope_workflow_run_id` must match it before a
-    /// tool may control Workflow-owned resources.
-    pub workflow_run_id: Option<String>,
-    /// Session DB bound to this agent/runtime path. When absent, tools fall
-    /// back to the process-global session DB for legacy callers.
-    pub session_db: Option<SessionDbHandle>,
-    /// Provider tool-call id for the currently executing tool. Async jobs
-    /// persist this so completion notifications can point back to the exact
-    /// original call.
-    pub tool_call_id: Option<String>,
-    /// Current agent ID
-    pub agent_id: Option<String>,
-    /// Sub-agent nesting depth (0 = top-level)
-    pub subagent_depth: u32,
-    /// Agent-level non-Core tool switch overrides from `agent.json`
-    /// `capabilities.tools`.
-    pub agent_tool_filter: crate::agent_config::FilterConfig,
-    /// Tools removed by sub-agent depth policy or other schema-level denies.
-    pub denied_tools: Vec<String>,
-    /// Active skill-level tool whitelist. When non-empty, only these tools are allowed.
-    pub skill_allowed_tools: Vec<String>,
-    /// Whether the agent forces Docker sandbox mode for all exec commands.
-    pub force_sandbox: bool,
-    /// Per-session sandbox mode. `force_sandbox` is retained as a compatibility
-    /// bit for legacy contexts; when it is true and this field is `Off`, callers
-    /// should treat it as `Standard`.
-    pub sandbox_mode: crate::permission::SandboxMode,
-    /// Plan mode file-pattern allow rules: when set, write/edit tools targeting these
-    /// glob patterns are allowed even if the tool is in the denied list.
-    /// Format: list of glob patterns (e.g. ["~/.hope-agent/plans/*.md"])
-    pub plan_mode_allow_paths: Vec<String>,
-    /// Plan mode tool whitelist: when non-empty, only these tools can execute.
-    /// Enforced at execution layer as defense-in-depth (supplements schema-level filtering).
-    pub plan_mode_allowed_tools: Vec<String>,
-    /// Plan mode tools that are whitelisted but still need explicit per-call
-    /// approval (`ask_tools` from the plan agent config). Defaults to `exec`
-    /// for the bundled plan agent so a planning subagent can't run shell
-    /// commands without confirmation.
-    pub plan_mode_ask_tools: Vec<String>,
-    /// When true, automatically approve all tool calls — skips BOTH the
-    /// permission-engine gate AND the `exec` command-level gate. Set by the
-    /// IM channel auto-approve account flag and by skill-triggered slash
-    /// commands (the user has out-of-band authorized everything that path
-    /// will run). **Do not** set this for internal re-entries that only mean
-    /// "the engine already ran at the outer dispatch" — use
-    /// [`Self::external_pre_approved`] instead, otherwise `exec` will
-    /// silently bypass its dangerous/edit-command audits.
-    pub auto_approve_tools: bool,
-    /// Set by the async-job spawner / auto-bg helper to mark that the
-    /// permission engine gate (see [`needs_permission_engine`]) was already
-    /// satisfied at the outer dispatch. Inner re-entries skip the engine
-    /// gate but **still run command-level gates** (notably `exec`'s
-    /// dangerous/edit-command + AllowAlways audit), because for the `exec`
-    /// tool those gates are intentionally bypassed at the outer engine layer
-    /// (`needs_permission_engine` excludes `TOOL_EXEC`) and `exec` is
-    /// expected to run them itself.
-    ///
-    /// Differs from [`Self::auto_approve_tools`], which means "skip ALL
-    /// approval gates including command-level" and is set only by IM
-    /// auto-approve accounts or slash-skill execution.
-    pub external_pre_approved: bool,
-    /// Set ONLY by the async approval-reorder path
-    /// ([`execute_tool_with_context`]) after it has already run `exec`'s
-    /// command-level gate ([`exec::resolve_exec_command_approval`]) and the
-    /// user approved — *before* detaching the call into a background job. The
-    /// spawned re-dispatch reads this via [`Self::should_run_exec_command_gate`]
-    /// to skip the inner gate, so the command is approved exactly once and the
-    /// model never sees a synthetic "started" job id ahead of the prompt
-    /// (ASYNC-1 / HOOKS-2).
-    ///
-    /// Physically separate from [`Self::external_pre_approved`], which silences
-    /// only the *engine* gate and must NEVER suppress the command-level audit.
-    /// This flag may suppress the command gate precisely because it is set only
-    /// once that gate has already passed for this exact call.
-    pub exec_pre_approved: bool,
-    /// How a backgrounded call was authorized, for the async-job
-    /// `approval_origin` audit column (TIMEOUT-2). Set by the exec async
-    /// approval-reorder alongside [`Self::exec_pre_approved`] and read by
-    /// [`crate::async_jobs::spawn::record_running_job`]. `None` for synchronous
-    /// dispatch and for jobs that skipped the gate (auto-approve / external
-    /// pre-approved — wired separately by F6).
-    pub approval_origin: Option<approval::ApprovalOrigin>,
-    /// Per-session permission mode (Default / Smart / Yolo). Resolved from the
-    /// `sessions.permission_mode` column at agent build time. The engine
-    /// consumes this together with `global_yolo` to decide approval behavior.
-    pub session_mode: crate::permission::SessionMode,
-    /// Agent-level "custom tool approval" toggle from `agent.json`.
-    /// When false, `agent_custom_approval_tools` is ignored.
-    pub agent_custom_approval_enabled: bool,
-    /// Agent-level extra approval list. Only consumed in Default mode.
-    pub agent_custom_approval_tools: Vec<String>,
-    /// Project id (if any) for AllowAlways scope resolution.
-    pub project_id: Option<String>,
-    /// Turn source for knowledge-base access scoping (design D10). `None` =
-    /// unknown (treated as owner/GUI). Set by the chat engine; IM turns set
-    /// `Im` so KB access is denied even on project-attached sessions (Phase 1).
-    pub chat_source: Option<crate::knowledge::KbAccessSource>,
-    /// Call-chain origin for KB access scoping (design D10). `None` = same as
-    /// `chat_source` (top-level turn). A subagent carries its parent turn's
-    /// origin so an IM-origin chain can't reacquire KB access through the
-    /// neutral `Subagent` source. Consumed by `effective_kb_access`.
-    pub origin_chat_source: Option<crate::knowledge::KbAccessSource>,
-    /// IM identity of the lineage origin, for the WS8 KB-access opt-in gate.
-    /// `Some` only when the lineage contains an IM hop (top-level IM turn or an
-    /// IM-origin subagent, which carries the origin's identity). `None` for
-    /// GUI/HTTP/cron. Consumed by `effective_kb_access` via `KnowledgeAccessContext`.
-    pub channel_kb_context: Option<crate::knowledge::ChannelKbContext>,
-    /// Per-agent async tool backgrounding policy (mirrors AgentConfig.capabilities.async_tool_policy).
-    pub async_tool_policy: AsyncToolPolicy,
-    /// Optional caller-preallocated async job id. Durable parent runtimes set
-    /// this before dispatching an explicit `run_in_background` tool so they can
-    /// persist the child handle before the side effect starts. Ignored unless
-    /// this dispatch actually takes the immediate async-job path.
-    pub async_job_id_override: Option<String>,
-    /// Internal flag set by the async-job spawner when re-dispatching an
-    /// async-capable tool inside a background runtime. Prevents infinite
-    /// recursion: even if the tool is async-capable and the policy is
-    /// `always-background`, this single re-dispatch runs synchronously.
-    pub bypass_async_dispatch: bool,
-    /// Internal flag set for async tool jobs that already have their own
-    /// background runtime cap (`asyncTools.maxJobSecs`). This prevents the
-    /// global foreground safety net (`toolTimeout`) from shortening long
-    /// background work unexpectedly.
-    pub suppress_global_tool_timeout: bool,
-    /// Internal flag for async tool jobs. They persist the final result through
-    /// `async_jobs::spawn::persist_result`, so the generic result layer must
-    /// not wrap the output first, materialize image markers, or turn the async
-    /// output-file into a pointer to a second file.
-    pub suppress_result_disk_persistence: bool,
-    /// Internal flag for workflow-owned async jobs whose result is surfaced by
-    /// their parent workflow UI instead of by a chat `<task-notification>`.
-    /// Terminal state, hooks, events, and Background Jobs rows still update; the
-    /// row is simply marked injected so replay does not synthesize a chat turn.
-    pub suppress_completion_injection: bool,
-    /// Whether the owning session is incognito (`sessions.incognito`). Resolved
-    /// once per ctx build from the session row. Incognito sessions must leave no
-    /// disk trace, so this gates large-tool-result spooling
-    /// ([`maybe_persist_large_tool_result`]) and async-job persistence
-    /// ([`crate::async_jobs::spawn::record_running_job`] /
-    /// `persist_result`), and forces AllowAlways grants to in-memory session
-    /// scope ([`Self::allowlist_grant_context`]). Epic E (INCOG-2/5/6).
-    pub incognito: bool,
-    /// Best-effort cancellation signal for the currently executing tool.
-    /// The chat turn, async-job timeout, or runtime_cancel path can trip this
-    /// token; resource-owning tools such as `exec` use it to clean up process
-    /// trees instead of merely returning a cancelled tool result.
-    pub cancellation_token: Option<CancellationToken>,
-    /// Per-dispatch sink for structured tool metadata (e.g. file change
-    /// before/after snapshots, line deltas). The orchestrator constructs a
-    /// fresh `Arc<Mutex<None>>` for **each** tool dispatch, attaches the same
-    /// `Arc` clone to the `ToolExecContext` clone passed into the tool, and
-    /// drains the value after the tool returns. Tools call
-    /// [`ToolExecContext::emit_metadata`] to push their JSON.
-    ///
-    /// Why an `Arc<Mutex<...>>` despite the "no Mutex on this struct" rule
-    /// above: the rule prevents *cross-dispatch* sharing where each `clone()`
-    /// would silently get its own lock. Here every dispatch independently
-    /// constructs a single sink and shares it only with the helpers it spawns
-    /// for that dispatch — exactly the pattern the rule allows.
-    pub metadata_sink: Option<Arc<AsyncMutex<Option<Value>>>>,
-    /// Per-dispatch handshake for *effective* tool arguments. When
-    /// `PreToolUse` (or exec migration) rewrites input, dispatch pauses here
-    /// until the streaming orchestrator has journaled the rewrite and crossed
-    /// a durability barrier. `None` keeps non-chat/direct callers unchanged.
-    #[doc(hidden)]
-    pub effective_args_sink: Option<Arc<EffectiveArgsSink>>,
-    /// Callback to record the OS pid of a tool's spawned child process (e.g.
-    /// `exec`'s shell child) into the owning async-job row, so a crash/restart
-    /// can detect and terminate orphaned process trees (I3). Set by
-    /// [`crate::async_jobs::spawn::spawn_explicit_job`] for backgrounded jobs;
-    /// `None` for foreground dispatch (no job row to annotate). Invoked via
-    /// [`Self::emit_pid`].
-    pub pid_sink: Option<PidSink>,
-    /// Job id whose running output should be teed into a bounded tail buffer
-    /// (`async_jobs::output_tail`, R3 ①) so `job_status` can show a *running*
-    /// job's latest output. Set by
-    /// [`crate::async_jobs::spawn::spawn_explicit_job`] for backgrounded,
-    /// non-incognito jobs only; `None` for foreground dispatch (which returns
-    /// its full output immediately, so there is no running window to tail) and
-    /// for incognito jobs (close-and-burn — no tail buffer).
-    pub output_tail_job_id: Option<String>,
-}
-
-/// Wrapper around the [`ToolExecContext::pid_sink`] callback. A newtype with a
-/// hand-written `Debug` because `ToolExecContext` derives `Debug` and a bare
-/// `Arc<dyn Fn>` is not `Debug`.
-#[derive(Clone)]
-pub struct PidSink(pub Arc<dyn Fn(u32) + Send + Sync>);
-
-impl std::fmt::Debug for PidSink {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PidSink(..)")
-    }
-}
-
+// `ToolExecContext` 本体在 `crate::tool_defs::context`；这里只保留与
+// 分发注册表耦合的可见性裁决方法（fate / workflow / experiment 门），
+// 它们随分发层走、不进契约层。
 impl ToolExecContext {
-    /// True when either local gate-skip flag is set (`auto_approve_tools`
-    /// from IM auto-approve accounts / slash-skill execution, or
-    /// `external_pre_approved` from async-job re-entry). Callers that need
-    /// the full effective verdict still need to OR in
-    /// `mcp_tool_auto_approves(name).await` — that one is async-only and
-    /// can't fold into a sync method.
-    #[inline]
-    pub fn local_auto_approve(&self) -> bool {
-        self.auto_approve_tools || self.external_pre_approved
-    }
-
-    /// True when `exec` must run its command-level audit (dangerous-commands
-    /// + edit-commands + AllowAlways prefix). Two flags bypass it:
-    ///   - `auto_approve_tools` — "skip ALL approval" (IM auto-approve /
-    ///     slash-skill execution); and
-    ///   - `exec_pre_approved` — the async approval-reorder already ran this
-    ///     exact gate and the user approved, before detaching.
-    ///
-    /// `external_pre_approved` deliberately does NOT bypass it: it silences
-    /// only the engine gate (which excludes `TOOL_EXEC` anyway), and this audit
-    /// is `exec`'s only safeguard against dangerous patterns when the call is
-    /// re-dispatched through the async-job spawner / auto-bg helper.
-    ///
-    /// Changing this read site without also updating the
-    /// [`Self::auto_approve_tools`] / [`Self::external_pre_approved`] /
-    /// [`Self::exec_pre_approved`] docs is a security regression.
-    #[inline]
-    pub fn should_run_exec_command_gate(&self) -> bool {
-        !self.auto_approve_tools && !self.exec_pre_approved
-    }
-
-    /// Returns the default path for path-aware tools: session working dir,
-    /// then agent home, then ".".
-    pub fn default_path(&self) -> &str {
-        self.session_working_dir
-            .as_deref()
-            .or(self.home_dir.as_deref())
-            .unwrap_or(".")
-    }
-
-    pub fn allowlist_grant_context(&self) -> crate::permission::allowlist::GrantContext<'_> {
-        crate::permission::allowlist::GrantContext {
-            session_id: self.session_id.as_deref(),
-            project_id: self.project_id.as_deref(),
-            agent_id: self.agent_id.as_deref(),
-            default_path: Some(self.default_path()),
-            home_dir: self.home_dir.as_deref(),
-            incognito: self.incognito,
-        }
-    }
-
-    /// Returns the default cwd for process tools: session working dir, then
-    /// agent home, then the user's home directory, then ".".
-    pub fn default_cwd(&self) -> String {
-        self.session_working_dir
-            .clone()
-            .or_else(|| self.home_dir.clone())
-            .or_else(|| dirs::home_dir().map(|p| p.to_string_lossy().to_string()))
-            .unwrap_or_else(|| ".".to_string())
-    }
-
-    /// Build the shared hook-input fields for a tool-event hook (design §5.4).
-    ///
-    /// `permission_mode` reflects the live posture so a policy hook can see the
-    /// most dangerous state: global dangerous-skip or a YOLO session →
-    /// `BypassPermissions`; a non-empty plan allow-list → `Plan`; Smart →
-    /// `Other`; else `Default`. The ctx lacks the full `PlanModeState`, so plan
-    /// detection is allow-list-based.
-    pub fn common_hook_input(&self, event: &str) -> crate::hooks::CommonHookInput {
-        let session_id = self.session_id.clone().unwrap_or_default();
-        // Empty session_id → no transcript path, rather than a bogus shared
-        // `sessions/transcript.jsonl` (mirrors hooks::observation_common).
-        let transcript_path = if session_id.is_empty() {
-            std::path::PathBuf::default()
-        } else {
-            crate::paths::session_dir(&session_id)
-                .map(|d| d.join("transcript.jsonl"))
-                .unwrap_or_default()
-        };
-        let permission_mode = if crate::security::dangerous::is_dangerous_skip_active()
-            || matches!(self.session_mode, crate::permission::SessionMode::Yolo)
-        {
-            crate::hooks::PermissionMode::BypassPermissions
-        } else if !self.plan_mode_allowed_tools.is_empty() {
-            crate::hooks::PermissionMode::Plan
-        } else if matches!(self.session_mode, crate::permission::SessionMode::Smart) {
-            crate::hooks::PermissionMode::Other
-        } else {
-            crate::hooks::PermissionMode::Default
-        };
-        crate::hooks::CommonHookInput {
-            prompt_id: crate::hooks::resolve_prompt_id(&session_id),
-            session_id,
-            transcript_path,
-            cwd: std::path::PathBuf::from(self.default_cwd()),
-            permission_mode,
-            effort: crate::hooks::resolve_effort(),
-            hook_event_name: event.to_string(),
-            agent_id: self.agent_id.clone(),
-            // `agent_type` is the agent's *type/role*, which the exec context
-            // doesn't carry — leave it unset rather than duplicating agent_id.
-            // (A real subagent-type field lands with the subagent hook phase.)
-            agent_type: None,
-        }
-    }
-
-    /// Resolve a user/model supplied file path against the current tool
-    /// default. Absolute paths and `~` stay anchored where the caller asked;
-    /// relative paths are rooted at the session working dir when one exists.
-    pub fn resolve_path(&self, raw_path: &str) -> String {
-        let expanded = super::expand_tilde(raw_path);
-        let path = std::path::Path::new(&expanded);
-        if path.is_absolute() {
-            return expanded;
-        }
-        std::path::Path::new(self.default_path())
-            .join(path)
-            .to_string_lossy()
-            .to_string()
-    }
-
-    /// Whether the tool is visible under the current combined restrictions.
-    pub fn is_tool_visible(&self, name: &str) -> bool {
-        super::tool_visible_with_filters(
-            name,
-            &self.agent_tool_filter,
-            &self.denied_tools,
-            &self.skill_allowed_tools,
-            &self.plan_mode_allowed_tools,
-        )
-    }
-
     fn builtin_fate_error(&self, name: &str) -> Option<String> {
         let canonical = canonical_builtin_tool_name(name);
         let agent_id = self
@@ -632,7 +181,15 @@ impl ToolExecContext {
                 subclass: super::CoreSubclass::PlanMode
             }
         ) {
-            return None;
+            return (!crate::plan::session_supports_plan_tools(
+                self.session_id.as_deref(),
+                self.session_db.as_ref().map(|handle| handle.0.as_ref()),
+            ))
+            .then(|| {
+                "Plan Mode is unavailable in this session. Side chats do not support plan \
+                 review or approval; discuss the plan here or use the main conversation."
+                    .to_string()
+            });
         }
 
         let app_config = crate::config::cached_config();
@@ -721,120 +278,101 @@ impl ToolExecContext {
 
     /// Human-readable reason when a tool is blocked by the current restrictions.
     pub async fn tool_visibility_error(&self, name: &str) -> Option<String> {
-        if !crate::eval_context::tool_allowed_for_experiment(self.session_id.as_deref(), name) {
+        // 执行门统一先归一规范名（注册表驱动，别名不得以「无 definition
+        // 的名字」滑过任何一道门）；`builtin_fate_error` /
+        // `workflow_visibility_error` 内部各自也走同一入口。
+        let mcp_canonical = canonical_mcp_execution_name(name);
+        let canonical = canonical_builtin_tool_name(mcp_canonical.as_ref());
+        self.tool_visibility_error_for_canonical(name, canonical)
+            .await
+    }
+
+    async fn tool_visibility_error_for_canonical(
+        &self,
+        submitted_name: &str,
+        canonical: &str,
+    ) -> Option<String> {
+        if !crate::eval_context::tool_allowed_for_experiment(self.session_id.as_deref(), canonical)
+        {
             return Some(format!(
-                "Evaluation experiment restriction: tool '{name}' is disabled in the compute-matched single-Agent arm."
+                "Evaluation experiment restriction: tool '{submitted_name}' is disabled in the compute-matched single-Agent arm."
             ));
         }
-        if let Some(err) = self.builtin_fate_error(name) {
+        if let Some(err) = self.builtin_fate_error(canonical) {
             return Some(err);
         }
-        if let Some(err) = self.workflow_visibility_error(name).await {
+        if let Some(err) = self.workflow_visibility_error(canonical).await {
             return Some(err);
         }
-        if self.denied_tools.iter().any(|t| t == name) {
+        // A durable Stop blocks every autonomous entry. The only way a model
+        // can interpret a new foreground user's natural-language “continue” is
+        // through this current-session harness primitive, so skill/plan/agent
+        // filters must not hide or reject it.
+        if canonical == crate::tool_defs::TOOL_SESSION_CONTINUE {
+            return None;
+        }
+        // 名单类门按「原名或规范名」双判：deny 了 `read` 的策略不能被
+        // `read_file` 别名绕开；allowlist 侧则保持写别名或规范名均命中
+        // （只收紧、不放松——两名皆不在 allowlist 才拒）。
+        if self.denied_tools.iter().any(|t| t == submitted_name)
+            || crate::mcp::tool_filter_contains(&self.denied_tools, canonical)
+        {
             return Some(format!(
                 "Tool policy restriction: tool '{}' is denied in the current agent context.",
-                name
+                submitted_name
             ));
         }
-        if !self.skill_allowed_tools.is_empty()
-            && !self.skill_allowed_tools.iter().any(|t| t == name)
+        if canonical != TOOL_READ_CONTEXT_RESOURCE
+            && !self.skill_allowed_tools.is_empty()
+            && !self.skill_allowed_tools.iter().any(|t| t == submitted_name)
+            && !crate::mcp::tool_filter_contains(&self.skill_allowed_tools, canonical)
         {
             return Some(format!(
                 "Skill restriction: tool '{}' is not allowed by the active skill.",
-                name
+                submitted_name
             ));
         }
-        if !self.plan_mode_allowed_tools.is_empty()
-            && !self.plan_mode_allowed_tools.iter().any(|t| t == name)
+        if canonical != TOOL_READ_CONTEXT_RESOURCE
+            && !self.plan_mode_allowed_tools.is_empty()
+            && !self
+                .plan_mode_allowed_tools
+                .iter()
+                .any(|t| t == submitted_name)
+            && !crate::mcp::tool_filter_contains(&self.plan_mode_allowed_tools, canonical)
         {
             return Some(format!(
                 "Plan Mode restriction: tool '{}' is not allowed during planning. Allowed: {}",
-                name,
+                submitted_name,
                 self.plan_mode_allowed_tools.join(", ")
             ));
         }
         None
     }
-
-    /// Push tool-emitted metadata into the per-dispatch sink. No-op when no
-    /// sink is wired up (the common case for `execute_tool` direct callers
-    /// that don't care about structured side outputs).
-    pub async fn emit_metadata(&self, value: Value) {
-        if let Some(sink) = &self.metadata_sink {
-            *sink.lock().await = Some(value);
-        }
-    }
-
-    /// Record a spawned child-process pid into the owning async-job row for
-    /// restart orphan cleanup (I3). No-op unless a [`PidSink`] is wired (only
-    /// backgrounded jobs set one). Synchronous + cheap (a single guarded DB
-    /// UPDATE behind the closure).
-    pub fn emit_pid(&self, pid: u32) {
-        if let Some(sink) = &self.pid_sink {
-            (sink.0)(pid);
-        }
-    }
-
-    /// Push the effective (post-`PreToolUse` rewrite) tool arguments into the
-    /// per-dispatch sink. Called once at most, only when `updatedInput`
-    /// shadowed the model's args. No-op when no sink is wired up.
-    pub(crate) async fn emit_effective_args(&self, value: Value) -> anyhow::Result<()> {
-        if let Some(sink) = &self.effective_args_sink {
-            sink.publish_and_wait(value).await?;
-        }
-        Ok(())
-    }
-
-    /// Best-effort: tell any open file-browser view that a file under this
-    /// session's working directory just changed (agent `write` / `edit` /
-    /// `apply_patch`), so the tree/preview reconcile without a manual reload —
-    /// the same `project:fs_changed` event the browser's own CRUD emits. No-op
-    /// when there's no session, no working dir, no event bus, or the path falls
-    /// outside the working directory.
-    pub fn notify_workspace_file_changed(&self, abs_path: &str) {
-        let (Some(sid), Some(wd)) = (
-            self.session_id.as_deref(),
-            self.session_working_dir.as_deref(),
-        ) else {
-            return;
-        };
-        let Some(bus) = crate::globals::get_event_bus() else {
-            return;
-        };
-        let Ok(root) = std::path::Path::new(wd).canonicalize() else {
-            return;
-        };
-        // The file may have just been created, so canonicalize its parent dir.
-        let Some(parent) = std::path::Path::new(abs_path).parent() else {
-            return;
-        };
-        let Ok(parent) = parent.canonicalize() else {
-            return;
-        };
-        let Ok(rel) = parent.strip_prefix(&root) else {
-            return; // outside the working dir — not a browseable change
-        };
-        let dir = rel.to_string_lossy().replace('\\', "/");
-        bus.emit(
-            "project:fs_changed",
-            serde_json::json!({
-                "scope": "session",
-                "scopeId": sid,
-                "projectId": self.project_id.as_deref(),
-                "dir": dir,
-            }),
-        );
-    }
 }
 
+/// 别名 → 规范名，事实源是分发注册表（别名与规范名共 handler 的唯一登记
+/// 处）。此前这里硬编码 3 个别名，漏了 `list_dir` / `note_move`——fate
+/// 兜底对漏网别名是 no-op；注册表驱动后阶段 3 外部注册的别名也自动归一。
+/// 未注册的名字（MCP / 未知）原样返回。
 fn canonical_builtin_tool_name(name: &str) -> &str {
-    match name {
-        "read_file" => TOOL_READ,
-        "write_file" => TOOL_WRITE,
-        "patch_file" => TOOL_EDIT,
-        _ => name,
+    super::registry::canonical_name(name).unwrap_or(name)
+}
+
+/// Resolve a historical MCP catalog alias before it reaches any execution
+/// gate. The caller keeps the submitted name in protocol/history state; this
+/// runtime name is the one visibility, hooks, permissions, async policy, and
+/// dispatch must agree on.
+fn canonical_mcp_execution_name(name: &str) -> std::borrow::Cow<'_, str> {
+    canonical_mcp_execution_name_from(name, crate::mcp::canonical_tool_name(name))
+}
+
+fn canonical_mcp_execution_name_from(
+    name: &str,
+    resolved: Option<String>,
+) -> std::borrow::Cow<'_, str> {
+    match resolved {
+        Some(canonical) => std::borrow::Cow::Owned(canonical),
+        None => std::borrow::Cow::Borrowed(name),
     }
 }
 
@@ -1063,25 +601,16 @@ fn is_skill_read(name: &str, args: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn mcp_server_auto_approves_config(cfg: &crate::mcp::McpServerConfig) -> bool {
-    cfg.auto_approve && matches!(cfg.trust_level, crate::mcp::McpTrustLevel::Trusted)
-}
-
 async fn mcp_tool_auto_approves(name: &str) -> bool {
     if !crate::mcp::catalog::is_mcp_tool_name(name) {
         return false;
     }
-    let Some(manager) = crate::mcp::McpManager::global() else {
+    // 运行时查表在 ha-mcp（未接线 None → 恒 false）；信任谓词
+    // `server_auto_approves_config` 留 kernel（安全语义单一来源）。
+    let Some(cfg) = crate::mcp::tool_server_config(name).await else {
         return false;
     };
-    let Some(entry) = manager.lookup_tool(name).await else {
-        return false;
-    };
-    let Some(handle) = manager.get_by_id(&entry.server_id).await else {
-        return false;
-    };
-    let cfg = handle.config.read().await;
-    mcp_server_auto_approves_config(&cfg)
+    crate::mcp::server_auto_approves_config(&cfg)
 }
 
 fn needs_permission_engine(
@@ -1090,8 +619,15 @@ fn needs_permission_engine(
     ctx: &ToolExecContext,
     effective_auto_approve: bool,
 ) -> bool {
+    // Turn-local immutable reads are deterministically classified inside the
+    // engine. Never bypass that single entrance, including for auto-approved
+    // surfaces; the engine receives whether this exact ref is actually bound.
+    if name == TOOL_READ_CONTEXT_RESOURCE {
+        return true;
+    }
     let plan_mode_active = !ctx.plan_mode_allowed_tools.is_empty();
-    let plan_requires_ask = plan_mode_active && ctx.plan_mode_ask_tools.iter().any(|t| t == name);
+    let plan_requires_ask =
+        plan_mode_active && crate::mcp::tool_filter_contains(&ctx.plan_mode_ask_tools, name);
     let auto_approve_blocked_by_plan = effective_auto_approve && plan_requires_ask;
     let exec_skip_blocked_by_plan = name == TOOL_EXEC && plan_requires_ask;
     let connector_action_requires_approval = !ctx.external_pre_approved
@@ -1104,23 +640,47 @@ fn needs_permission_engine(
         && (name != TOOL_EXEC || exec_skip_blocked_by_plan)
 }
 
+fn is_bound_context_resource_read(name: &str, args: &Value, ctx: &ToolExecContext) -> bool {
+    if name != TOOL_READ_CONTEXT_RESOURCE {
+        return false;
+    }
+    let Some(resource_ref) = args
+        .get("resource_ref")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return false;
+    };
+    ctx.context_resource_refs.iter().any(|resource| {
+        resource.resource_ref == resource_ref
+            && ctx.session_id.as_deref() == Some(resource.parent_session_id.as_str())
+            && ctx.turn_id.as_deref() == resource.parent_turn_id.as_deref()
+            && ctx.agent_id.as_deref() == Some(resource.principal_agent_id.as_str())
+    })
+}
+
 async fn capture_mac_control_approval_focus_anchor(
     name: &str,
-) -> Option<crate::mac_control::MacControlFocusAnchor> {
+) -> Option<super::MacControlFocusAnchor> {
+    // 特征 crate 钩子：未 wire（无 ha-mac）恒 None——此时 mac_control 也
+    // 不可分发，焦点保护无对象。
     if name == TOOL_MAC_CONTROL {
-        crate::mac_control::capture_focus_anchor().await
+        let hooks = super::mac_control_exec_hooks()?;
+        (hooks.capture_focus)().await
     } else {
         None
     }
 }
 
-async fn restore_mac_control_approval_focus_anchor(
-    anchor: Option<crate::mac_control::MacControlFocusAnchor>,
-) {
+async fn restore_mac_control_approval_focus_anchor(anchor: Option<super::MacControlFocusAnchor>) {
     let Some(anchor) = anchor else {
         return;
     };
-    if let Err(error) = crate::mac_control::restore_focus_anchor(&anchor).await {
+    // anchor 只在钩子已注册时产生，此处必有钩子；防御式再取一次。
+    let Some(hooks) = super::mac_control_exec_hooks() else {
+        return;
+    };
+    if let Err(error) = (hooks.restore_focus)(anchor).await {
         app_warn!(
             "tool",
             "approval_focus",
@@ -1312,7 +872,7 @@ mod pre_tool_gate_tests {
 /// the call. `reason_payload` drives the dialog's reason banner (`None` =
 /// no banner, used for a hook-forced prompt); `allow_always_forbidden` reflects
 /// whether the reason bars an "Allow Always".
-pub(super) async fn run_tool_approval(
+pub async fn run_tool_approval(
     name: &str,
     args: &Value,
     ctx: &ToolExecContext,
@@ -1320,6 +880,16 @@ pub(super) async fn run_tool_approval(
     allow_always_forbidden: bool,
     desc_override: Option<String>,
 ) -> anyhow::Result<approval::ApprovalOrigin> {
+    // `allow_always_forbidden` 由调用方传入，而本函数自阶段 5 起是 `pub`
+    // （迁出的 adapter 如 ha-cron 的 `manage_cron` 要用）。参数因此**只允许
+    // 收紧、不允许放松**：与 payload 自带的 strict 位取 `||`，否则 crate 外
+    // 的调用方对一个 strict reason 传 `false`，就能给它开出 AllowAlways 持久
+    // 化——而 AGENTS 明写判定源是 `AskReason::forbids_allow_always`
+    // （`ApprovalReasonKind::is_strict` 是它的镜像，两者有断言守着）。
+    let allow_always_forbidden = allow_always_forbidden
+        || reason_payload
+            .as_ref()
+            .is_some_and(|payload| payload.kind.is_strict());
     let desc = desc_override.unwrap_or_else(|| {
         format!("tool: {} {}", name, {
             let s = args.to_string();
@@ -1477,6 +1047,13 @@ pub async fn execute_tool_with_context(
 ) -> anyhow::Result<String> {
     let start = std::time::Instant::now();
 
+    // MCP catalogs retain historical names as protocol aliases. Normalize the
+    // runtime call before *every* gate so a deny/allow/hook/permission rule on
+    // the current canonical tool cannot be bypassed through an old identifier.
+    // The orchestrator still owns the submitted name in persisted history.
+    let canonical_mcp_name = canonical_mcp_execution_name(name);
+    let name = canonical_mcp_name.as_ref();
+
     // ── Tool visibility / policy gate ─────────────────────────────
     // Defense-in-depth: enforce the same effective visibility rules used for
     // schema generation and tool_search, so a tool cannot execute if it was
@@ -1539,11 +1116,17 @@ pub async fn execute_tool_with_context(
     // mac_control (#247): sanitize + preflight the (possibly hook-patched) args.
     let sanitized_args;
     let args = if name == TOOL_MAC_CONTROL {
-        sanitized_args = crate::mac_control::sanitize_tool_args(args);
-        if let Some(error) = crate::mac_control::preflight_tool_args(&sanitized_args) {
-            return Err(anyhow::anyhow!(error));
+        // 特征 crate 钩子：未 wire 时直通——mac_control 彼时不可分发，
+        // sanitize/preflight 防御无对象。
+        if let Some(hooks) = super::mac_control_exec_hooks() {
+            sanitized_args = (hooks.sanitize_args)(args);
+            if let Some(error) = (hooks.preflight_args)(&sanitized_args) {
+                return Err(anyhow::anyhow!(error));
+            }
+            &sanitized_args
+        } else {
+            args
         }
-        &sanitized_args
     } else {
         args
     };
@@ -1783,20 +1366,26 @@ pub async fn execute_tool_with_context(
 
     // Log tool execution start
     if let Some(logger) = crate::get_logger() {
-        let args_preview = {
-            let s = args.to_string();
-            if s.len() > 500 {
-                format!("{}...", crate::truncate_utf8(&s, 500))
-            } else {
-                s
-            }
-        };
+        let encoded_args = args.to_string();
+        let args_fingerprint: String = crate::cache_routing::audit_fingerprint(
+            "tool-execution-arguments",
+            encoded_args.as_bytes(),
+        )
+        .chars()
+        .take(16)
+        .collect();
         logger.log(
             "info",
             "tool",
             &format!("tools::{}", name),
             &format!("Tool '{}' started", name),
-            Some(serde_json::json!({"args": args_preview}).to_string()),
+            Some(
+                serde_json::json!({
+                    "arguments_size_bytes": encoded_args.len(),
+                    "arguments_fingerprint": args_fingerprint,
+                })
+                .to_string(),
+            ),
             None,
             None,
         );
@@ -1886,10 +1475,8 @@ pub async fn execute_tool_with_context(
             auto_bg_secs,
         )
         .await?;
-        // The inner worker suppresses generic disk persistence so detached jobs
-        // can spool their raw output into the async output-file. If the worker
-        // finished within the foreground budget, persist large inline output at
-        // this outer layer before returning it to the model.
+        // The foreground orchestrator admits ordinary text only after
+        // PostToolUse. This execution-layer step now materializes media only.
         return maybe_persist_large_tool_result(name, raw, ctx);
     }
 
@@ -1917,240 +1504,16 @@ pub async fn execute_tool_with_context(
     let timeout_cancel_token = dispatch_ctx.cancellation_token.clone();
 
     let dispatch = async {
-        match name {
-            TOOL_EXEC => exec::tool_exec(args, dispatch_ctx).await,
-            TOOL_PROCESS => process::tool_process(args).await,
-            TOOL_READ | "read_file" => read::tool_read_file(args, dispatch_ctx).await,
-            TOOL_WRITE | "write_file" => write::tool_write_file(args, dispatch_ctx).await,
-            TOOL_EDIT | "patch_file" => edit::tool_edit(args, dispatch_ctx).await,
-            TOOL_LS | "list_dir" => ls::tool_ls(args, dispatch_ctx).await,
-            TOOL_LSP => lsp::tool_lsp(args, dispatch_ctx).await,
-            TOOL_GREP => grep::tool_grep(args, dispatch_ctx).await,
-            TOOL_FIND => find::tool_find(args, dispatch_ctx).await,
-            TOOL_APPLY_PATCH => apply_patch::tool_apply_patch(args, dispatch_ctx).await,
-            TOOL_WEB_SEARCH => web_search::tool_web_search(args, dispatch_ctx).await,
-            TOOL_WEB_FETCH => web_fetch::tool_web_fetch(args).await,
-            TOOL_SAVE_MEMORY => memory::tool_save_memory(args, dispatch_ctx).await,
-            TOOL_RECALL_MEMORY => memory::tool_recall_memory(args, dispatch_ctx).await,
-            TOOL_UPDATE_MEMORY => memory::tool_update_memory(args, dispatch_ctx).await,
-            TOOL_DELETE_MEMORY => memory::tool_delete_memory(args, dispatch_ctx).await,
-            TOOL_UPDATE_CORE_MEMORY => memory::tool_update_core_memory(args, dispatch_ctx).await,
-            TOOL_CORE_MEMORY => core_memory::tool_core_memory(args, dispatch_ctx).await,
-            TOOL_PROJECT_MEMORY => project_memory::tool_project_memory(args, dispatch_ctx).await,
-            TOOL_MANAGE_CRON => cron::tool_manage_cron(args, dispatch_ctx).await,
-            TOOL_BROWSER => browser::tool_browser(args, dispatch_ctx).await,
-            TOOL_MAC_CONTROL => mac_control::tool_mac_control(args, dispatch_ctx).await,
-            TOOL_SEND_NOTIFICATION => {
-                notification::tool_send_notification(args, dispatch_ctx).await
-            }
-            TOOL_SUBAGENT => subagent::tool_subagent(args, dispatch_ctx).await,
-            TOOL_TEAM => team::tool_team(args, dispatch_ctx).await,
-            TOOL_ACP_SPAWN => acp_spawn::tool_acp_spawn(args, dispatch_ctx).await,
-            TOOL_WORKFLOW => workflow_tool::tool_workflow(args, dispatch_ctx).await,
-            TOOL_MEMORY_GET => memory::tool_memory_get(args, dispatch_ctx).await,
-            // Knowledge base (note_*) tools.
-            TOOL_NOTE_CREATE => note::tool_note_create(args, dispatch_ctx).await,
-            TOOL_NOTE_READ => note::tool_note_read(args, dispatch_ctx).await,
-            TOOL_NOTE_UPDATE => note::tool_note_update(args, dispatch_ctx).await,
-            TOOL_NOTE_PATCH => note::tool_note_patch(args, dispatch_ctx).await,
-            TOOL_NOTE_APPEND => note::tool_note_append(args, dispatch_ctx).await,
-            TOOL_NOTE_DELETE => note::tool_note_delete(args, dispatch_ctx).await,
-            TOOL_NOTE_SEARCH => note::tool_note_search(args, dispatch_ctx).await,
-            TOOL_NOTE_LINK => note::tool_note_link(args, dispatch_ctx).await,
-            TOOL_NOTE_BACKLINKS => note::tool_note_backlinks(args, dispatch_ctx).await,
-            TOOL_NOTE_BY_TAG => note::tool_note_by_tag(args, dispatch_ctx).await,
-            TOOL_NOTE_TAGS => note::tool_note_tags(args, dispatch_ctx).await,
-            TOOL_NOTE_RENAME | TOOL_NOTE_MOVE => note::tool_note_rename(args, dispatch_ctx).await,
-            TOOL_NOTE_SET_FRONTMATTER => note::tool_note_set_frontmatter(args, dispatch_ctx).await,
-            TOOL_NOTE_ASSIGN_BLOCK => note::tool_note_assign_block(args, dispatch_ctx).await,
-            TOOL_NOTE_BROKEN_LINKS => note::tool_note_broken_links(args, dispatch_ctx).await,
-            TOOL_NOTE_ORPHANS => note::tool_note_orphans(args, dispatch_ctx).await,
-            TOOL_NOTE_GRAPH => note::tool_note_graph(args, dispatch_ctx).await,
-            TOOL_NOTE_SIMILAR => note::tool_note_similar(args, dispatch_ctx).await,
-            TOOL_NOTE_RELATED => note::tool_note_related(args, dispatch_ctx).await,
-            TOOL_NOTE_SUGGEST_LINKS => note::tool_note_suggest_links(args, dispatch_ctx).await,
-            TOOL_NOTE_DISTILL => note::tool_note_distill(args, dispatch_ctx).await,
-            TOOL_NOTE_MOC => note::tool_note_moc(args, dispatch_ctx).await,
-            TOOL_KNOWLEDGE_RECALL => note::tool_knowledge_recall(args, dispatch_ctx).await,
-            TOOL_SESSION_TO_NOTE => note::tool_session_to_note(args, dispatch_ctx).await,
-            TOOL_AGENTS_LIST => agents::tool_agents_list(args).await,
-            TOOL_SESSIONS_LIST => sessions::tool_sessions_list(args).await,
-            TOOL_SESSION_STATUS => sessions::tool_session_status(args).await,
-            TOOL_SESSIONS_SEARCH => sessions::tool_sessions_search(args, dispatch_ctx).await,
-            TOOL_SESSIONS_HISTORY => sessions::tool_sessions_history(args).await,
-            TOOL_SESSIONS_SEND => Box::pin(sessions::tool_sessions_send(args, dispatch_ctx)).await,
-            TOOL_IMAGE => image::tool_image(args, dispatch_ctx).await,
-            TOOL_IMAGE_GENERATE => image_generate::tool_image_generate(args, dispatch_ctx).await,
-            TOOL_AUDIO_GENERATE => audio_generate::tool_audio_generate(args, dispatch_ctx).await,
-            TOOL_ISSUE_REPORT => issue_report::tool_issue_report(args, dispatch_ctx).await,
-            TOOL_PDF => pdf::tool_pdf(args).await,
-            TOOL_CANVAS => canvas::tool_canvas(args, dispatch_ctx).await,
-            TOOL_DESIGN => design::tool_design(args, dispatch_ctx).await,
-            TOOL_ARTIFACT => artifact::tool_artifact(args, dispatch_ctx).await,
-            TOOL_GET_WEATHER => weather::tool_get_weather(args).await,
-            TOOL_ASK_USER_QUESTION => {
-                Ok(ask_user_question::execute(args, dispatch_ctx.session_id.as_deref()).await)
-            }
-            TOOL_ENTER_PLAN_MODE => {
-                Ok(enter_plan_mode::execute(args, dispatch_ctx.session_id.as_deref()).await)
-            }
-            TOOL_SUBMIT_PLAN => {
-                Ok(submit_plan::execute(args, dispatch_ctx.session_id.as_deref()).await)
-            }
-            TOOL_TASK_CREATE => {
-                Ok(task::tool_task_create(args, dispatch_ctx.session_id.as_deref()).await)
-            }
-            TOOL_TASK_UPDATE => {
-                Ok(task::tool_task_update(args, dispatch_ctx.session_id.as_deref()).await)
-            }
-            TOOL_TASK_LIST => {
-                Ok(task::tool_task_list(args, dispatch_ctx.session_id.as_deref()).await)
-            }
-            TOOL_GOAL_STATUS => Ok(goal::tool_goal_status(args, dispatch_ctx).await),
-            TOOL_GOAL_PREPARE_CONTRACT => {
-                Ok(goal::tool_goal_prepare_contract(args, dispatch_ctx).await)
-            }
-            TOOL_GOAL_CHECKPOINT => Ok(goal::tool_goal_checkpoint(args, dispatch_ctx).await),
-            TOOL_GOAL_RECORD_EVIDENCE => {
-                Ok(goal::tool_goal_record_evidence(args, dispatch_ctx).await)
-            }
-            TOOL_GOAL_EVALUATE => Ok(goal::tool_goal_evaluate(args, dispatch_ctx).await),
-            TOOL_GOAL_FINISH_REQUEST => {
-                Ok(goal::tool_goal_finish_request(args, dispatch_ctx).await)
-            }
-            TOOL_GOAL_BLOCK_REQUEST => Ok(goal::tool_goal_block_request(args, dispatch_ctx).await),
-            TOOL_LOOP_STATUS => Ok(loop_tool::tool_loop_status(args, dispatch_ctx).await),
-            TOOL_LOOP_RESCHEDULE => Ok(loop_tool::tool_loop_reschedule(args, dispatch_ctx).await),
-            TOOL_LOOP_STOP => Ok(loop_tool::tool_loop_stop(args, dispatch_ctx).await),
-            TOOL_LOOP_RECORD_PROGRESS => {
-                Ok(loop_tool::tool_loop_record_progress(args, dispatch_ctx).await)
-            }
-            TOOL_LOOP_WATCH => Ok(loop_tool::tool_loop_watch(args, dispatch_ctx).await),
-            TOOL_LOOP_UNWATCH => Ok(loop_tool::tool_loop_unwatch(args, dispatch_ctx).await),
-            super::TOOL_APP_UPDATE => app_update::tool_app_update(args, dispatch_ctx).await,
-            TOOL_JOB_STATUS => {
-                job_status::tool_job_status(args, dispatch_ctx.session_id.as_deref()).await
-            }
-            super::TOOL_SCHEDULE_WAKEUP => {
-                schedule_wakeup::tool_schedule_wakeup(args, dispatch_ctx).await
-            }
-            TOOL_RUNTIME_CANCEL => runtime_cancel::tool_runtime_cancel(args).await,
-            super::TOOL_TOOL_SEARCH => super::tool_search::tool_search(args, dispatch_ctx).await,
-            super::TOOL_PEEK_SESSIONS => {
-                crate::awareness::run_peek_sessions(args, dispatch_ctx.session_id.as_deref())
-                    .map_err(|e| anyhow::anyhow!(e))
-            }
-            TOOL_GET_SETTINGS => settings::tool_get_settings(args).await,
-            TOOL_UPDATE_SETTINGS => settings::tool_update_settings(args, dispatch_ctx).await,
-            TOOL_LIST_SETTINGS_BACKUPS => settings::tool_list_settings_backups(args).await,
-            TOOL_RESTORE_SETTINGS_BACKUP => settings::tool_restore_settings_backup(args).await,
-            TOOL_SEND_ATTACHMENT => send_attachment::tool_send_attachment(args, dispatch_ctx).await,
-            super::TOOL_SKILL => skill::tool_skill(args, dispatch_ctx).await,
-            super::TOOL_MCP_RESOURCE => crate::mcp::resources::tool_mcp_resource(args).await,
-            super::TOOL_MCP_PROMPT => crate::mcp::prompts::tool_mcp_prompt(args).await,
-            super::feishu::TOOL_DOCX_CREATE => super::feishu::docx::execute_create(args).await,
-            super::feishu::TOOL_DOCX_GET_BLOCKS => {
-                super::feishu::docx::execute_get_blocks(args).await
-            }
-            super::feishu::TOOL_DOCX_APPEND_BLOCK => {
-                super::feishu::docx::execute_append_block(args).await
-            }
-            super::feishu::TOOL_DOCX_UPDATE_BLOCK_TEXT => {
-                super::feishu::docx::execute_update_block_text(args).await
-            }
-            super::feishu::TOOL_BITABLE_LIST_RECORDS => {
-                super::feishu::bitable::execute_list_records(args).await
-            }
-            super::feishu::TOOL_BITABLE_SEARCH_RECORDS => {
-                super::feishu::bitable::execute_search_records(args).await
-            }
-            super::feishu::TOOL_BITABLE_CREATE_RECORD => {
-                super::feishu::bitable::execute_create_record(args).await
-            }
-            super::feishu::TOOL_BITABLE_BATCH_UPDATE_RECORDS => {
-                super::feishu::bitable::execute_batch_update_records(args).await
-            }
-            super::feishu::TOOL_BITABLE_LIST_VIEWS => {
-                super::feishu::bitable::execute_list_views(args).await
-            }
-            super::feishu::TOOL_BITABLE_GET_VIEW => {
-                super::feishu::bitable::execute_get_view(args).await
-            }
-            super::feishu::TOOL_BITABLE_LIST_DASHBOARDS => {
-                super::feishu::bitable::execute_list_dashboards(args).await
-            }
-            super::feishu::TOOL_DRIVE_LIST_FILES => {
-                super::feishu::drive::execute_list_files(args).await
-            }
-            super::feishu::TOOL_DRIVE_UPLOAD_MEDIA => {
-                super::feishu::drive::execute_upload_media(args).await
-            }
-            super::feishu::TOOL_DRIVE_DOWNLOAD_MEDIA => {
-                super::feishu::drive::execute_download_media(args).await
-            }
-            super::feishu::TOOL_WIKI_GET_NODE => super::feishu::wiki::execute_get_node(args).await,
-            super::feishu::TOOL_APPROVAL_CREATE_INSTANCE => {
-                super::feishu::approval::execute_create_instance(args).await
-            }
-            super::feishu::TOOL_APPROVAL_GET_INSTANCE => {
-                super::feishu::approval::execute_get_instance(args).await
-            }
-            super::feishu::TOOL_APPROVAL_CANCEL_INSTANCE => {
-                super::feishu::approval::execute_cancel_instance(args).await
-            }
-            super::feishu::TOOL_APPROVAL_LIST_INSTANCES => {
-                super::feishu::approval::execute_list_instances(args).await
-            }
-            super::feishu::TOOL_APPROVAL_SUBSCRIBE => {
-                super::feishu::approval::execute_subscribe(args).await
-            }
-            super::feishu::TOOL_CALENDAR_LIST => super::feishu::calendar::execute_list(args).await,
-            super::feishu::TOOL_CALENDAR_CREATE_EVENT => {
-                super::feishu::calendar::execute_create_event(args).await
-            }
-            super::feishu::TOOL_CALENDAR_LIST_EVENTS => {
-                super::feishu::calendar::execute_list_events(args).await
-            }
-            super::feishu::TOOL_CALENDAR_UPDATE_EVENT => {
-                super::feishu::calendar::execute_update_event(args).await
-            }
-            super::feishu::TOOL_CALENDAR_DELETE_EVENT => {
-                super::feishu::calendar::execute_delete_event(args).await
-            }
-            super::feishu::TOOL_CALENDAR_ATTENDEES_CREATE => {
-                super::feishu::calendar::execute_attendees_create(args).await
-            }
-            super::feishu::TOOL_CONTACT_GET_USER => {
-                super::feishu::contact::execute_get_user(args).await
-            }
-            super::feishu::TOOL_CONTACT_BATCH_GET_USERS => {
-                super::feishu::contact::execute_batch_get_users(args).await
-            }
-            super::feishu::TOOL_CONTACT_GET_DEPARTMENT => {
-                super::feishu::contact::execute_get_department(args).await
-            }
-            super::feishu::TOOL_CONTACT_SEARCH_USERS_BY_DEPARTMENT => {
-                super::feishu::contact::execute_search_users_by_department(args).await
-            }
-            super::feishu::TOOL_HIRE_LIST_JOBS => {
-                super::feishu::hire::execute_list_jobs(args).await
-            }
-            super::feishu::TOOL_HIRE_GET_JOB => super::feishu::hire::execute_get_job(args).await,
-            super::feishu::TOOL_HIRE_LIST_TALENTS => {
-                super::feishu::hire::execute_list_talents(args).await
-            }
-            super::feishu::TOOL_HIRE_GET_TALENT => {
-                super::feishu::hire::execute_get_talent(args).await
-            }
-            super::feishu::TOOL_HIRE_LIST_APPLICATIONS => {
-                super::feishu::hire::execute_list_applications(args).await
-            }
-            // MCP-sourced tools all share the `mcp__<server>__<tool>`
-            // prefix; dispatch them through the dedicated subsystem.
-            n if crate::mcp::catalog::is_mcp_tool_name(n) => {
-                crate::mcp::invoke::call_tool(n, args, dispatch_ctx).await
-            }
-            _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
+        // 阶段 2.5：静态 match 已反转为注册表查表（builtin_registry.rs 持有
+        // 全部内置条目，特征 crate 经 registry::register_external_tools 在
+        // 装配期追加）。MCP 逃逸口保持原位：`mcp__<server>__<tool>` 前缀走
+        // 专属子系统，不进注册表。
+        if let Some(tool) = super::registry::lookup(name) {
+            (tool.handler)(args, dispatch_ctx).await
+        } else if crate::mcp::catalog::is_mcp_tool_name(name) {
+            crate::mcp::invoke::call_tool(name, args, dispatch_ctx).await
+        } else {
+            Err(anyhow::anyhow!("Unknown tool: {}", name))
         }
     };
 
@@ -2187,29 +1550,56 @@ pub async fn execute_tool_with_context(
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    // Log tool execution result
+    // Log content-free execution diagnostics only. The hook-before body and
+    // provider error text may contain credentials or private paths.
     if let Some(logger) = crate::get_logger() {
         match &result {
             Ok(output) => {
-                let output_preview = if output.len() > 300 {
-                    format!("{}...", crate::truncate_utf8(output, 300))
-                } else {
-                    output.clone()
-                };
-                logger.log("info", "tool", &format!("tools::{}", name),
+                let fingerprint: String = crate::cache_routing::audit_fingerprint(
+                    "tool-execution-output",
+                    output.as_bytes(),
+                )
+                .chars()
+                .take(16)
+                .collect();
+                logger.log(
+                    "info",
+                    "tool",
+                    &format!("tools::{}", name),
                     &format!("Tool '{}' completed in {}ms", name, duration_ms),
-                    Some(serde_json::json!({"duration_ms": duration_ms, "output_preview": output_preview}).to_string()),
-                    None, None);
+                    Some(
+                        serde_json::json!({
+                            "duration_ms": duration_ms,
+                            "output_size_bytes": output.len(),
+                            "output_fingerprint": fingerprint,
+                        })
+                        .to_string(),
+                    ),
+                    None,
+                    None,
+                );
             }
             Err(e) => {
+                let error_text = e.to_string();
+                let fingerprint: String = crate::cache_routing::audit_fingerprint(
+                    "tool-execution-error",
+                    error_text.as_bytes(),
+                )
+                .chars()
+                .take(16)
+                .collect();
                 logger.log(
                     "error",
                     "tool",
                     &format!("tools::{}", name),
-                    &format!("Tool '{}' failed in {}ms: {}", name, duration_ms, e),
+                    &format!("Tool '{}' failed in {}ms", name, duration_ms),
                     Some(
-                        serde_json::json!({"duration_ms": duration_ms, "error": e.to_string()})
-                            .to_string(),
+                        serde_json::json!({
+                            "duration_ms": duration_ms,
+                            "error_size_bytes": error_text.len(),
+                            "error_fingerprint": fingerprint,
+                        })
+                        .to_string(),
                     ),
                     None,
                     None,
@@ -2236,10 +1626,10 @@ pub async fn execute_tool_with_context(
     }
 }
 
-// ── Result disk persistence ──────────────────────────────────────
-// In normal sessions, inline image markers are first materialized into managed
-// `__IMAGE_FILE__` references. Other large results are written to disk and
-// replaced with a preview plus a path the model can `read`.
+// ── Media materialization ─────────────────────────────────────────
+// Ordinary text is deliberately returned unchanged. Its only admission point
+// is the PostToolUse-effective ResultStore writer in streaming_loop; keeping a
+// text spill here would reintroduce a hook-before raw/path bypass.
 fn maybe_persist_large_tool_result(
     name: &str,
     output: String,
@@ -2286,84 +1676,7 @@ fn maybe_persist_large_tool_result(
         }
         return Ok(output);
     }
-    if !should_persist_large_result(&output) {
-        return Ok(output);
-    }
-    match persist_large_result(&output, ctx.session_id.as_deref(), name) {
-        Ok(path) => {
-            app_info!(
-                "tool",
-                "disk_persist",
-                "Tool '{}' result {}B persisted to {}",
-                name,
-                output.len(),
-                path
-            );
-            Ok(build_persisted_large_result_preview(&output, &path))
-        }
-        Err(e) => {
-            // Fall back to returning the full result if persistence fails.
-            app_warn!(
-                "tool",
-                "disk_persist",
-                "Failed to persist large result for '{}': {}",
-                name,
-                e
-            );
-            Ok(output)
-        }
-    }
-}
-
-// ── Disk Persistence Helpers ─────────────────────────────────────
-
-/// Load the disk persistence threshold from config.json, defaulting to 50KB.
-/// Returns 0 to disable (never persist).
-fn disk_persist_threshold() -> usize {
-    crate::config::cached_config()
-        .tool_result_disk_threshold
-        .unwrap_or(50_000)
-}
-
-fn should_persist_large_result(output: &str) -> bool {
-    let threshold = disk_persist_threshold();
-    threshold > 0 && output.len() > threshold
-}
-
-fn build_persisted_large_result_preview(output: &str, path: &str) -> String {
-    let (media_header, output_body) = split_media_items_header(output);
-
-    if crate::tools::image_markers::contains_image_marker(output_body) {
-        let preview = format!(
-            "[Large tool result ({total}B) saved to: {path}]\n\
-             [Inline preview omitted because the result contains image marker data that must not be truncated.]\n\
-             [Use read tool with this path to access full content]",
-            total = output.len(),
-        );
-        return format!("{media_header}{preview}");
-    }
-
-    let head = crate::truncate_utf8(output_body, 2000);
-    let tail = crate::util::truncate_utf8_tail(output_body, 1000);
-    let omitted = output_body.len().saturating_sub(head.len() + tail.len());
-    let preview = format!(
-        "{head}\n\n[...{omitted} bytes omitted...]\n\n{tail}\n\n\
-         [Full result ({total}B) saved to: {path}]\n\
-         [Use read tool with this path to access full content]",
-        total = output.len(),
-    );
-    format!("{media_header}{preview}")
-}
-
-fn split_media_items_header(output: &str) -> (&str, &str) {
-    let Some(rest) = output.strip_prefix(crate::agent::MEDIA_ITEMS_PREFIX) else {
-        return ("", output);
-    };
-    let Some(newline_idx) = rest.find('\n') else {
-        return ("", output);
-    };
-    let split_at = crate::agent::MEDIA_ITEMS_PREFIX.len() + newline_idx + 1;
-    (&output[..split_at], &output[split_at..])
+    Ok(output)
 }
 
 /// Write a large tool result to disk and return the file path.
@@ -2417,27 +1730,52 @@ fn extract_touched_paths(tool_name: &str, args: &Value) -> Vec<String> {
 /// of the skill system when discovery changes. The fast-path lets us skip
 /// the filesystem-scanning `get_invocable_skills` call on every file op when
 /// no skill actually declares `paths:` (the common case).
-static HAS_PATHS_SKILLS_CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(u64, bool)>>> =
+type PathsSkillCache = Option<(
+    u64,
+    std::collections::HashMap<Option<std::path::PathBuf>, bool>,
+)>;
+static HAS_PATHS_SKILLS_CACHE: std::sync::OnceLock<std::sync::Mutex<PathsSkillCache>> =
     std::sync::OnceLock::new();
 
-fn any_paths_skills(cfg: &crate::config::AppConfig) -> bool {
+fn any_paths_skills(
+    cfg: &crate::config::AppConfig,
+    workspace_dir: Option<&std::path::Path>,
+) -> bool {
     let current_version = crate::skills::skill_cache_version();
+    let workspace_key =
+        workspace_dir.map(|dir| dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()));
     let cache = HAS_PATHS_SKILLS_CACHE.get_or_init(|| std::sync::Mutex::new(None));
     if let Ok(guard) = cache.lock() {
-        if let Some((v, b)) = *guard {
-            if v == current_version {
-                return b;
+        if let Some((version, entries)) = guard.as_ref() {
+            if *version == current_version {
+                if let Some(has_any) = entries.get(&workspace_key) {
+                    return *has_any;
+                }
             }
         }
     }
 
-    let catalog = crate::skills::get_invocable_skills(&cfg.extra_skills_dirs, &cfg.disabled_skills);
+    let catalog = crate::skills_hooks::invocable_skills(
+        &cfg.extra_skills_dirs,
+        &cfg.disabled_skills,
+        workspace_dir,
+    );
     let has_any = catalog
         .iter()
         .any(|s| s.paths.as_ref().map(|p| !p.is_empty()).unwrap_or(false));
 
     if let Ok(mut guard) = cache.lock() {
-        *guard = Some((current_version, has_any));
+        if guard.as_ref().map(|(version, _)| *version) != Some(current_version) {
+            *guard = Some((current_version, std::collections::HashMap::new()));
+        }
+        if let Some((_, entries)) = guard.as_mut() {
+            // Bound daemon/session churn without making cache eviction part of
+            // correctness: a miss simply performs another discovery pass.
+            if entries.len() >= 128 && !entries.contains_key(&workspace_key) {
+                entries.clear();
+            }
+            entries.insert(workspace_key, has_any);
+        }
     }
     has_any
 }
@@ -2457,11 +1795,16 @@ fn maybe_activate_conditional_skills(name: &str, args: &Value, ctx: &ToolExecCon
     }
     // Fast path: if no skill in the catalog declares `paths:`, skip the
     // full discovery pass. Cache invalidates with skill_cache_version.
-    if !any_paths_skills(&cfg) {
+    let cwd = ctx.default_path();
+    let workspace_dir = ctx.session_working_dir.as_deref().map(std::path::Path::new);
+    if !any_paths_skills(&cfg, workspace_dir) {
         return;
     }
-    let cwd = ctx.default_path();
-    let catalog = crate::skills::get_invocable_skills(&cfg.extra_skills_dirs, &cfg.disabled_skills);
+    let catalog = crate::skills_hooks::invocable_skills(
+        &cfg.extra_skills_dirs,
+        &cfg.disabled_skills,
+        workspace_dir,
+    );
     let activated = crate::skills::activate_skills_for_paths(session_id, &paths, cwd, &catalog);
     if !activated.is_empty() {
         crate::skills::bump_skill_version();
@@ -2508,44 +1851,22 @@ pub fn purge_tool_results_for_session(session_id: &str) {
     }
 }
 
-fn persist_large_result(
-    content: &str,
-    session_id: Option<&str>,
-    tool_name: &str,
-) -> anyhow::Result<String> {
-    let base_dir =
-        crate::paths::root_dir()?
-            .join("tool_results")
-            .join(crate::paths::sanitize_path_segment(
-                session_id.unwrap_or("_global"),
-            ));
-    std::fs::create_dir_all(&base_dir)?;
-
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let filename = format!("{tool_name}_{ts}.txt");
-    let path = base_dir.join(&filename);
-    std::fs::write(&path, content)?;
-
-    Ok(path.to_string_lossy().to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        build_persisted_large_result_preview, decide_async_path_with_config,
-        exec_process_background_mode, execute_tool_with_context, maybe_persist_large_tool_result,
-        mcp_server_auto_approves_config, migrate_exec_process_mode_to_async_job_args,
-        needs_permission_engine, should_migrate_exec_process_mode_to_async_job_with_config,
-        should_run_exec_reorder_gate, tool_timeout, validate_async_background_contract,
-        AsyncDecision, EffectiveArgsSink, JobOrigin, SessionDbHandle, ToolExecContext,
+        canonical_mcp_execution_name_from, decide_async_path_with_config,
+        exec_process_background_mode, execute_tool_with_context, is_bound_context_resource_read,
+        maybe_persist_large_tool_result, migrate_exec_process_mode_to_async_job_args,
+        needs_permission_engine, resolve_tool_permission,
+        should_migrate_exec_process_mode_to_async_job_with_config, should_run_exec_reorder_gate,
+        tool_timeout, validate_async_background_contract, AsyncDecision, JobOrigin,
+        ToolExecContext,
     };
     use crate::agent_config::AsyncToolPolicy;
     use crate::mcp::{McpServerConfig, McpTransportSpec, McpTrustLevel};
-    use crate::tools::browser::IMAGE_BASE64_PREFIX;
+    use crate::tool_defs::{EffectiveArgsSink, SessionDbHandle};
     use crate::tools::image_markers::IMAGE_FILE_PREFIX;
+    use crate::tools::IMAGE_BASE64_PREFIX;
     use base64::Engine as _;
     use serde_json::json;
     use std::collections::BTreeMap;
@@ -2596,6 +1917,90 @@ mod tests {
         assert_eq!(ctx.default_path(), "/tmp/projects/demo");
     }
 
+    #[tokio::test]
+    async fn side_chat_plan_tools_are_hidden_and_cannot_execute() {
+        let dir = tempfile::tempdir().expect("temp session db dir");
+        let db = Arc::new(
+            crate::session::SessionDB::open_ephemeral_for_test(&dir.path().join("sessions.db"))
+                .expect("open session db"),
+        );
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("initialize session metadata joins");
+        let source = db
+            .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+            .expect("source session");
+        let side = db.create_side_chat(&source.id).expect("side session");
+        let mut agent = crate::agent::AssistantAgent::new_anthropic("");
+        agent.set_session_db(db.clone());
+        let provider = crate::tool_defs::ToolProvider::Anthropic;
+
+        for (session_id, supported) in [(&source.id, true), (&side.id, false)] {
+            agent.set_session_id(session_id);
+            let mut schemas = Vec::new();
+            agent.apply_plan_tools(&mut schemas, provider);
+            assert_eq!(schemas.is_empty(), !supported);
+            let ctx = ToolExecContext {
+                session_id: Some(session_id.clone()),
+                session_db: Some(SessionDbHandle(db.clone())),
+                ..ToolExecContext::default()
+            };
+            for tool in [
+                crate::tool_defs::TOOL_ENTER_PLAN_MODE,
+                crate::tool_defs::TOOL_SUBMIT_PLAN,
+            ] {
+                assert_eq!(ctx.tool_visibility_error(tool).await.is_none(), supported);
+            }
+        }
+        assert_eq!(
+            crate::plan::get_plan_state(&side.id).await,
+            crate::plan::PlanModeState::Off
+        );
+    }
+
+    #[test]
+    fn historical_mcp_alias_resolves_to_canonical_runtime_name() {
+        let legacy = "mcp__alpha__historical_name";
+        let canonical = "mcp__alpha__current_full_name";
+
+        assert_eq!(
+            canonical_mcp_execution_name_from(legacy, Some(canonical.to_string())),
+            canonical
+        );
+        assert_eq!(canonical_mcp_execution_name_from(legacy, None), legacy);
+    }
+
+    #[tokio::test]
+    async fn canonical_mcp_deny_applies_to_historical_alias() {
+        let legacy = "mcp__alpha__historical_name";
+        let canonical = "mcp__alpha__current_full_name";
+        let ctx = ToolExecContext {
+            denied_tools: vec![canonical.to_string()],
+            ..ToolExecContext::default()
+        };
+
+        let error = ctx
+            .tool_visibility_error_for_canonical(legacy, canonical)
+            .await
+            .expect("canonical deny must block a historical MCP alias");
+        assert!(error.contains("denied"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn session_continue_bypasses_context_tool_filters() {
+        let ctx = ToolExecContext {
+            denied_tools: vec![crate::tools::TOOL_SESSION_CONTINUE.to_string()],
+            skill_allowed_tools: vec![crate::tools::TOOL_READ.to_string()],
+            plan_mode_allowed_tools: vec![crate::tools::TOOL_WRITE.to_string()],
+            ..ToolExecContext::default()
+        };
+
+        assert!(ctx
+            .tool_visibility_error(crate::tools::TOOL_SESSION_CONTINUE)
+            .await
+            .is_none());
+    }
+
     #[test]
     fn background_async_jobs_suppress_global_tool_timeout() {
         let ctx = ToolExecContext {
@@ -2604,6 +2009,45 @@ mod tests {
         };
 
         assert!(tool_timeout(&ctx).is_none());
+    }
+
+    #[tokio::test]
+    async fn workflow_execution_rejects_legacy_enabled_side_chat() {
+        let dir = tempfile::tempdir().expect("temp session db dir");
+        let db = Arc::new(
+            crate::session::SessionDB::open_ephemeral_for_test(&dir.path().join("sessions.db"))
+                .expect("open session db"),
+        );
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel table");
+        let source = db.create_session("ha-main").expect("source session");
+        let side = db.create_side_chat(&source.id).expect("side session");
+        db.with_conn_for_test(|conn| {
+            conn.execute(
+                "UPDATE sessions SET workflow_mode = 'on' WHERE id = ?1",
+                rusqlite::params![side.id],
+            )?;
+            Ok(())
+        })
+        .expect("simulate legacy enabled side chat");
+        let ctx = ToolExecContext {
+            session_id: Some(side.id.clone()),
+            session_db: Some(SessionDbHandle(db.clone())),
+            ..ToolExecContext::default()
+        };
+        let error = execute_tool_with_context(
+            crate::tools::TOOL_WORKFLOW,
+            &json!({ "action": "create" }),
+            &ctx,
+        )
+        .await
+        .expect_err("side workflow must be rejected before dispatch");
+        assert!(error.to_string().contains("Workflow Mode is off"));
+        assert!(db
+            .list_workflow_runs_for_session(&side.id, 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -3002,44 +2446,27 @@ export default async function main(workflow) {
     }
 
     #[test]
-    fn persisted_preview_omits_image_marker_prefix_for_malformed_image_results() {
-        let output = format!(
-            "{}image/png__not-base64__\nScreenshot captured.",
-            IMAGE_BASE64_PREFIX
-        );
-
-        let preview = build_persisted_large_result_preview(&output, "/tmp/browser_1.txt");
-
-        assert!(!preview.contains(IMAGE_BASE64_PREFIX));
-        assert!(preview.contains("Large tool result"));
-        assert!(preview.contains("/tmp/browser_1.txt"));
-    }
-
-    #[test]
-    fn persisted_preview_preserves_media_items_header() {
-        let output = format!(
-            "{}[]\n{}",
-            crate::agent::MEDIA_ITEMS_PREFIX,
-            "x".repeat(10_000)
-        );
-
-        let preview = build_persisted_large_result_preview(&output, "/tmp/tool.txt");
-
-        assert!(preview.starts_with(crate::agent::MEDIA_ITEMS_PREFIX));
-        assert!(preview.contains("/tmp/tool.txt"));
+    fn ordinary_large_text_is_not_spilled_before_post_tool_use() {
+        let output = "x".repeat(100_000);
+        let result =
+            maybe_persist_large_tool_result("read", output.clone(), &ToolExecContext::default())
+                .expect("plain text passthrough");
+        assert_eq!(result, output);
+        assert!(!result.contains("saved to:"));
     }
 
     #[test]
     fn trusted_mcp_auto_approve_config_skips_regular_approval() {
         let cfg = mcp_cfg(true, McpTrustLevel::Trusted);
-        assert!(mcp_server_auto_approves_config(&cfg));
+        assert!(crate::mcp::server_auto_approves_config(&cfg));
     }
 
     #[test]
     fn untrusted_mcp_auto_approve_is_rejected_and_not_honored() {
+        // 保存期校验（Untrusted+auto_approve 拒绝）随 validate_server_config
+        // 迁 ha-mcp，其 config 测试覆盖；这里守执行层第二道防线。
         let cfg = mcp_cfg(true, McpTrustLevel::Untrusted);
-        assert!(cfg.validate().is_err());
-        assert!(!mcp_server_auto_approves_config(&cfg));
+        assert!(!crate::mcp::server_auto_approves_config(&cfg));
     }
 
     #[test]
@@ -3054,13 +2481,62 @@ export default async function main(workflow) {
     }
 
     #[test]
+    fn bound_context_resource_read_always_enters_permission_engine() {
+        let mut ctx = ToolExecContext {
+            session_id: Some("session-1".into()),
+            turn_id: Some("turn-1".into()),
+            agent_id: Some("agent-1".into()),
+            context_resource_refs: vec![crate::prompt_context::ContextResourceRef {
+                resource_ref: "ctxref-1".into(),
+                mention_id: "mention-1".into(),
+                target_id: "notes/demo.txt".into(),
+                file_name: "demo.txt".into(),
+                mime_type: "text/plain".into(),
+                parent_session_id: "session-1".into(),
+                parent_turn_id: Some("turn-1".into()),
+                principal_agent_id: "agent-1".into(),
+                bytes: Arc::from(&b"frozen"[..]),
+                turn_budget: Arc::new(crate::prompt_context::ContextResourceTurnBudget::default()),
+            }],
+            auto_approve_tools: true,
+            ..ToolExecContext::default()
+        };
+        let args = json!({"resource_ref": "ctxref-1"});
+
+        assert!(is_bound_context_resource_read(
+            crate::tool_defs::TOOL_READ_CONTEXT_RESOURCE,
+            &args,
+            &ctx,
+        ));
+        assert!(needs_permission_engine(
+            crate::tool_defs::TOOL_READ_CONTEXT_RESOURCE,
+            &args,
+            &ctx,
+            ctx.local_auto_approve(),
+        ));
+
+        ctx.turn_id = Some("other-turn".into());
+        assert!(!is_bound_context_resource_read(
+            crate::tool_defs::TOOL_READ_CONTEXT_RESOURCE,
+            &args,
+            &ctx,
+        ));
+        assert!(needs_permission_engine(
+            crate::tool_defs::TOOL_READ_CONTEXT_RESOURCE,
+            &args,
+            &ctx,
+            ctx.local_auto_approve(),
+        ));
+    }
+
+    #[test]
     fn auto_approved_connector_action_still_runs_engine() {
         let ctx = ToolExecContext {
             auto_approve_tools: true,
             ..ToolExecContext::default()
         };
         assert!(needs_permission_engine(
-            crate::tools::feishu::TOOL_CALENDAR_CREATE_EVENT,
+            crate::tool_defs::feishu_names::TOOL_CALENDAR_CREATE_EVENT,
             &json!({"summary": "Customer call"}),
             &ctx,
             ctx.local_auto_approve()
@@ -3080,7 +2556,7 @@ export default async function main(workflow) {
             ..ToolExecContext::default()
         };
         assert!(!needs_permission_engine(
-            crate::tools::feishu::TOOL_CALENDAR_CREATE_EVENT,
+            crate::tool_defs::feishu_names::TOOL_CALENDAR_CREATE_EVENT,
             &json!({"summary": "Customer call"}),
             &ctx,
             ctx.local_auto_approve()
@@ -3306,6 +2782,32 @@ export default async function main(workflow) {
             !ctx.should_run_exec_command_gate(),
             "exec_pre_approved (set post-approval by the reorder) must bypass the inner gate"
         );
+    }
+
+    #[tokio::test]
+    async fn live_plan_mode_blocks_same_round_cross_session_delegation() {
+        let session_id = format!("plan-cross-session-{}", uuid::Uuid::new_v4());
+        crate::plan::set_plan_state(&session_id, crate::plan::PlanModeState::Planning).await;
+        let ctx = ToolExecContext {
+            session_id: Some(session_id.clone()),
+            // An empty snapshot models a turn that entered Plan Mode after its
+            // tool schema had already been built.
+            plan_mode_allowed_tools: Vec::new(),
+            ..ToolExecContext::default()
+        };
+
+        for tool_name in [
+            crate::tool_defs::TOOL_SESSIONS_CREATE,
+            crate::tool_defs::TOOL_SESSIONS_SEND,
+        ] {
+            let decision = resolve_tool_permission(tool_name, &json!({}), &ctx, false).await;
+            assert!(
+                matches!(decision, crate::permission::Decision::Deny { .. }),
+                "{tool_name} must not escape a same-round Plan Mode transition"
+            );
+        }
+
+        crate::plan::set_plan_state(&session_id, crate::plan::PlanModeState::Off).await;
     }
 
     /// `ToolExecContext::emit_effective_args` is the bridge the streaming

@@ -143,7 +143,7 @@ impl StreamPersister {
         lock_or_poisoned(&self.owned_partial_message_ids).push(id);
     }
 
-    /// `Fn + Send + 'static` callback for `AssistantAgent::chat`. Does not
+    /// `Fn + Send + 'static` callback for the legacy streaming adapter. Does not
     /// forward events to any external sink — the caller composes it with
     /// their own sink-forwarding wrapper.
     pub(crate) fn build_callback(self: &Arc<Self>) -> impl Fn(&str) + Send + 'static {
@@ -251,9 +251,18 @@ impl StreamPersister {
                     let description = data
                         .and_then(|d| d.get("description"))
                         .and_then(|d| d.as_str());
+                    let is_summary_failure = matches!(
+                        description,
+                        Some(
+                            "summarization_timed_out"
+                                | "summarization_timed_out_sync_compaction_only"
+                                | "summarization_not_applied"
+                                | "summarization_not_applied_sync_compaction_only"
+                        )
+                    );
                     let is_start_marker =
                         matches!(description, Some("summarizing" | "emergency_compacting"));
-                    if tier >= 2 && !is_start_marker {
+                    if (tier >= 2 || is_summary_failure) && !is_start_marker {
                         if !me.journal_only {
                             if let Err(error) = me.db.append_message(
                                 &me.session_id,
@@ -490,7 +499,7 @@ impl StreamPersister {
     }
 
     /// Flush any remaining thinking buffer at turn end. Run AFTER the
-    /// agent.chat() future resolves and BEFORE writing the final assistant
+    /// Provider/round future resolves and BEFORE writing the final assistant
     /// row, so `had_thinking_blocks()` is accurate when the caller decides
     /// whether to duplicate thinking into the assistant row's `thinking`
     /// column.
@@ -734,7 +743,7 @@ impl StreamPersister {
 
 /// Last-resort cleanup for paths that didn't take the success route
 /// (`take_trailing_text` / `flush_remaining_thinking`) or the explicit
-/// crash route (`crash_flush`). Examples: `agent.chat()` returning `Err`,
+/// crash route (`crash_flush`). Examples: the Provider/round driver returning `Err`,
 /// failover swallowing the chat result, `abort_on_cancel` short-circuit.
 /// If a streaming placeholder is still alive when the last `Arc` goes
 /// away, mark it `orphaned` so it's eligible for the resume-turn summary
@@ -947,5 +956,39 @@ mod tests {
         assert!(!messages
             .iter()
             .any(|msg| { msg.role == MessageRole::TextBlock && msg.content == "failed partial" }));
+    }
+
+    #[test]
+    fn summary_failure_is_persisted_without_a_lower_tier_mutation() {
+        let db = temp_db();
+        let session_id = session_with_user(&db);
+        let persister = StreamPersister::new(db.clone(), session_id.clone(), ChatSource::Desktop);
+        let cb = persister.build_callback();
+
+        cb(
+            r#"{"type":"context_compacted","data":{"tier_applied":0,"description":"summarization_not_applied","messages_affected":0}}"#,
+        );
+
+        let messages = db.load_session_messages(&session_id).unwrap();
+        assert!(messages.iter().any(|msg| {
+            msg.role == MessageRole::Event && msg.content.contains("summarization_not_applied")
+        }));
+    }
+
+    #[test]
+    fn tier_one_micro_compaction_remains_live_only() {
+        let db = temp_db();
+        let session_id = session_with_user(&db);
+        let persister = StreamPersister::new(db.clone(), session_id.clone(), ChatSource::Desktop);
+        let cb = persister.build_callback();
+
+        cb(
+            r#"{"type":"context_compacted","data":{"tier_applied":1,"description":"tool_results_truncated","messages_affected":1}}"#,
+        );
+
+        let messages = db.load_session_messages(&session_id).unwrap();
+        assert!(!messages
+            .iter()
+            .any(|msg| msg.content.contains("tool_results_truncated")));
     }
 }

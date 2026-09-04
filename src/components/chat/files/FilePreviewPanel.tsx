@@ -1,6 +1,9 @@
-import { useMemo } from "react"
+import { useCallback, useMemo } from "react"
 
-import { FilePreviewPane } from "@/components/chat/project/file-browser/FilePreviewPane"
+import {
+  FilePreviewPane,
+  type QuotePayload,
+} from "@/components/chat/project/file-browser/FilePreviewPane"
 import { useTransport, useTransportRevision } from "@/lib/transport-provider"
 import type { PreviewSource } from "./previewSource"
 import { fileResourceAdapterFor } from "./fileResourceAdapter"
@@ -16,10 +19,18 @@ interface FilePreviewPanelProps {
   sessionId?: string | null
   /** Replace an edited renderer-local draft in the chat composer. */
   onReplaceDraft?: (draftId: string, file: File) => void
+  /** Stage a selected text excerpt in the owning chat composer. */
+  onQuote?: (quote: QuotePayload) => void
   onClose: () => void
   /** Fullscreen toggle — mirrors the files / canvas panels' maximize affordance. */
   maximized?: boolean
   onToggleMaximize?: () => void
+  /** Shared workbench owns close/maximize while this pane keeps file actions. */
+  integrated?: boolean
+  /** Reveal a header-breadcrumb directory segment in the Files panel. */
+  onNavigateDirectory?: (dirPath: string) => void
+  /** Gate for the above: unresolvable segments render as plain text. */
+  canNavigateDirectory?: (dirPath: string) => boolean
 }
 
 /**
@@ -32,9 +43,13 @@ export default function FilePreviewPanel({
   target,
   sessionId,
   onReplaceDraft,
+  onQuote,
   onClose,
   maximized,
   onToggleMaximize,
+  integrated = false,
+  onNavigateDirectory,
+  canNavigateDirectory,
 }: FilePreviewPanelProps) {
   if (target?.kind === "clientDraft") {
     return (
@@ -42,10 +57,17 @@ export default function FilePreviewPanel({
         key={target.previewId}
         target={target}
         onReplaceFile={(file) => onReplaceDraft?.(target.draft.id, file)}
-        onClose={onClose}
+        onQuote={
+          onQuote
+            ? (quote) => {
+                onQuote({ ...quote, revealable: false })
+              }
+            : undefined
+        }
+        onClose={integrated ? undefined : onClose}
         className="h-full min-h-0"
-        maximized={maximized}
-        onToggleMaximize={onToggleMaximize}
+        maximized={integrated ? false : maximized}
+        onToggleMaximize={integrated ? undefined : onToggleMaximize}
       />
     )
   }
@@ -54,9 +76,13 @@ export default function FilePreviewPanel({
     <PersistedFilePreviewPanel
       target={target}
       sessionId={sessionId}
+      onQuote={onQuote}
       onClose={onClose}
       maximized={maximized}
       onToggleMaximize={onToggleMaximize}
+      integrated={integrated}
+      onNavigateDirectory={onNavigateDirectory}
+      canNavigateDirectory={canNavigateDirectory}
     />
   )
 }
@@ -66,9 +92,13 @@ type PersistedPreviewTarget = Exclude<PreviewTarget, { kind: "clientDraft" }>
 function PersistedFilePreviewPanel({
   target,
   sessionId,
+  onQuote,
   onClose,
   maximized,
   onToggleMaximize,
+  integrated = false,
+  onNavigateDirectory,
+  canNavigateDirectory,
 }: Omit<FilePreviewPanelProps, "target"> & { target: PersistedPreviewTarget | null }) {
   const transport = useTransport()
   const transportRevision = useTransportRevision()
@@ -87,11 +117,21 @@ function PersistedFilePreviewPanel({
     target?.kind === "sessionPath" || target?.kind === "workspace"
       ? (target.revealLines ?? null)
       : null
+  const handleQuote = useCallback(
+    (quote: QuotePayload) => {
+      if (!onQuote) return
+      // This generic panel does not carry the project-folder/worktree identity
+      // required by the main file browser's jump contract. A display path can
+      // otherwise collide with an unrelated current-project file.
+      onQuote({ ...quote, revealable: false })
+    },
+    [onQuote],
+  )
 
   return (
     <FilePreviewPane
       source={source}
-      onClose={onClose}
+      onClose={integrated ? undefined : onClose}
       onOpen={target && capabilities.open.state === "enabled" ? () => run("open") : undefined}
       onDownload={
         target && !isLocal && capabilities.download.state === "enabled"
@@ -99,10 +139,13 @@ function PersistedFilePreviewPanel({
           : undefined
       }
       onEdit={target && capabilities.edit.state === "enabled" ? () => run("edit") : undefined}
+      onQuote={onQuote ? handleQuote : undefined}
       highlightLines={highlightLines}
       className="h-full min-h-0"
-      maximized={maximized}
-      onToggleMaximize={onToggleMaximize}
+      maximized={integrated ? false : maximized}
+      onToggleMaximize={integrated ? undefined : onToggleMaximize}
+      onNavigateDirectory={onNavigateDirectory}
+      canNavigateDirectory={canNavigateDirectory}
     />
   )
 }

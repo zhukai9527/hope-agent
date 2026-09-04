@@ -7,25 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-<<<<<<< HEAD
-### Added
-
-- **技能设置升级为完整管理视图**：新增技能统计、搜索、来源/状态筛选、排序、详情元信息与手动重新扫描入口，便于按 Skills-Dock 式工作流管理内置与本地导入技能。 (#TODO)
-- **技能 ZIP 包支持安全导入导出**：Skills-Dock 扩展页新增 ZIP dry-run 校验、拒绝覆盖的导入和单技能 ZIP 导出，便于迁移本地技能包。 (#TODO)
-- **技能管理补齐本地市场与跨应用安装**：Skills-Dock 扩展页可默认读取 ClawHub 官方只读市场索引，并支持额外 ClawHub-compatible 市场源与本地/市场版本或 hash 待升级比较；同时可从本地技能目录发现、安装和安全更新技能，安装到 Claude/Codex/Gemini/OpenCode 技能目录，卸载 Hope 托管技能或已校验的外部 app 技能，并显示真实会话技能激活用量。 (#TODO)
-- **技能市场支持发布闭环**：设置页新增 Market Hub、按源 token、registry 管理和发布草稿/推送入口，支持将本地 skill 显式确认后推送到已配置授权的 SkillHub/ClawHub-compatible hub。 (#TODO)
-
-### Changed
-
-- **Server 认证收口为单一 Owner Token 且远程使用不再暴露根凭据**：浏览器登录换 HttpOnly 会话，远程 WebSocket 与文件/预览使用短时受限票据，旧配置及历史备份中的明文 Token 自动迁移清理，保存或轮换 Token 后当前页面会自动续接而不会把自己锁在登录页外。 (#603)
-
-### Fixed
-
-- **修复 Docker 部署无法正确使用执行沙箱**：即使容器内没有 Docker CLI，也能通过已挂载的 Docker socket 检测 daemon 并给出缺失、权限不足等明确诊断；容器部署现支持把有界工作区副本上传到匿名 volume 的 `isolated` 模式，其他依赖宿主路径映射的模式会安全拒绝，安装帮助链接也会在当前 Web 客户端打开。 (#604)
-
-
-## [0.29.0] - 2026-08-04
-=======
 ## [0.42.0] - 2026-09-04
 
 ### Added
@@ -33,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DeepSeek 直连新增图片理解**：新建连接可直接选择 DeepSeek V4 Flash Vision Exp，支持文字与图片输入、百万级上下文和推理；同步修正 V4 Flash / Pro 的高峰费率估算，避免大盘在高峰时段低报成本。 (#696)
 
 ## [0.41.0] - 2026-09-03
->>>>>>> main
 
 ### Fixed
 

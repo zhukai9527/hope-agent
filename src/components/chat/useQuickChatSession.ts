@@ -70,6 +70,7 @@ export interface UseQuickChatSessionReturn {
   hasMore: boolean
   loadingMore: boolean
   handleLoadMore: () => Promise<void>
+  reloadMessages: (sessionId: string) => Promise<boolean>
 
   // Model state
   availableModels: AvailableModel[]
@@ -81,6 +82,7 @@ export interface UseQuickChatSessionReturn {
 
   // Handlers
   handleNewChat: () => Promise<void>
+  handleSwitchSession: (sessionId: string) => Promise<void>
   handleSwitchAgent: (agentId: string) => Promise<void>
   handleModelChange: (key: string, options?: { applyToAgentDefault?: boolean }) => Promise<void>
   handleEffortChange: (effort: string, options?: { applyToAgentDefault?: boolean }) => Promise<void>
@@ -95,7 +97,19 @@ export interface UseQuickChatSessionReturn {
   sessions: SessionMeta[]
 }
 
-export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
+export interface UseQuickChatSessionOptions {
+  /** Open one exact hidden/dedicated session instead of restoring a regular quick-chat session. */
+  initialSessionId?: string | null
+  /** Keep the regular quick-chat localStorage cursor. Dedicated surfaces disable this. */
+  persistLastSession?: boolean
+}
+
+export function useQuickChatSession(
+  open: boolean,
+  options: UseQuickChatSessionOptions = {},
+): UseQuickChatSessionReturn {
+  const initialSessionId = options.initialSessionId ?? null
+  const persistLastSession = options.persistLastSession ?? true
   const { t } = useTranslation()
   const [messages, setMessages] = useState<Message[]>([])
   const [currentSessionId, setCurrentSessionIdState] = useState<string | null>(null)
@@ -175,9 +189,7 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
           manualModelOverrideRef.current = null
         }
         const displayModel =
-          manualModel && manualOverride
-            ? manualOverride
-            : (runtimeDefaults.model ?? null)
+          manualModel && manualOverride ? manualOverride : (runtimeDefaults.model ?? null)
         setActiveModel(displayModel)
         const currentModel = displayModel
           ? models.find(
@@ -241,8 +253,14 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
 
   // Reload sessions list (for useChatStream compatibility)
   const reloadSessions = useCallback(async () => {
+    if (initialSessionId) {
+      const sessionId = currentSessionIdRef.current ?? initialSessionId
+      const target = await getTransport().call<SessionMeta | null>("get_session_cmd", { sessionId })
+      setSessions(target ? [target] : [])
+      return
+    }
     await loadSessionsForAgent(currentAgentId)
-  }, [currentAgentId, loadSessionsForAgent])
+  }, [currentAgentId, initialSessionId, loadSessionsForAgent])
 
   const applySessionRuntimeState = useCallback(
     async (session: SessionMeta, snapshot: QuickModelSnapshot | null) => {
@@ -288,6 +306,35 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
   // Initialize/restore session for current agent
   const initSession = useCallback(async () => {
     const agentList = await loadAgents()
+
+    if (initialSessionId) {
+      setLoading(true)
+      try {
+        const target = await getTransport().call<SessionMeta | null>("get_session_cmd", {
+          sessionId: initialSessionId,
+        })
+        if (!target) throw new Error(`Session \`${initialSessionId}\` not found`)
+        setCurrentAgentId(target.agentId)
+        setAgentName(agentList.find((agent) => agent.id === target.agentId)?.name ?? "")
+        setSessions([target])
+        const [loaded, modelSnapshot] = await Promise.all([
+          loadSessionMessages(initialSessionId),
+          loadModels(target.agentId, initialSessionId),
+        ])
+        if (!loaded) throw new Error(`Failed to load session \`${initialSessionId}\``)
+        await applySessionRuntimeState(target, modelSnapshot)
+        setCurrentSessionId(initialSessionId)
+      } catch (error) {
+        logger.error("ui", "QuickChat::initDedicatedSession", "Failed to load session", error)
+        setCurrentSessionId(null)
+        setMessages([])
+        resetPagination()
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
     const modelSnapshot = await loadModels()
 
     // Try to find the agent name
@@ -312,6 +359,7 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
   }, [
     applySessionRuntimeState,
     currentAgentId,
+    initialSessionId,
     loadAgents,
     loadModels,
     loadSessionMessages,
@@ -363,6 +411,41 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
     setDraftIncognito(false)
     await loadModels(currentAgentId)
   }, [currentAgentId, loadModels, resetPagination, setCurrentSessionId])
+
+  const handleSwitchSession = useCallback(
+    async (sessionId: string) => {
+      if (!sessionId || sessionId === currentSessionIdRef.current) return
+      setLoading(true)
+      try {
+        const sessionList = await loadSessionsForAgent(currentAgentId)
+        const target = sessionList.find((item) => item.id === sessionId)
+        if (!target) throw new Error(`Session \`${sessionId}\` not found`)
+
+        const [loaded] = await Promise.all([
+          loadSessionMessages(sessionId),
+          loadModels(target.agentId, sessionId),
+        ])
+        if (!loaded) throw new Error(`Failed to load session \`${sessionId}\``)
+
+        if (target.agentId !== currentAgentId) {
+          setCurrentAgentId(target.agentId)
+          const agent = agents.find((item) => item.id === target.agentId)
+          if (agent) setAgentName(agent.name)
+        }
+        setCurrentSessionId(sessionId)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [
+      agents,
+      currentAgentId,
+      loadModels,
+      loadSessionMessages,
+      loadSessionsForAgent,
+      setCurrentSessionId,
+    ],
+  )
 
   // Switch agent
   const handleSwitchAgent = useCallback(
@@ -441,7 +524,9 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
           })
         } catch (e) {
           logger.error("ui", "QuickChat::modelAgentDefault", "Failed to set Agent model", e)
-          toast.error(t("chat.modelPicker.agentDefaultFailed", "当前会话已更新，但 Agent 默认保存失败"))
+          toast.error(
+            t("chat.modelPicker.agentDefaultFailed", "当前会话已更新，但 Agent 默认保存失败"),
+          )
         }
       }
 
@@ -508,7 +593,9 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
           })
         } catch (e) {
           logger.error("ui", "QuickChat::effortAgentDefault", "Failed to set Agent effort", e)
-          toast.error(t("chat.modelPicker.agentDefaultFailed", "当前会话已更新，但 Agent 默认保存失败"))
+          toast.error(
+            t("chat.modelPicker.agentDefaultFailed", "当前会话已更新，但 Agent 默认保存失败"),
+          )
         }
       }
     },
@@ -552,8 +639,15 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
             patch: { temperature },
           })
         } catch (e) {
-          logger.error("ui", "QuickChat::temperatureAgentDefault", "Failed to set Agent temperature", e)
-          toast.error(t("chat.modelPicker.agentDefaultFailed", "当前会话已更新，但 Agent 默认保存失败"))
+          logger.error(
+            "ui",
+            "QuickChat::temperatureAgentDefault",
+            "Failed to set Agent temperature",
+            e,
+          )
+          toast.error(
+            t("chat.modelPicker.agentDefaultFailed", "当前会话已更新，但 Agent 默认保存失败"),
+          )
         }
       }
     },
@@ -611,10 +705,10 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
 
   // Save session ID when it changes (e.g. after first message creates a session)
   useEffect(() => {
-    if (currentSessionId) {
+    if (persistLastSession && currentSessionId) {
       setLastSessionId(currentAgentId, currentSessionId)
     }
-  }, [currentSessionId, currentAgentId])
+  }, [currentSessionId, currentAgentId, persistLastSession])
 
   return {
     messages,
@@ -637,6 +731,7 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
     hasMore,
     loadingMore,
     handleLoadMore,
+    reloadMessages: loadSessionMessages,
     availableModels,
     activeModel,
     reasoningEffort,
@@ -644,6 +739,7 @@ export function useQuickChatSession(open: boolean): UseQuickChatSessionReturn {
     sessionTemperature,
     unavailableModelPreference,
     handleNewChat,
+    handleSwitchSession,
     handleSwitchAgent,
     handleModelChange,
     handleEffortChange,

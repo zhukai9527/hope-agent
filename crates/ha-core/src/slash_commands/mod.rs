@@ -1,11 +1,24 @@
-pub mod fuzzy;
-pub mod handlers;
-pub mod parser;
-pub mod registry;
-pub mod types;
+//! Slash 命令**装配层**（composition root）——handler 逐个调 skills /
+//! channel / cron / dashboard / coding_improvement 等未来特征 crate，
+//! 位置在依赖图顶端，与 `app_init` / `globals` 同型。
+//!
+//! 契约物（命令表 / wire 类型 / 解析 / 模糊匹配 / 转录落库 / 选择器渲染）
+//! 在 [`crate::slash_defs`]；kernel 与 IM 渠道经 [`crate::slash_hooks`]
+//! 的三槽回调进来，**不得**自下而上 `use crate::slash_commands::…`。
+//! 本模块 `pub use` 再导出 slash_defs 子模块，既有
+//! `slash_commands::{types,parser,registry,fuzzy}::…` 路径不变。
 
-use std::collections::HashSet;
-use std::sync::OnceLock;
+pub mod handlers;
+
+// 契约层原路径兼容再导出（定义处 `crate::slash_defs`）。
+pub use crate::slash_defs::{
+    append_slash_history_events, builtin_command_names, canonical_builtin_command_name, fuzzy,
+    parser, registry, types,
+};
+// 迁移前是 `pub(crate)`，门面不得顺手放开（crate 外符号集须与归位前逐字
+// 相同——同 tool_defs 那刀的先例）。`format_session_picker_line` 的两个
+// 调用点都写全路径，不需要在此再导入。
+pub(crate) use crate::slash_defs::truncate_description;
 
 use crate::skills::SkillEntry;
 use types::{
@@ -28,92 +41,40 @@ pub struct ResolvedSkillCommand<'a> {
 /// typed name stays in sync with the runtime-matched skill.
 pub fn resolve_skill_command_names<'a>(
     skills: &'a [SkillEntry],
-    reserved: &HashSet<String>,
+    reserved: &std::collections::HashSet<String>,
 ) -> Vec<ResolvedSkillCommand<'a>> {
-    let mut used: HashSet<String> = reserved.clone();
-    let mut out: Vec<ResolvedSkillCommand<'a>> = Vec::with_capacity(skills.len());
-
-    for skill in skills {
-        let mut names_iter = skill.all_command_names();
-        let canonical = names_iter.next().expect("canonical name always yielded");
-
-        let mut display = if used.contains(&canonical) {
-            format!("{}_skill", canonical)
-        } else {
-            canonical.clone()
-        };
-        let base = display.clone();
-        let mut counter = 2;
-        while used.contains(&display) {
-            display = format!("{}_{}", base, counter);
-            counter += 1;
-        }
-        used.insert(display.clone());
-        out.push(ResolvedSkillCommand {
-            typed_name: display,
-            skill,
-        });
-
-        for alias in names_iter {
-            if used.contains(&alias) {
-                continue;
-            }
-            used.insert(alias.clone());
-            out.push(ResolvedSkillCommand {
-                typed_name: alias,
-                skill,
-            });
-        }
-    }
-
-    out
-}
-
-/// Silent dispatcher aliases — names accepted by the dispatch match arm
-/// in `handlers::mod.rs` but deliberately NOT registered in
-/// `registry::all_commands()` (so they don't appear in IM slash menus).
-/// They must still be reserved against skill name collisions, otherwise
-/// a user-defined `/<alias>` skill would be shadowed silently by the
-/// built-in dispatch.
-const SILENT_BUILTIN_ALIASES: &[&str] = &["reasoning", "think"];
-
-/// Resolve silent built-in aliases to their canonical command names for
-/// metadata lookup paths (arg options, help text, etc.). Dispatch still matches
-/// aliases explicitly so the behavior stays obvious at the side-effect boundary.
-pub fn canonical_builtin_command_name(name: &str) -> &str {
-    match name {
-        "reasoning" => "reason",
-        "think" => "thinking",
-        _ => name,
-    }
-}
-
-/// Built-in (hardcoded) slash command names — cached since `registry::all_commands()`
-/// is compile-time constant. Includes silent dispatcher aliases (see
-/// [`SILENT_BUILTIN_ALIASES`]) so the skill collision check in
-/// [`resolve_skill_command_names`] sees them too.
-pub fn builtin_command_names() -> &'static HashSet<String> {
-    static CACHE: OnceLock<HashSet<String>> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        let mut names: HashSet<String> = registry::all_commands()
-            .into_iter()
-            .map(|c| c.name)
-            .collect();
-        for alias in SILENT_BUILTIN_ALIASES {
-            names.insert((*alias).to_string());
-        }
-        names
-    })
+    let names = skills
+        .iter()
+        .map(|skill| skill.all_command_names().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    crate::slash_defs::resolve_dynamic_command_names(&names, reserved)
+        .into_iter()
+        .map(|resolved| ResolvedSkillCommand {
+            typed_name: resolved.typed_name,
+            skill: &skills[resolved.entry_index],
+        })
+        .collect()
 }
 
 /// List all available slash commands (for UI menu rendering).
 /// Includes both built-in commands and user-invocable skill commands.
-pub async fn list_slash_commands() -> Result<Vec<SlashCommandDef>, String> {
+pub async fn list_slash_commands(session_id: Option<&str>) -> Result<Vec<SlashCommandDef>, String> {
     let mut commands = registry::all_commands();
+    let is_side_chat = session_id
+        .and_then(|sid| crate::get_session_db().and_then(|db| db.get_session(sid).ok().flatten()))
+        .is_some_and(|session| session.kind == crate::session::SessionKind::Side);
+    if is_side_chat {
+        commands.retain(|command| registry::is_side_chat_enabled(&command.name));
+        return Ok(commands);
+    }
 
     let store = crate::config::cached_config();
-    let skill_entries =
-        crate::skills::get_invocable_skills(&store.extra_skills_dirs, &store.disabled_skills);
+    let working_dir = crate::session::effective_session_working_dir(session_id);
+    let skill_entries = crate::skills_hooks::invocable_skills(
+        &store.extra_skills_dirs,
+        &store.disabled_skills,
+        working_dir.as_deref().map(std::path::Path::new),
+    );
     let skill_entries = crate::skills::filter_catalog_eligible_skills(
         skill_entries,
         store.skill_env_check,
@@ -161,6 +122,14 @@ pub async fn execute_slash_command(
     command_text: String,
 ) -> Result<CommandResult, String> {
     let (name, args) = parser::parse(&command_text)?;
+
+    let is_side_chat = session_id
+        .as_deref()
+        .and_then(|sid| crate::get_session_db().and_then(|db| db.get_session(sid).ok().flatten()))
+        .is_some_and(|session| session.kind == crate::session::SessionKind::Side);
+    if is_side_chat && !registry::is_side_chat_enabled(&name) {
+        return Err(format!("/{name} is not available in side chats"));
+    }
 
     // Allow both built-in commands and dynamic skill commands
     // (skill commands are handled in handlers::dispatch fallback)
@@ -239,156 +208,6 @@ pub async fn execute_slash_command(
     Ok(result)
 }
 
-/// Persist a control slash command to visible transcript without feeding it
-/// to the LLM. The command row is styled like a user bubble by the frontend;
-/// the result row remains a normal event chip/card.
-pub fn append_slash_history_events(
-    session_db: &crate::session::SessionDB,
-    session_id: &str,
-    command_text: &str,
-    result_content: Option<&str>,
-    source: crate::chat_engine::ChatSource,
-) -> anyhow::Result<Vec<i64>> {
-    let command_text = command_text.trim();
-    if command_text.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut ids = Vec::with_capacity(2);
-    let command_display = slash_history_command_display(command_text);
-
-    let mut command_msg =
-        crate::session::NewMessage::event(&command_display.content).with_source(source);
-    command_msg.attachments_meta = Some(
-        serde_json::json!({
-            "slash_command": {
-                "kind": "command",
-                "command": command_text,
-                "displayAs": "user",
-                "mode": command_display.mode,
-            }
-        })
-        .to_string(),
-    );
-    ids.push(session_db.append_message(session_id, &command_msg)?);
-    let _ = crate::session::ensure_first_message_title(
-        session_db,
-        session_id,
-        &command_display.content,
-        None,
-    );
-
-    if let Some(result_content) = result_content.filter(|s| !s.trim().is_empty()) {
-        let mut result_msg = crate::session::NewMessage::event(result_content).with_source(source);
-        result_msg.attachments_meta = Some(
-            serde_json::json!({
-                "slash_command": {
-                    "kind": "result",
-                    "command": command_text,
-                }
-            })
-            .to_string(),
-        );
-        ids.push(session_db.append_message(session_id, &result_msg)?);
-    }
-
-    Ok(ids)
-}
-
-struct SlashHistoryCommandDisplay {
-    content: String,
-    mode: Option<&'static str>,
-}
-
-fn slash_history_command_display(command_text: &str) -> SlashHistoryCommandDisplay {
-    let trimmed = command_text.trim();
-    if let Some(args) = slash_command_args(trimmed, "goal") {
-        let content = goal_command_display_text(args)
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "Goal".to_string());
-        return SlashHistoryCommandDisplay {
-            content,
-            mode: Some("goal"),
-        };
-    }
-    if let Some(args) = slash_command_args(trimmed, "loop") {
-        let content = loop_command_display_text(args)
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "Loop".to_string());
-        return SlashHistoryCommandDisplay {
-            content,
-            mode: Some("loop"),
-        };
-    }
-    SlashHistoryCommandDisplay {
-        content: trimmed.to_string(),
-        mode: None,
-    }
-}
-
-fn slash_command_args<'a>(trimmed: &'a str, name: &str) -> Option<&'a str> {
-    let prefix = format!("/{name}");
-    let raw_rest = trimmed.strip_prefix(&prefix)?;
-    if !raw_rest.is_empty() && !raw_rest.starts_with(char::is_whitespace) {
-        return None;
-    }
-    Some(raw_rest.trim())
-}
-
-fn goal_command_display_text(args: &str) -> Option<String> {
-    let trimmed = args.trim();
-    if trimmed.is_empty() {
-        return Some("Show active goal".to_string());
-    }
-    match trimmed {
-        "status" | "show" => Some("Show active goal".to_string()),
-        "pause" => Some("Pause active goal".to_string()),
-        "resume" => Some("Resume active goal".to_string()),
-        "clear" | "cancel" => Some("Clear active goal".to_string()),
-        "evaluate" | "audit" => Some("Evaluate active goal".to_string()),
-        "help" => Some("Goal help".to_string()),
-        _ => Some(trimmed.to_string()),
-    }
-}
-
-fn loop_command_display_text(args: &str) -> Option<String> {
-    let trimmed = args.trim();
-    if trimmed.is_empty() {
-        return Some("Start self-paced loop".to_string());
-    }
-    let first = trimmed
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match first.as_str() {
-        "status" | "list" | "show" => Some("Show loops".to_string()),
-        "pause" => Some("Pause loop".to_string()),
-        "resume" => Some("Resume loop".to_string()),
-        "stop" | "cancel" => Some("Stop loop".to_string()),
-        "help" => Some("Loop help".to_string()),
-        _ => Some(trimmed.to_string()),
-    }
-}
-
-fn is_loop_create_slash_command(command_text: &str) -> bool {
-    let Some(args) = slash_command_args(command_text.trim(), "loop") else {
-        return false;
-    };
-    if args.trim().is_empty() {
-        return false;
-    }
-    let first = args
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    !matches!(
-        first.as_str(),
-        "status" | "list" | "show" | "help" | "pause" | "resume" | "stop" | "cancel"
-    )
-}
-
 /// Persist a full `CommandResult`, including markdown fallbacks for structured
 /// actions whose live desktop UI is card/modal based and therefore has empty
 /// `content`.
@@ -410,7 +229,7 @@ pub fn append_slash_history_result_events(
 }
 
 fn slash_history_result_content(command_text: &str, result: &CommandResult) -> Option<String> {
-    if is_loop_create_slash_command(command_text) {
+    if crate::slash_defs::history::is_loop_create_slash_command(command_text) {
         return None;
     }
     if !result.content.trim().is_empty() {
@@ -562,13 +381,15 @@ fn append_truncated_note(lines: &mut Vec<String>, total: usize) {
 }
 
 /// PassThrough slash commands become real user turns, so they must keep the
-/// normal message/context path. `/new` creates a different conversation and
-/// should not seed the old or fresh transcript with a control event.
+/// normal message/context path. Session-spawning controls (`/new`, `/fork`,
+/// `/side`, `/agent`) should not seed the old or fresh transcript with control events.
 pub fn should_persist_slash_history(action: Option<&CommandAction>) -> bool {
     !matches!(
         action,
         Some(CommandAction::PassThrough { .. })
             | Some(CommandAction::NewSession { .. })
+            | Some(CommandAction::ForkSession { .. })
+            | Some(CommandAction::OpenSideChat { .. })
             | Some(CommandAction::SwitchAgent { .. })
     )
 }
@@ -582,7 +403,7 @@ pub fn is_slash_command(text: String) -> bool {
 /// `setMyCommands` at 100 entries, Discord caps global application commands
 /// at 100. Truncated tail is still callable by users typing manually — just
 /// hidden from the platform's menu/auto-complete UI.
-pub const IM_MENU_HARD_CAP: usize = 100;
+pub use crate::slash_defs::IM_MENU_HARD_CAP;
 
 /// Snapshot of the slash commands an IM channel should publish to its bot
 /// menu — `registry::all_commands()` plus invocable skills (collision-resolved),
@@ -593,7 +414,7 @@ pub const IM_MENU_HARD_CAP: usize = 100;
 /// each `SlashCommandDef` into their own wire format. `description_en()`
 /// gives a stable English label both platforms can render.
 pub async fn im_menu_entries() -> Vec<SlashCommandDef> {
-    let defs = match list_slash_commands().await {
+    let defs = match list_slash_commands(None).await {
         Ok(v) => v,
         Err(e) => {
             crate::app_warn!(
@@ -606,32 +427,7 @@ pub async fn im_menu_entries() -> Vec<SlashCommandDef> {
         }
     };
 
-    let mut entries: Vec<SlashCommandDef> = defs
-        .into_iter()
-        .filter(|cmd| !registry::is_im_disabled(&cmd.name))
-        .collect();
-
-    if entries.len() > IM_MENU_HARD_CAP {
-        crate::app_warn!(
-            "channel",
-            "menu_sync",
-            "Slash command count {} exceeds IM menu cap {} — truncating tail",
-            entries.len(),
-            IM_MENU_HARD_CAP
-        );
-        entries.truncate(IM_MENU_HARD_CAP);
-    }
-
-    entries
-}
-
-/// Truncate a description to `max_chars` characters, appending "…" if truncated.
-pub(crate) fn truncate_description(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let truncated: String = s.chars().take(max_chars - 1).collect();
-    format!("{}…", truncated)
+    crate::slash_defs::im_menu_filter_and_cap(defs)
 }
 
 #[cfg(test)]
@@ -673,6 +469,7 @@ mod tests {
             command_prompt_template: None,
             install: Vec::new(),
             allowed_tools: Vec::new(),
+            allowed_tools_declared: false,
             context_mode: None,
             agent: None,
             effort: None,
@@ -836,6 +633,32 @@ mod tests {
 
     #[test]
     fn command_action_serializes_variant_fields_as_camel_case() {
+        let fork = serde_json::to_value(CommandAction::ForkSession {
+            session_id: "session-2".into(),
+        })
+        .expect("serialize fork action");
+        assert_eq!(
+            fork,
+            serde_json::json!({
+                "type": "forkSession",
+                "sessionId": "session-2",
+            })
+        );
+
+        let side = serde_json::to_value(CommandAction::OpenSideChat {
+            session_id: "side-1".into(),
+            initial_prompt: Some("explain this".into()),
+        })
+        .expect("serialize side chat action");
+        assert_eq!(
+            side,
+            serde_json::json!({
+                "type": "openSideChat",
+                "sessionId": "side-1",
+                "initialPrompt": "explain this",
+            })
+        );
+
         let recap = serde_json::to_value(CommandAction::RecapCard {
             report_id: "report-1".into(),
         })
@@ -864,35 +687,27 @@ mod tests {
     }
 
     #[test]
-    fn pass_through_slash_history_stays_on_normal_chat_path() {
+    fn transcript_bypassing_actions_do_not_persist_slash_history() {
         assert!(!should_persist_slash_history(Some(
             &CommandAction::PassThrough {
                 message: "expanded".into(),
+                skill_activation: None,
+            },
+        )));
+        assert!(!should_persist_slash_history(Some(
+            &CommandAction::ForkSession {
+                session_id: "session-2".into(),
+            },
+        )));
+        assert!(!should_persist_slash_history(Some(
+            &CommandAction::OpenSideChat {
+                session_id: "side-1".into(),
+                initial_prompt: None,
             },
         )));
         assert!(should_persist_slash_history(Some(
             &CommandAction::DisplayOnly
         )));
         assert!(should_persist_slash_history(None));
-    }
-
-    #[test]
-    fn goal_slash_history_does_not_strip_objective_prefix_words() {
-        assert_eq!(
-            goal_command_display_text("pause react upgrade"),
-            Some("pause react upgrade".to_string())
-        );
-        assert_eq!(
-            goal_command_display_text("update react upgrade"),
-            Some("update react upgrade".to_string())
-        );
-        assert_eq!(
-            goal_command_display_text("set react upgrade"),
-            Some("set react upgrade".to_string())
-        );
-        assert_eq!(
-            goal_command_display_text("pause"),
-            Some("Pause active goal".to_string())
-        );
     }
 }

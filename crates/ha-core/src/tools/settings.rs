@@ -179,7 +179,17 @@ fn risk_level(category: &str) -> &'static str {
         Some("read_only") => "low",
         None if category == "all" => "low",
         Some(risk) => risk,
-        None => "medium",
+        None => {
+            // An unregistered category can only reach here if a read/write handler
+            // arm exists without a matching SETTINGS_CATEGORY_RISKS entry. That is a
+            // registration bug: a HIGH category would silently downgrade to medium and
+            // lose its write-before-confirmation. Loud in dev/CI, still safe in release.
+            debug_assert!(
+                false,
+                "settings category `{category}` has no SETTINGS_CATEGORY_RISKS entry"
+            );
+            "medium"
+        }
     }
 }
 
@@ -724,7 +734,11 @@ fn read_category(category: &str) -> Result<Value> {
             let hooks = redact_hooks_value(serde_json::to_value(&cfg.hooks)?);
             Ok(json!({
                 "disableAllHooks": cfg.disable_all_hooks,
-                "allowProjectScope": cfg.hooks_allow_project_scope,
+                "trustedProjectScopes": cfg.hook_workspace_trusts
+                    .iter()
+                    .map(|trust| trust.canonical_path.as_str())
+                    .collect::<Vec<_>>(),
+                "legacyGlobalProjectScopeIgnored": cfg.hooks_allow_project_scope,
                 "hooks": hooks,
             }))
         }
@@ -1048,7 +1062,7 @@ async fn update_im_auto_transcribe(values: &Value) -> Result<String> {
                 let Some(on) = entry.get("autoTranscribeVoice").and_then(|v| v.as_bool()) else {
                     continue;
                 };
-                crate::channel::accounts::set_account_auto_transcribe_voice(id, on, "skill")?;
+                crate::channel_hooks::set_account_auto_transcribe_voice(id, on, "skill")?;
             }
         }
         Ok(())
@@ -1072,20 +1086,24 @@ async fn update_stt_language(values: &Value) -> Result<String> {
         bail!("stt_language only accepts `language`");
     }
 
-    if let Some(value) = object.get("language") {
-        let language = if value.is_null() {
-            None
-        } else if let Some(language) = value.as_str() {
-            let language = language.trim();
-            (!language.is_empty()).then(|| language.to_string())
-        } else {
-            bail!("stt_language.language must be a string or null");
-        };
+    // 空对象 = 契约错误：调用方以为在改，实则什么都没写。
+    // 返回错误而不是 `updated: true` 让 skill / model 早失败——不然调用方
+    // 会记「已改」并继续，STT 却仍用旧 language。
+    let Some(value) = object.get("language") else {
+        bail!("stt_language requires a `language` field (use `null` to reset to auto-detect)");
+    };
+    let language = if value.is_null() {
+        None
+    } else if let Some(language) = value.as_str() {
+        let language = language.trim();
+        (!language.is_empty()).then(|| language.to_string())
+    } else {
+        bail!("stt_language.language must be a string or null");
+    };
 
-        crate::stt::set_stt_default_language_async(language, "skill")
-            .await
-            .map_err(|err| anyhow::anyhow!("{err}"))?;
-    }
+    crate::stt::set_stt_default_language_async(language, "skill")
+        .await
+        .map_err(|err| anyhow::anyhow!("{err}"))?;
 
     let updated_value = read_category("stt_language")?;
     Ok(serde_json::to_string_pretty(&json!({
@@ -1106,11 +1124,6 @@ fn update_user_config(values: &Value) -> Result<String> {
     let _reason = crate::backup::scope_save_reason("user", "skill");
     user_config::save_user_config_to_disk(&updated)?;
     drop(_reason);
-
-    // Notify frontend about user config change
-    if let Some(bus) = crate::get_event_bus() {
-        bus.emit("config:changed", serde_json::json!({ "category": "user" }));
-    }
 
     // Hot-reload: refresh weather cache if weather-related fields changed
     trigger_weather_refresh_if_needed(values);
@@ -1254,7 +1267,10 @@ fn apply_app_config_update(
         }
         "proxy" => merge_field(&mut store.proxy, values)?,
         "web_search" => merge_field(&mut store.web_search, values)?,
-        "web_fetch" => merge_field(&mut store.web_fetch, values)?,
+        "web_fetch" => {
+            merge_field(&mut store.web_fetch, values)?;
+            crate::tools::web_fetch::validate_config(&store.web_fetch)?;
+        }
         "browser" => merge_field(&mut store.browser, values)?,
         "security" => {
             if let Some(v) = values.get("skipAllApprovals").and_then(|v| v.as_bool()) {
@@ -1700,16 +1716,11 @@ fn trigger_weather_refresh_if_needed(values: &Value) {
     ];
     let needs_refresh = dominated_keys.iter().any(|k| values.get(k).is_some());
     if needs_refresh {
-        tokio::spawn(async {
-            if let Err(e) = crate::weather::force_refresh_weather().await {
-                app_warn!(
-                    "settings",
-                    "hot_reload",
-                    "Failed to refresh weather after user config change: {}",
-                    e
-                );
-            }
-        });
+        // 特征 crate 钩子：spawn 与错误日志在 ha-weather 注册的回调内，
+        // 未 wire 时不即时刷新（后台循环仍按周期刷）。
+        if let Some(refresh) = crate::tools::weather_settings_refresh_hook() {
+            refresh();
+        }
     }
 }
 
@@ -1779,23 +1790,39 @@ mod tests {
 
     #[test]
     fn risk_level_high_categories() {
-        for cat in [
-            "proxy",
-            "shortcuts",
-            "skills",
+        // Golden HIGH set (single source: SETTINGS_CATEGORY_RISKS). Bidirectional —
+        // adding, removing, or re-leveling any HIGH category fails here and forces a
+        // conscious review. A HIGH category slipping to medium silently loses its
+        // write-before-confirmation, so this set is security-relevant.
+        let mut high = categories_with_risk("high");
+        high.sort_unstable();
+        let mut expected = vec![
             "acp_control",
-            "skill_env",
+            "auto_update",
+            "browser",
+            "dangerous_commands",
+            "edit_commands",
+            "external_memory_providers",
+            "filesystem",
+            "knowledge_maintenance",
+            "knowledge_media_retention",
+            "mcp_global",
+            "protected_paths",
+            "proxy",
             "security",
             "security.ssrf",
+            "shortcuts",
+            "skill_env",
+            "skills",
             "smart_mode",
-            "mcp_global",
-            "knowledge_maintenance",
-            "browser",
-            "protected_paths",
-            "edit_commands",
-            "dangerous_commands",
-            "external_memory_providers",
-        ] {
+            "unattended_approval",
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            high, expected,
+            "HIGH-risk category set changed — review whether any category was silently up/down-graded"
+        );
+        for cat in high {
             assert_eq!(risk_level(cat), "high", "{cat} should be high risk");
         }
     }
@@ -1828,18 +1855,26 @@ mod tests {
         // Read-only categories report `low` because the model cannot mutate them
         // through this tool — the BLOCKED_UPDATE_CATEGORIES check rejects writes
         // before risk_level is even consulted.
-        for cat in [
+        let expected = [
             "active_model",
-            "fallback_models",
+            "active_stt_model",
             "channels",
+            "embedding",
+            "fallback_models",
+            "hooks",
             "mcp_servers",
             "server",
-            "embedding",
-            "hooks",
-            "stt_providers",
-            "active_stt_model",
             "stt_fallback_models",
-        ] {
+            "stt_providers",
+        ];
+        // Golden read_only set: adding/removing one fails here and forces review —
+        // read_only is the exemption from the GUI-only credential rule.
+        let mut ro = categories_with_risk("read_only");
+        ro.sort_unstable();
+        let mut exp = expected.to_vec();
+        exp.sort_unstable();
+        assert_eq!(ro, exp, "read_only category set changed — review");
+        for cat in expected {
             assert_eq!(risk_level(cat), "low", "{cat} should be low (read-only)");
         }
     }
@@ -2173,7 +2208,8 @@ mod tests {
 
         reject_blocked_user_update_fields(&json!({
             "weatherCity": "Shanghai",
-            "autoSendPending": true
+            "autoSendPending": true,
+            "enterToSend": false
         }))
         .expect("ordinary user preferences remain writable");
     }

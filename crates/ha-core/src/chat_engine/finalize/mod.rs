@@ -144,6 +144,14 @@ impl TerminationReason {
             Self::Shutdown => ChatTurnInterruptReason::Shutdown,
             Self::Crash => ChatTurnInterruptReason::CrashRecovery,
             Self::NoProfileAvailable => ChatTurnInterruptReason::NoProfile,
+            Self::ProviderFailed {
+                last_kind: FailoverReason::CurrentToolGroupOverflow,
+                ..
+            } => ChatTurnInterruptReason::CurrentToolGroupOverflow,
+            Self::ProviderFailed {
+                last_kind: FailoverReason::DispatchUnknown,
+                ..
+            } => ChatTurnInterruptReason::DispatchUnknown,
             Self::ProviderFailed { .. } => ChatTurnInterruptReason::ProviderFailed,
             Self::CompactionFailed { .. } => ChatTurnInterruptReason::CompactionFailed,
             Self::Other { .. } => ChatTurnInterruptReason::Unknown,
@@ -176,6 +184,10 @@ impl TerminationReason {
             Self::Shutdown => "shutdown",
             Self::Crash => "crash",
             Self::NoProfileAvailable => "no_profile",
+            Self::ProviderFailed {
+                last_kind: FailoverReason::DispatchUnknown,
+                ..
+            } => "dispatch_unknown",
             Self::ProviderFailed { .. } => "provider_failed",
             Self::CompactionFailed { .. } => "compaction_failed",
             Self::Other { .. } => "other",
@@ -311,7 +323,7 @@ pub(crate) async fn finalize_turn_context(
     reason: TerminationReason,
     partial: PartialMeta,
     source: crate::chat_engine::ChatSource,
-    im_mirror: Option<crate::chat_engine::im_mirror::ImLiveMirrorState>,
+    im_mirror: Option<Box<dyn crate::channel_hooks::ImLiveMirror>>,
 ) -> FinalizeOutcome {
     let mut outcome = apply_finalize(db, session_id, &reason, &partial, source);
     if !outcome.was_already_finalized {
@@ -334,8 +346,10 @@ pub(crate) async fn finalize_turn_context(
         if let Some(state) = im_mirror {
             let body = copy::im_notice(&reason);
             tokio::spawn(async move {
-                crate::chat_engine::im_mirror::abort_im_live_mirror_with_body(state, Some(body))
-                    .await;
+                // This path never replays the logical result; it only reports
+                // the terminal asynchronously, so the confirmation status has
+                // no downstream retry decision to gate.
+                let _ = state.abort(Some(body)).await;
             });
             outcome.im_notice_dispatched = true;
         }
@@ -434,12 +448,13 @@ fn apply_finalize(
     let turn_status = reason.to_chat_turn_status();
     let interrupt = reason.to_chat_turn_interrupt_reason();
     if let Some(turn_id) = partial.turn_id.as_deref() {
-        match db.finish_chat_turn_once(
+        match db.finish_chat_turn_once_with_notice(
             turn_id,
             turn_status,
             Some(interrupt),
             reason.to_error_text().as_deref(),
             partial.assistant_message_id,
+            outcome.event_row_id,
         ) {
             Ok(_) => {
                 outcome.turn_status = Some(turn_status);
@@ -648,6 +663,75 @@ mod tests {
             .create_chat_turn(&session.id, "desktop", Some("s-1"), Some(1))
             .unwrap();
         (session.id, turn.id)
+    }
+
+    #[test]
+    fn terminal_read_waits_for_finalize_notice_after_read_user_or_partial() {
+        let _lock = test_lock();
+        for failed in [false, true] {
+            for has_partial in [false, true] {
+                let db = temp_db();
+                let (sid, turn_id) = fresh_session(&db);
+                let assistant_message_id = has_partial.then(|| {
+                    db.append_message(&sid, &crate::session::NewMessage::assistant("partial"))
+                        .unwrap()
+                });
+                db.mark_session_read(&sid).unwrap();
+                let reason = if failed {
+                    TerminationReason::ProviderFailed {
+                        last_kind: crate::failover::FailoverReason::Auth,
+                        last_message: "401".into(),
+                        is_codex_auth: false,
+                    }
+                } else {
+                    TerminationReason::UserStop
+                };
+                let outcome = finalize_turn_context_blocking(
+                    &db,
+                    &sid,
+                    reason,
+                    PartialMeta {
+                        turn_id: Some(turn_id.clone()),
+                        assistant_message_id,
+                        ..Default::default()
+                    },
+                    ChatSource::Desktop,
+                );
+                let notice_id = outcome.event_row_id.expect("visible terminal notice");
+                assert_eq!(
+                    db.chat_turn_terminal_read(&sid, &turn_id).unwrap(),
+                    Some(false),
+                    "unseen notice: failed={failed}, partial={has_partial}"
+                );
+                db.mark_session_read_through(&sid, Some(notice_id)).unwrap();
+                assert_eq!(
+                    db.chat_turn_terminal_read(&sid, &turn_id).unwrap(),
+                    Some(true)
+                );
+
+                // Non-turn commands must not revive an acknowledged result.
+                db.append_message(&sid, &crate::session::NewMessage::event("/status result"))
+                    .unwrap();
+                assert_eq!(
+                    db.chat_turn_terminal_read(&sid, &turn_id).unwrap(),
+                    Some(true),
+                    "later command must not move the sealed boundary"
+                );
+
+                // A later turn's unread rows cannot move this turn's boundary.
+                let next_user = db
+                    .append_message(&sid, &crate::session::NewMessage::user("next"))
+                    .unwrap();
+                db.create_chat_turn(&sid, "desktop", None, Some(next_user))
+                    .unwrap();
+                db.append_message(&sid, &crate::session::NewMessage::event("later event"))
+                    .unwrap();
+                assert_eq!(
+                    db.chat_turn_terminal_read(&sid, &turn_id).unwrap(),
+                    Some(true)
+                );
+            }
+        }
     }
 
     #[test]
@@ -897,6 +981,22 @@ mod tests {
         );
         assert!(!r.is_user_initiated());
         assert_eq!(r.to_error_text().as_deref(), Some("401 Unauthorized"));
+    }
+
+    #[test]
+    fn dispatch_unknown_maps_to_dedicated_failed_terminal() {
+        let r = TerminationReason::ProviderFailed {
+            last_kind: FailoverReason::DispatchUnknown,
+            last_message: "transport closed after dispatch claim".into(),
+            is_codex_auth: false,
+        };
+        assert_eq!(r.to_chat_turn_status(), ChatTurnStatus::Failed);
+        assert_eq!(
+            r.to_chat_turn_interrupt_reason(),
+            ChatTurnInterruptReason::DispatchUnknown
+        );
+        assert_eq!(r.category_label(), "dispatch_unknown");
+        assert!(!r.is_user_initiated());
     }
 
     #[test]

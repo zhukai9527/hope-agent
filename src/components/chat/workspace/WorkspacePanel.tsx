@@ -181,6 +181,11 @@ import type {
   Task,
 } from "@/types/chat"
 import type { ProjectMeta } from "@/types/project"
+import type {
+  CronWorkspaceActionAvailability,
+  CronWorkspaceActionResult,
+  CronWorkspaceResource,
+} from "@/components/cron/CronJobForm.types"
 import { FileMimeIcon } from "@/components/chat/message/FileCard"
 import { FileDeltaCounter } from "@/components/chat/message/FileDeltaCounter"
 import { FileContextMenu, FileActionsMoreButton } from "@/components/chat/files/FileActionMenu"
@@ -346,6 +351,8 @@ interface WorkspacePanelProps {
   draftWorkflowMode?: WorkflowAutonomyMode
   onDraftWorkflowModeChange?: (mode: WorkflowAutonomyMode) => void
   onClose: () => void
+  /** Hosted under the shared workbench tabs; suppress the redundant frame header. */
+  integrated?: boolean
 }
 
 /** 每段初始渲染条数;滚到底自动 +此值（无「加载更多」按钮）。 */
@@ -551,9 +558,28 @@ function UrlSourceRow({ source }: { source: Extract<SessionUrlSource, { kind: "u
         ) : (
           <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
-          {domainOf(source.url)}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs text-foreground/90">
+            {source.title || domainOf(source.url)}
+          </span>
+          {source.origin === "web_fetch" && source.title ? (
+            <span className="block truncate pt-0.5 text-[10px] text-muted-foreground/70">
+              {domainOf(source.url)}
+            </span>
+          ) : null}
         </span>
+        {source.origin === "web_fetch" && (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+            <Globe className="h-2.5 w-2.5" />
+            {source.fetchMode === "rendered"
+              ? t("workspace.sourceFetchRendered", "渲染")
+              : t("workspace.sourceFetchDirect", "抓取")}
+            {source.cacheHit ? ` · ${t("workspace.sourceFetchCache", "缓存")}` : ""}
+            {source.truncated || source.warnings?.length ? (
+              <CircleAlert className="h-2.5 w-2.5 text-amber-500" />
+            ) : null}
+          </span>
+        )}
         {source.origin === "web_search" && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
             <Search className="h-2.5 w-2.5" />
@@ -1549,6 +1575,35 @@ function EnvironmentSection({
     },
     [managedWorktreesState, t, worktreeActionKey],
   )
+  const returnScheduledWorktree = useCallback(
+    async (resource: CronWorkspaceResource, resume: boolean) => {
+      const availability = resume ? resource.actions.returnAndResume : resource.actions.returnToTask
+      if (worktreeActionKey || !availability.allowed || !resource.sessionId) return
+      const action = resume ? "resume" : "return"
+      setWorktreeActionKey(`${action}:${resource.worktree.id}`)
+      try {
+        await getTransport().call<CronWorkspaceActionResult>("cron_workspace_return", {
+          jobId: resource.jobId,
+          sessionId: resource.sessionId,
+          resume,
+        })
+        managedWorktreesState.refresh()
+        toast.success(
+          t("cron.workspaceActionDone", {
+            action: resume
+              ? t("cron.workspaceActionResume", "Return & resume")
+              : t("cron.workspaceActionReturn", "Return"),
+          }),
+        )
+      } catch (error) {
+        logger.error("ui", "EnvironmentSection::returnScheduledWorktree", "Return failed", error)
+        toast.error(error instanceof Error ? error.message : String(error))
+      } finally {
+        setWorktreeActionKey(null)
+      }
+    },
+    [managedWorktreesState, t, worktreeActionKey],
+  )
 
   const sessionSource = sessionMeta?.channelInfo
     ? {
@@ -1590,6 +1645,7 @@ function EnvironmentSection({
           managedWorktreeControls={
             <ManagedWorktreesMiniPanel
               worktrees={managedWorktrees}
+              resourcesByWorktreeId={managedWorktreesState.resourcesByWorktreeId}
               activeWorktree={activeManagedWorktree}
               loading={managedWorktreesState.loading}
               error={managedWorktreesState.error}
@@ -1597,6 +1653,9 @@ function EnvironmentSection({
               canCreate={Boolean(sessionId && workingDir && git)}
               onCreate={() => void createManagedWorktree()}
               onAction={(worktree, action) => void runManagedWorktreeAction(worktree, action)}
+              onScheduledReturn={(resource, resume) =>
+                void returnScheduledWorktree(resource, resume)
+              }
             />
           }
         />
@@ -1704,6 +1763,7 @@ function EnvironmentSection({
 
 function ManagedWorktreesMiniPanel({
   worktrees,
+  resourcesByWorktreeId,
   activeWorktree,
   loading,
   error,
@@ -1711,8 +1771,10 @@ function ManagedWorktreesMiniPanel({
   canCreate,
   onCreate,
   onAction,
+  onScheduledReturn,
 }: {
   worktrees: ManagedWorktree[]
+  resourcesByWorktreeId: Record<string, CronWorkspaceResource>
   activeWorktree?: ManagedWorktree | null
   loading?: boolean
   error?: string | null
@@ -1720,9 +1782,14 @@ function ManagedWorktreesMiniPanel({
   canCreate?: boolean
   onCreate: () => void
   onAction: (worktree: ManagedWorktree, action: "archive" | "restore") => void
+  onScheduledReturn: (resource: CronWorkspaceResource, resume: boolean) => void
 }) {
   const { t } = useTranslation()
   const createBusy = actionKey === "create"
+  const actionLabel = (label: string, availability?: CronWorkspaceActionAvailability) =>
+    availability?.allowed === false
+      ? t("cron.workspaceActionBlocked", { reason: availability.reasonCode ?? "-" })
+      : label
   return (
     <div className="rounded-md border border-border/55 bg-secondary/15">
       <div className="flex min-w-0 items-center gap-2 px-2 py-1.5">
@@ -1759,6 +1826,7 @@ function ManagedWorktreesMiniPanel({
       ) : (
         <div className="max-h-48 space-y-1 overflow-y-auto border-t border-border/60 p-1.5">
           {worktrees.map((worktree) => {
+            const scheduledResource = resourcesByWorktreeId[worktree.id]
             const isActive = activeWorktree?.id === worktree.id
             const busyPrefix = actionKey?.endsWith(`:${worktree.id}`)
               ? actionKey.split(":")[0]
@@ -1791,14 +1859,58 @@ function ManagedWorktreesMiniPanel({
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
-                  {worktree.state === "archived" || !worktree.pathExists ? (
-                    <IconTip label={t("workspace.worktree.restore", "恢复")}>
+                  {worktree.purpose === "scheduled_task" ? (
+                    worktree.handoffSessionId && scheduledResource ? (
+                      [false, true].map((resume) => {
+                        const availability = resume
+                          ? scheduledResource.actions.returnAndResume
+                          : scheduledResource.actions.returnToTask
+                        const action = resume ? "resume" : "return"
+                        const label = t(
+                          resume ? "cron.workspaceActionResume" : "cron.workspaceActionReturn",
+                          resume ? "Return & resume" : "Return",
+                        )
+                        return (
+                          <IconTip key={action} label={actionLabel(label, availability)}>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              disabled={Boolean(actionKey) || !availability.allowed}
+                              onClick={() => onScheduledReturn(scheduledResource, resume)}
+                            >
+                              {busyPrefix === action ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : resume ? (
+                                <Play className="h-3 w-3" />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" />
+                              )}
+                            </Button>
+                          </IconTip>
+                        )
+                      })
+                    ) : null
+                  ) : worktree.purpose === "scheduled_run" &&
+                    !scheduledResource ? null : worktree.state === "archived" ||
+                    !worktree.pathExists ? (
+                    <IconTip
+                      label={actionLabel(
+                        t("workspace.worktree.restore", "恢复"),
+                        scheduledResource?.actions.restore,
+                      )}
+                    >
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
                         className="h-6 w-6"
-                        disabled={Boolean(actionKey)}
+                        disabled={
+                          Boolean(actionKey) ||
+                          (worktree.purpose === "scheduled_run" &&
+                            !scheduledResource?.actions.restore.allowed)
+                        }
                         onClick={() => onAction(worktree, "restore")}
                       >
                         {busyPrefix === "restore" ? (
@@ -1809,13 +1921,23 @@ function ManagedWorktreesMiniPanel({
                       </Button>
                     </IconTip>
                   ) : (
-                    <IconTip label={t("workspace.worktree.archive", "归档")}>
+                    <IconTip
+                      label={actionLabel(
+                        t("workspace.worktree.archive", "归档"),
+                        scheduledResource?.actions.archive,
+                      )}
+                    >
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
                         className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                        disabled={Boolean(actionKey) || isActive}
+                        disabled={
+                          Boolean(actionKey) ||
+                          isActive ||
+                          (worktree.purpose === "scheduled_run" &&
+                            !scheduledResource?.actions.archive.allowed)
+                        }
                         onClick={() => onAction(worktree, "archive")}
                       >
                         {busyPrefix === "archive" ? (
@@ -1869,6 +1991,9 @@ function managedWorktreePurposeLabel(
       return t("workspace.worktree.purposeSubagent", "Subagent")
     case "manual":
       return t("workspace.worktree.purposeManual", "Manual")
+    case "scheduled_run":
+    case "scheduled_task":
+      return t("chat.cronTrigger", "Scheduled Task")
   }
 }
 
@@ -22244,7 +22369,11 @@ function WorkflowAgentsTab({
                 <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                   {task ? `${task} · ` : ""}
                   {attempt ? `#${attempt} · ` : ""}
-                  {threadId ? truncateMiddle(threadId, 52) : runId ? truncateMiddle(runId, 52) : op.opKey}
+                  {threadId
+                    ? truncateMiddle(threadId, 52)
+                    : runId
+                      ? truncateMiddle(runId, 52)
+                      : op.opKey}
                   {terminalReason ? ` · ${terminalReason}` : ""}
                 </div>
               </div>
@@ -22320,6 +22449,7 @@ export default function WorkspacePanel({
   draftWorkflowMode = "off",
   onDraftWorkflowModeChange,
   onClose,
+  integrated = false,
 }: WorkspacePanelProps) {
   const { t } = useTranslation()
   const { files, sources, browser, filesTruncated, sourcesTruncated, browserTruncated } =
@@ -22414,20 +22544,24 @@ export default function WorkspacePanel({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2">
-        <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className="truncate text-sm font-medium">{t("workspace.panelTitle", "工作台")}</span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="ml-auto h-7 w-7 shrink-0"
-          onClick={onClose}
-          aria-label={t("common.close", "关闭")}
-        >
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
+      {!integrated && (
+        <div className="flex items-center gap-2 px-3 py-2">
+          <LayoutDashboard className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate text-sm font-medium">
+            {t("workspace.panelTitle", "工作台")}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="ml-auto h-7 w-7 shrink-0"
+            onClick={onClose}
+            aria-label={t("common.close", "关闭")}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {/* 上下边缘柔化淡出 —— 内容滚到边界时渐隐不硬切（mask 渐变到透明，露出面板底色）。
           Tauri = WebKit,补 `-webkit-mask-image` 兜底。 */}

@@ -7,11 +7,11 @@ use crate::agent_config::AgentConfig;
 use crate::agent_loader::DEFAULT_AGENT_ID;
 use crate::subagent::{self, SpawnParams, SubagentStatus};
 
-pub(crate) const WORKFLOW_PREALLOCATED_RUN_ID_ARG: &str = "__hope_workflow_preallocated_run_id";
-pub(crate) const WORKFLOW_SKIP_PARENT_INJECTION_ARG: &str = "__hope_workflow_skip_parent_injection";
-pub(crate) const WORKFLOW_ISOLATION_ARG: &str = "__hope_workflow_isolation";
-pub(crate) const WORKFLOW_RUN_ID_ARG: &str = "__hope_workflow_run_id";
-pub(crate) const WORKFLOW_DISPATCH_ID_ARG: &str = "__hope_workflow_dispatch_id";
+pub const WORKFLOW_PREALLOCATED_RUN_ID_ARG: &str = "__hope_workflow_preallocated_run_id";
+pub const WORKFLOW_SKIP_PARENT_INJECTION_ARG: &str = "__hope_workflow_skip_parent_injection";
+pub const WORKFLOW_ISOLATION_ARG: &str = "__hope_workflow_isolation";
+pub const WORKFLOW_RUN_ID_ARG: &str = "__hope_workflow_run_id";
+pub const WORKFLOW_DISPATCH_ID_ARG: &str = "__hope_workflow_dispatch_id";
 
 /// Model providers may materialize omitted optional string fields as `""`.
 /// Normalize those placeholders at the tool boundary so compatibility aliases
@@ -26,6 +26,52 @@ fn non_blank_str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 
 fn first_non_blank_str_arg<'a>(args: &'a Value, keys: &[&str]) -> Option<&'a str> {
     keys.iter().find_map(|key| non_blank_str_arg(args, key))
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedAgentTarget {
+    agent_id: String,
+    binding: Option<crate::prompt_context::AgentBindingRef>,
+}
+
+fn resolve_agent_target(args: &Value, ctx: &ToolExecContext) -> Result<ResolvedAgentTarget> {
+    let direct = non_blank_str_arg(args, "agent_id");
+    let Some(binding_ref) = non_blank_str_arg(args, "agent_ref") else {
+        return Ok(ResolvedAgentTarget {
+            agent_id: direct.unwrap_or(DEFAULT_AGENT_ID).to_string(),
+            binding: None,
+        });
+    };
+    if direct.is_some() {
+        return Err(anyhow::anyhow!(
+            "agent_ref and agent_id are mutually exclusive"
+        ));
+    }
+    let binding = ctx
+        .agent_binding_refs
+        .iter()
+        .find(|binding| binding.binding_ref == binding_ref)
+        .ok_or_else(|| anyhow::anyhow!("Unknown or expired agent_ref for this turn"))?;
+    if ctx.session_id.as_deref() != Some(binding.parent_session_id.as_str())
+        || ctx.turn_id.as_deref() != binding.parent_turn_id.as_deref()
+        || ctx.agent_id.as_deref() != Some(binding.principal_agent_id.as_str())
+    {
+        return Err(anyhow::anyhow!(
+            "agent_ref is not valid for this session, turn, or principal"
+        ));
+    }
+    if !crate::agent_loader::list_agents()
+        .map(|agents| agents.iter().any(|agent| agent.id == binding.agent_id))
+        .unwrap_or(false)
+    {
+        return Err(anyhow::anyhow!(
+            "The Agent selected by agent_ref is no longer available"
+        ));
+    }
+    Ok(ResolvedAgentTarget {
+        agent_id: binding.agent_id.clone(),
+        binding: Some(binding.clone()),
+    })
 }
 
 /// Authenticate internal Workflow-only arguments against execution context.
@@ -147,6 +193,13 @@ fn check_subagent_delegation_allowed(parent_agent_id: &str, child_agent_id: &str
 /// aliases `resume` and `steer`.
 pub(crate) async fn tool_subagent(args: &Value, ctx: &ToolExecContext) -> Result<String> {
     let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    if non_blank_str_arg(args, "agent_ref").is_some()
+        && !matches!(action, "spawn" | "spawn_and_wait")
+    {
+        return Err(anyhow::anyhow!(
+            "agent_ref is only valid for spawn or spawn_and_wait; batch_spawn uses tasks[].agent_ref"
+        ));
+    }
     if ctx.workflow_run_id.is_some()
         && !matches!(action, "spawn" | "send" | "resume" | "steer" | "kill")
     {
@@ -299,7 +352,10 @@ fn parse_subagent_files(args: &Value) -> Result<Vec<crate::agent::Attachment>> {
                 file_path: None,
                 upload_id: None,
                 quote_lines: None,
+                quote_revealable: None,
                 quote_role: None,
+                quote_project_root: None,
+                quote_worktree_root: None,
             },
             "utf8" => {
                 let tmp_dir = std::env::temp_dir().join("hope-agent_subagent_files");
@@ -322,7 +378,10 @@ fn parse_subagent_files(args: &Value) -> Result<Vec<crate::agent::Attachment>> {
                     file_path: Some(tmp_path.to_string_lossy().to_string()),
                     upload_id: None,
                     quote_lines: None,
+                    quote_revealable: None,
                     quote_role: None,
+                    quote_project_root: None,
+                    quote_worktree_root: None,
                 }
             }
             other => {
@@ -369,10 +428,7 @@ fn ensure_ordinary_run_owner(
         .session_id
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("No session context"))?;
-    if run.parent_session_id != parent_session_id
-        || run.owner_kind != crate::subagent::SubagentOwnerKind::ParentSession
-        || run.owner_id != parent_session_id
-    {
+    if !ordinary_run_owner_matches(run, parent_session_id) {
         return Err(anyhow::anyhow!(
             "Cannot {} sub-agent run '{}': it is not owned by this parent session",
             action,
@@ -380,6 +436,12 @@ fn ensure_ordinary_run_owner(
         ));
     }
     Ok(())
+}
+
+fn ordinary_run_owner_matches(run: &crate::subagent::SubagentRun, parent_session_id: &str) -> bool {
+    run.parent_session_id == parent_session_id
+        && run.owner_kind == crate::subagent::SubagentOwnerKind::ParentSession
+        && run.owner_id == parent_session_id
 }
 
 /// Return the native durable-work handle for a dispatched sub-agent run.
@@ -414,16 +476,36 @@ fn subagent_dispatch_handle(run: &crate::subagent::SubagentRun, dispatch_status:
     })
 }
 
+fn attach_agent_binding_receipt(
+    response: &mut Value,
+    binding: Option<&crate::prompt_context::AgentBindingRef>,
+    run_id: &str,
+) {
+    let Some(binding) = binding else {
+        return;
+    };
+    response["agentBinding"] = serde_json::json!({
+        "mentionId": binding.mention_id,
+        "bindingRef": binding.binding_ref,
+        "admission": "accepted",
+        "runId": run_id,
+    });
+}
+
+struct SpawnResolution {
+    run_id: String,
+    binding: Option<crate::prompt_context::AgentBindingRef>,
+}
+
 /// Core spawn logic shared by action_spawn and action_spawn_and_wait.
 /// Returns the run_id on success.
-async fn do_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
+async fn do_spawn(args: &Value, ctx: &ToolExecContext) -> Result<SpawnResolution> {
     let workflow_owner = authenticated_workflow_owner(args, ctx)?;
     let task = non_blank_str_arg(args, "task")
         .ok_or_else(|| anyhow::anyhow!("'task' is required for spawn action"))?;
 
-    let agent_id = non_blank_str_arg(args, "agent_id")
-        .unwrap_or(DEFAULT_AGENT_ID)
-        .to_string();
+    let target = resolve_agent_target(args, ctx)?;
+    let agent_id = target.agent_id;
 
     let model_override = non_blank_str_arg(args, "model").map(str::to_string);
 
@@ -499,9 +581,10 @@ async fn do_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
         plan_mode_allow_paths,
         lock_plan_agent_mode,
         skip_parent_injection,
-        extra_system_context: shared_read_only.then(|| {
+        run_instruction_context: shared_read_only.then(|| {
             "## Workflow Read-only Shared Workspace\nThis child shares the parent workspace for inspection only. Do not write, edit, patch, create, delete, rename, or run commands that mutate workspace or external state. Return findings to the owning Workflow; request a worktree-isolated child when mutation is required.".to_string()
         }),
+        run_data_context: None,
         skill_allowed_tools: Vec::new(),
         reasoning_effort: None,
         skill_name: None,
@@ -532,16 +615,21 @@ async fn do_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
     } else {
         subagent::spawn_subagent(params, session_db, cancel_registry).await?
     };
-    Ok(run_id)
+    Ok(SpawnResolution {
+        run_id,
+        binding: target.binding,
+    })
 }
 
 async fn action_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
-    let run_id = do_spawn(args, ctx).await?;
+    let resolution = do_spawn(args, ctx).await?;
+    let run_id = resolution.run_id;
     let session_db = get_session_db()?;
     let run = load_subagent_run(&session_db, &run_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Sub-agent run '{}' was not persisted", run_id))?;
     let mut response = subagent_dispatch_handle(&run, "spawned");
+    attach_agent_binding_receipt(&mut response, resolution.binding.as_ref(), &run_id);
     response["message"] = Value::String(
         "Sub-agent dispatched asynchronously. Its durable result will be delivered when complete; polling is not required."
             .to_string(),
@@ -610,7 +698,7 @@ async fn action_resume(args: &Value, ctx: &ToolExecContext) -> Result<String> {
         )
     {
         return Err(anyhow::anyhow!(
-            "Cannot resume sub-agent run '{}': terminal reason '{}' requires an explicit user restart",
+            "Cannot resume sub-agent run '{}': terminal reason '{}' makes the old attempt ineligible; an explicit user request requires spawning fresh replacement work",
             source_run_id,
             source
                 .terminal_reason
@@ -657,7 +745,7 @@ async fn action_resume(args: &Value, ctx: &ToolExecContext) -> Result<String> {
         plan_mode_allow_paths: Vec::new(),
         lock_plan_agent_mode: shared_read_only,
         skip_parent_injection: workflow_owner.is_some(),
-        extra_system_context: Some(if shared_read_only {
+        run_instruction_context: Some(if shared_read_only {
             format!(
                 "## Continuation\nThis turn continues terminal sub-agent run `{}` in the same read-only shared workspace. Reuse prior findings and conversation, remain strictly read-only, and do not repeat completed work unnecessarily.",
                 source_run_id
@@ -668,6 +756,7 @@ async fn action_resume(args: &Value, ctx: &ToolExecContext) -> Result<String> {
                 source_run_id
             )
         }),
+        run_data_context: None,
         skill_allowed_tools: Vec::new(),
         reasoning_effort: None,
         skill_name: None,
@@ -990,10 +1079,7 @@ async fn action_list(ctx: &ToolExecContext) -> Result<String> {
     };
     let runs: Vec<_> = runs
         .into_iter()
-        .filter(|run| {
-            run.owner_kind == crate::subagent::SubagentOwnerKind::ParentSession
-                && run.owner_id == parent_session_id
-        })
+        .filter(|run| ordinary_run_owner_matches(run, parent_session_id))
         .collect();
 
     let items: Vec<serde_json::Value> = runs
@@ -1061,7 +1147,6 @@ async fn action_kill(args: &Value, ctx: &ToolExecContext) -> Result<String> {
     let run_id = non_blank_str_arg(args, "run_id")
         .ok_or_else(|| anyhow::anyhow!("'run_id' is required for kill action"))?;
 
-    let cancel_registry = get_cancel_registry()?;
     let session_db = get_session_db()?;
 
     // Verify the run exists and is active
@@ -1090,38 +1175,65 @@ async fn action_kill(args: &Value, ctx: &ToolExecContext) -> Result<String> {
     }
 
     if run.status.is_terminal() {
-        return Ok(format!(
-            "Sub-agent run '{}' already in terminal state: {}",
-            run_id,
-            run.status.as_str()
-        ));
+        return Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "thread_id": run.thread_id,
+            "run_id": run.run_id,
+            "disposition": "already_terminal",
+            "requested": false,
+            "terminal": true,
+            "status": run.status.as_str(),
+            "final_status": run.status.as_str(),
+            "message": "The sub-agent attempt was already terminal; no cancellation was requested."
+        }))?);
     }
 
-    let cancelled = cancel_registry.cancel(run_id);
-    if cancelled {
-        Ok(format!("Kill signal sent to sub-agent run '{}'", run_id))
+    let cancel_run_id = run_id.to_string();
+    let requested =
+        crate::blocking::run_blocking(move || subagent::request_cancel_run(&cancel_run_id)).await;
+    let observed = load_subagent_run(&session_db, run_id).await?;
+    let terminal = observed
+        .as_ref()
+        .is_some_and(|current| current.status.is_terminal());
+    let status = observed.as_ref().map(|current| current.status.as_str());
+
+    if requested {
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "thread_id": run.thread_id,
+            "run_id": run.run_id,
+            "disposition": "requested",
+            "requested": true,
+            "terminal": terminal,
+            "status": status,
+            "final_status": terminal.then_some(status).flatten(),
+            "message": if terminal {
+                "Cancellation was requested and the sub-agent attempt is now terminal."
+            } else {
+                "Cancellation was requested; terminal completion has not yet been observed."
+            }
+        }))?)
+    } else if terminal {
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "thread_id": run.thread_id,
+            "run_id": run.run_id,
+            "disposition": "already_terminal",
+            "requested": false,
+            "terminal": true,
+            "status": status,
+            "final_status": status,
+            "message": "The sub-agent attempt became terminal before cancellation could be requested."
+        }))?)
     } else {
-        // Update DB directly if no cancel flag found (already cleaned up)
-        let terminal_reason = if workflow_owner.is_some() {
-            crate::subagent::SubagentTerminalReason::WorkflowCancelled
-        } else {
-            crate::subagent::SubagentTerminalReason::UserKilled
-        };
-        let db = session_db.clone();
-        let run_id_owned = run_id.to_string();
-        db.run(move |db| {
-            db.update_subagent_status_with_reason(
-                &run_id_owned,
-                SubagentStatus::Killed,
-                Some(terminal_reason),
-                None,
-                Some("Killed by parent agent"),
-                None,
-                None,
-            )
-        })
-        .await?;
-        Ok(format!("Sub-agent run '{}' marked as killed", run_id))
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "thread_id": run.thread_id,
+            "run_id": run.run_id,
+            "disposition": "refused",
+            "requested": false,
+            "terminal": false,
+            "status": status,
+            "final_status": null,
+            "reason": "cancellation_unavailable",
+            "message": "Cancellation could not be requested; the sub-agent attempt remains non-terminal."
+        }))?)
     }
 }
 
@@ -1131,82 +1243,94 @@ async fn action_kill_all(ctx: &ToolExecContext) -> Result<String> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("No session context"))?;
 
-    let cancel_registry = get_cancel_registry()?;
     let session_db = get_session_db()?;
-    let ordinary_active = {
+    let ordinary_nonterminal = {
         let db = session_db.clone();
         let parent_session_id = parent_session_id.to_string();
-        db.run(move |db| db.list_active_subagent_runs(&parent_session_id))
+        db.run(move |db| db.list_nonterminal_subagent_runs(&parent_session_id))
             .await?
     };
-    let ordinary_active = ordinary_active
+    let ordinary_nonterminal = ordinary_nonterminal
         .into_iter()
-        .filter(|run| {
-            run.owner_kind == crate::subagent::SubagentOwnerKind::ParentSession
-                && run.owner_id == parent_session_id
-        })
+        .filter(|run| ordinary_run_owner_matches(run, parent_session_id))
         .collect::<Vec<_>>();
-    let mut count = 0usize;
-    for run in ordinary_active {
-        if cancel_registry.cancel(&run.run_id) {
-            count += 1;
-            continue;
+    let mut requested_count = 0usize;
+    let mut refused_count = 0usize;
+    let mut outcomes = Vec::with_capacity(ordinary_nonterminal.len());
+    for run in ordinary_nonterminal {
+        let cancel_run_id = run.run_id.clone();
+        let requested =
+            crate::blocking::run_blocking(move || subagent::request_cancel_run(&cancel_run_id))
+                .await;
+        let observed = load_subagent_run(&session_db, &run.run_id).await?;
+        let terminal = observed
+            .as_ref()
+            .is_some_and(|current| current.status.is_terminal());
+        let status = observed.as_ref().map(|current| current.status.as_str());
+        let disposition = if requested {
+            requested_count += 1;
+            "requested"
+        } else if terminal {
+            "already_terminal"
+        } else {
+            refused_count += 1;
+            "refused"
+        };
+        outcomes.push(serde_json::json!({
+            "thread_id": run.thread_id,
+            "run_id": run.run_id,
+            "disposition": disposition,
+            "requested": requested,
+            "terminal": terminal,
+            "status": status,
+            "final_status": terminal.then_some(status).flatten(),
+        }));
+    }
+
+    let terminal_count = outcomes
+        .iter()
+        .filter(|outcome| outcome["terminal"] == true)
+        .count();
+    let pending_count = outcomes
+        .iter()
+        .filter(|outcome| outcome["requested"] == true && outcome["terminal"] == false)
+        .count();
+    let disposition = kill_all_disposition(outcomes.len(), requested_count, refused_count);
+    Ok(serde_json::to_string_pretty(&serde_json::json!({
+        "disposition": disposition,
+        "requested": requested_count > 0,
+        "terminal": pending_count == 0 && refused_count == 0,
+        "requested_count": requested_count,
+        "terminal_count": terminal_count,
+        "pending_count": pending_count,
+        "refused_count": refused_count,
+        "runs": outcomes,
+        "message": if refused_count > 0 {
+            "Cancellation could not be requested for one or more non-terminal attempts."
+        } else if pending_count > 0 {
+            "Cancellation was requested; one or more attempts have not yet reached a terminal state."
+        } else if requested_count > 0 {
+            "Cancellation was requested and all targeted attempts are now terminal."
+        } else {
+            "No controllable non-terminal ordinary sub-agent attempts remained."
         }
-        let db = session_db.clone();
-        let run_id = run.run_id;
-        db.run(move |db| {
-            db.update_subagent_status_with_reason(
-                &run_id,
-                SubagentStatus::Killed,
-                Some(crate::subagent::SubagentTerminalReason::UserKilled),
-                None,
-                Some("Killed by parent agent"),
-                None,
-                None,
-            )
-        })
-        .await?;
-        count += 1;
-    }
+    }))?)
+}
 
-    // R7.2: active lookup excludes `Queued`. A
-    // parked spawn holds no slot, so without this it would survive kill_all and
-    // then be PROMOTED by the scheduler (killing the active runs just freed a
-    // slot) — running AFTER the parent asked to kill everything. Purge only
-    // this ordinary owner, then explicitly stamp each removed row terminal.
-    let parked = subagent::queue::purge_for_owner(
-        parent_session_id,
-        crate::subagent::SubagentOwnerKind::ParentSession,
-        parent_session_id,
-    );
-    let parked_count = parked.len();
-    for run_id in parked {
-        cancel_registry.cancel(&run_id);
-        cancel_registry.remove(&run_id);
-        let db = session_db.clone();
-        db.run(move |db| {
-            db.update_subagent_status_with_reason(
-                &run_id,
-                SubagentStatus::Killed,
-                Some(crate::subagent::SubagentTerminalReason::UserKilled),
-                None,
-                Some("Killed while queued by parent agent"),
-                None,
-                None,
-            )
-        })
-        .await?;
-    }
-
-    let queued_note = if parked_count > 0 {
-        format!(" and cancelled {} queued sub-agent(s)", parked_count)
+fn kill_all_disposition(
+    target_count: usize,
+    requested_count: usize,
+    refused_count: usize,
+) -> &'static str {
+    if target_count == 0 {
+        "no_targets"
+    } else if requested_count > 0 {
+        "requested"
+    } else if refused_count > 0 {
+        "refused"
     } else {
-        String::new()
-    };
-    Ok(format!(
-        "Kill signal sent to {} active sub-agent(s){}",
-        count, queued_note
-    ))
+        "already_terminal"
+    }
 }
 
 async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<String> {
@@ -1246,6 +1370,7 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
     struct BatchTask {
         task: String,
         agent_id: String,
+        binding: Option<crate::prompt_context::AgentBindingRef>,
         label: Option<String>,
         timeout_secs: Option<u64>,
         model_override: Option<String>,
@@ -1259,9 +1384,8 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
     for task_def in tasks {
         let task = non_blank_str_arg(task_def, "task")
             .ok_or_else(|| anyhow::anyhow!("Each task in batch_spawn must have a 'task' field"))?;
-        let child_agent_id = non_blank_str_arg(task_def, "agent_id")
-            .unwrap_or(DEFAULT_AGENT_ID)
-            .to_string();
+        let target = resolve_agent_target(task_def, ctx)?;
+        let child_agent_id = target.agent_id;
         // Enforce the delegation gates per child, up front (same as `do_spawn`)
         // — `batch_spawn` must NOT be a bypass of the Tier 3 capability toggle /
         // allowed-agent list. Validated here in the pre-flight loop (before the
@@ -1284,6 +1408,7 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
         parsed.push(BatchTask {
             task: task.to_string(),
             agent_id: child_agent_id,
+            binding: target.binding,
             label: non_blank_str_arg(task_def, "label").map(str::to_string),
             timeout_secs,
             model_override: non_blank_str_arg(task_def, "model").map(str::to_string),
@@ -1321,7 +1446,8 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
             plan_mode_allow_paths: Vec::new(),
             lock_plan_agent_mode: false,
             skip_parent_injection: false,
-            extra_system_context: None,
+            run_instruction_context: None,
+            run_data_context: None,
             skill_allowed_tools: Vec::new(),
             reasoning_effort: None,
             skill_name: None,
@@ -1344,7 +1470,9 @@ async fn action_batch_spawn(args: &Value, ctx: &ToolExecContext) -> Result<Strin
             Ok(run_id) => {
                 let persisted = load_subagent_run(&session_db, &run_id).await.ok().flatten();
                 if let Some(run) = persisted.as_ref() {
-                    results.push(subagent_dispatch_handle(run, "spawned"));
+                    let mut response = subagent_dispatch_handle(run, "spawned");
+                    attach_agent_binding_receipt(&mut response, bt.binding.as_ref(), &run_id);
+                    results.push(response);
                 } else {
                     results.push(serde_json::json!({
                         "status": "error",
@@ -1560,7 +1688,8 @@ async fn action_spawn_and_wait(args: &Value, ctx: &ToolExecContext) -> Result<St
         .unwrap_or(30)
         .min(120);
 
-    let run_id = do_spawn(args, ctx).await?;
+    let resolution = do_spawn(args, ctx).await?;
+    let run_id = resolution.run_id;
 
     // Poll for completion within foreground timeout
     let session_db = get_session_db()?;
@@ -1575,6 +1704,7 @@ async fn action_spawn_and_wait(args: &Value, ctx: &ToolExecContext) -> Result<St
             // Completed within foreground timeout — return inline
             consume_subagent_result(&session_db, &run_id).await?;
             let mut response = subagent_dispatch_handle(&run, run.status.as_str());
+            attach_agent_binding_receipt(&mut response, resolution.binding.as_ref(), &run_id);
             response["mode"] = Value::String("foreground".to_string());
             response["resultDelivery"] = Value::String("inline_consumed".to_string());
             if let Some(ref result) = run.result {
@@ -1620,6 +1750,7 @@ async fn action_spawn_and_wait(args: &Value, ctx: &ToolExecContext) -> Result<St
                 )
             };
             let mut response = subagent_dispatch_handle(&run, status);
+            attach_agent_binding_receipt(&mut response, resolution.binding.as_ref(), &run_id);
             response["mode"] = Value::String("background".to_string());
             response["message"] = Value::String(message);
             return Ok(serde_json::to_string_pretty(&response)?);
@@ -1651,6 +1782,79 @@ fn get_cancel_registry() -> Result<Arc<subagent::SubagentCancelRegistry>> {
 #[cfg(test)]
 mod delegation_gate_tests {
     use super::*;
+
+    fn scoped_binding_context() -> ToolExecContext {
+        ToolExecContext {
+            session_id: Some("session-1".into()),
+            turn_id: Some("turn-1".into()),
+            agent_id: Some("parent-1".into()),
+            agent_binding_refs: vec![crate::prompt_context::AgentBindingRef {
+                binding_ref: "agent_ref_test".into(),
+                mention_id: "mention-1".into(),
+                agent_id: "child-1".into(),
+                display_alias: "Child".into(),
+                parent_session_id: "session-1".into(),
+                parent_turn_id: Some("turn-1".into()),
+                principal_agent_id: "parent-1".into(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn agent_ref_is_mutually_exclusive_with_direct_agent_id() {
+        let error = resolve_agent_target(
+            &serde_json::json!({
+                "agent_ref": "agent_ref_test",
+                "agent_id": "child-1",
+            }),
+            &scoped_binding_context(),
+        )
+        .expect_err("selectors must be mutually exclusive");
+        assert!(error.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn agent_ref_copied_to_another_turn_is_rejected_before_lookup() {
+        let mut ctx = scoped_binding_context();
+        ctx.turn_id = Some("turn-2".into());
+        let error =
+            resolve_agent_target(&serde_json::json!({ "agent_ref": "agent_ref_test" }), &ctx)
+                .expect_err("copied references must be inert");
+        assert!(error.to_string().contains("session, turn, or principal"));
+    }
+
+    #[test]
+    fn ordinary_owner_scope_excludes_shared_workflow_team_and_internal_children() {
+        let ordinary = crate::subagent::SubagentRun {
+            parent_session_id: "parent".into(),
+            owner_kind: crate::subagent::SubagentOwnerKind::ParentSession,
+            owner_id: "parent".into(),
+            ..Default::default()
+        };
+        assert!(ordinary_run_owner_matches(&ordinary, "parent"));
+        assert!(!ordinary_run_owner_matches(&ordinary, "other"));
+
+        for owner_kind in [
+            crate::subagent::SubagentOwnerKind::Workflow,
+            crate::subagent::SubagentOwnerKind::Team,
+            crate::subagent::SubagentOwnerKind::Internal,
+        ] {
+            let scoped = crate::subagent::SubagentRun {
+                owner_kind,
+                ..ordinary.clone()
+            };
+            assert!(!ordinary_run_owner_matches(&scoped, "parent"));
+        }
+    }
+
+    #[test]
+    fn kill_all_empty_scope_reports_no_targets_not_already_terminal() {
+        assert_eq!(kill_all_disposition(0, 0, 0), "no_targets");
+        assert_eq!(kill_all_disposition(1, 0, 0), "already_terminal");
+        assert_eq!(kill_all_disposition(1, 1, 0), "requested");
+        assert_eq!(kill_all_disposition(1, 0, 1), "refused");
+    }
 
     #[test]
     fn blank_provider_placeholders_do_not_override_send_target_or_aliases() {

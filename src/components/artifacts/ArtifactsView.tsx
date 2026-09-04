@@ -26,12 +26,14 @@ import {
 import { toast } from "sonner"
 
 import type { ArtifactExportFormat, ArtifactRecord, ArtifactVersionSummary } from "@/lib/transport"
+import type { PendingFileQuote } from "@/types/chat"
 import { downloadBlob } from "@/lib/fileDownload"
 import { getTransport } from "@/lib/transport-provider"
 import { cn } from "@/lib/utils"
 import { useDragWidth } from "@/hooks/useDragWidth"
 import { useFullscreenTransition } from "@/hooks/useFullscreenTransition"
 import { Button } from "@/components/ui/button"
+import { ResizeHandleGlow } from "@/components/ui/resize-handle-glow"
 import { SearchInput } from "@/components/ui/search-input"
 import { IconTip } from "@/components/ui/tooltip"
 import {
@@ -41,7 +43,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import ArtifactViewer from "./ArtifactViewer"
+import ArtifactViewer, { type ArtifactTextSelection } from "./ArtifactViewer"
 import { useFileResource } from "@/components/chat/files/useFileResource"
 import type { FileTarget } from "@/components/chat/files/types"
 import { FileContextMenu } from "@/components/chat/files/FileActionMenu"
@@ -49,6 +51,8 @@ import { FileContextMenu } from "@/components/chat/files/FileActionMenu"
 interface ArtifactsViewProps {
   /** 顶层侧边栏当前是否正在展示产物空间；组件本身会跨视图常驻。 */
   isViewVisible: boolean
+  /** Stage a selected Artifact excerpt in the currently active main-chat draft. */
+  onAddQuoteToChat?: (quote: PendingFileQuote) => void
 }
 
 const PAGE_SIZE = 30
@@ -244,7 +248,7 @@ function ArtifactListRow({
   )
 }
 
-export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
+export default function ArtifactsView({ isViewVisible, onAddQuoteToChat }: ArtifactsViewProps) {
   const { t } = useTranslation()
   const enumLabel = (value: string | null | undefined): string => {
     const normalized = value?.trim().toLowerCase() || "unknown"
@@ -299,8 +303,6 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
   const [viewerMaximized, setViewerMaximized] = useState(false)
   const [isResizingList, setIsResizingList] = useState(false)
   const [isResizingDetails, setIsResizingDetails] = useState(false)
-  const [isListResizeHandleHovered, setIsListResizeHandleHovered] = useState(false)
-  const [isDetailsResizeHandleHovered, setIsDetailsResizeHandleHovered] = useState(false)
   const selectedIdRef = useRef<string | null>(selectedId)
   const {
     ref: viewerMainRef,
@@ -316,6 +318,21 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
     selectedIdRef.current = artifactId
     setSelectedId(artifactId)
   }, [])
+
+  const quoteArtifactSelection = useCallback(
+    (selection: ArtifactTextSelection) => {
+      if (!selected || !onAddQuoteToChat) return
+      onAddQuoteToChat({
+        path: `artifact:${selected.id}@v${selected.currentVersion}`,
+        name: selected.title,
+        startLine: 0,
+        endLine: 0,
+        content: selection.text,
+        revealable: false,
+      })
+    },
+    [onAddQuoteToChat, selected],
+  )
 
   const clearSelectedArtifact = useCallback(() => {
     selectedIdRef.current = null
@@ -635,12 +652,7 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
               aria-hidden={listCollapsed}
               inert={listCollapsed ? true : undefined}
               className={cn(
-                "flex h-full flex-col border-r",
-                isResizingList
-                  ? "border-r-primary/50"
-                  : isListResizeHandleHovered
-                    ? "border-r-primary/35"
-                    : "border-r-border-soft",
+                "flex h-full flex-col border-r border-r-border-soft",
                 LIST_SURFACE_TRANSITION,
                 listCollapsed
                   ? "pointer-events-none -translate-x-4 opacity-0"
@@ -754,16 +766,16 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
           </div>
           <div
             className={cn(
-              "absolute inset-y-0 right-0 z-20 translate-x-full cursor-col-resize",
+              "group absolute inset-y-0 right-0 z-20 translate-x-full cursor-col-resize",
               listCollapsed ? "w-0 pointer-events-none opacity-0" : "w-3 opacity-100",
             )}
             onMouseDown={onDragList}
-            onMouseEnter={() => setIsListResizeHandleHovered(true)}
-            onMouseLeave={() => setIsListResizeHandleHovered(false)}
             role="separator"
             aria-orientation="vertical"
             aria-label={t("artifacts.resizeList", "Resize artifact list")}
-          />
+          >
+            <ResizeHandleGlow active={isResizingList} className="inset-y-0 left-0 w-px" />
+          </div>
         </div>
 
         {!selected ? (
@@ -935,6 +947,7 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
                   projectPath={selected.projectPath}
                   title={selected.title}
                   refreshKey={refreshKey}
+                  onQuoteSelection={onAddQuoteToChat ? quoteArtifactSelection : undefined}
                 />
               </div>
               <div
@@ -950,12 +963,7 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
                     aria-hidden={detailsHidden}
                     inert={detailsHidden ? true : undefined}
                     className={cn(
-                      "h-full min-h-0 overflow-y-auto border-l p-3",
-                      isResizingDetails
-                        ? "border-l-primary/50"
-                        : isDetailsResizeHandleHovered
-                          ? "border-l-primary/35"
-                          : "border-l-border-soft",
+                      "h-full min-h-0 overflow-y-auto border-l border-l-border-soft p-3",
                       LIST_SURFACE_TRANSITION,
                       detailsHidden
                         ? "pointer-events-none translate-x-4 opacity-0"
@@ -1090,16 +1098,16 @@ export default function ArtifactsView({ isViewVisible }: ArtifactsViewProps) {
                 </div>
                 <div
                   className={cn(
-                    "absolute inset-y-0 left-0 z-20 cursor-col-resize transition-[width,opacity] duration-200 ease-out",
+                    "group absolute inset-y-0 left-0 z-20 cursor-col-resize transition-[width,opacity] duration-200 ease-out",
                     detailsHidden ? "w-0 pointer-events-none opacity-0" : "w-3 opacity-100",
                   )}
                   onMouseDown={onDragDetails}
-                  onMouseEnter={() => setIsDetailsResizeHandleHovered(true)}
-                  onMouseLeave={() => setIsDetailsResizeHandleHovered(false)}
                   role="separator"
                   aria-orientation="vertical"
                   aria-label={t("artifacts.resizeDetails", "Resize properties panel")}
-                />
+                >
+                  <ResizeHandleGlow active={isResizingDetails} className="inset-y-0 left-0 w-px" />
+                </div>
               </div>
             </div>
           </main>

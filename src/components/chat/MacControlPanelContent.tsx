@@ -16,6 +16,7 @@ export interface MacControlPanelContentProps {
   active?: boolean
   onClose: () => void
   onFloat?: () => void
+  integrated?: boolean
 }
 
 /** Single source of truth for the mac control panel UI (docked + floating). */
@@ -25,9 +26,11 @@ export function MacControlPanelContent({
   active = true,
   onClose,
   onFloat,
+  integrated = false,
 }: MacControlPanelContentProps) {
   const { t } = useTranslation()
   const { frame, error, refresh, setDisplayId, displayId } = useMacControlFrame({
+    sessionId,
     pollKey: variant,
     pollActive: active,
   })
@@ -66,6 +69,7 @@ export function MacControlPanelContent({
         onFloat={onFloat}
         onRefresh={() => void refresh()}
         onClose={onClose}
+        showFrameControls={!integrated}
       />
       {preview}
       <MacQuickBar

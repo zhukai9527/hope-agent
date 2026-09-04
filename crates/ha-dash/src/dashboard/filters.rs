@@ -1,0 +1,214 @@
+// ── Filter helpers ──────────────────────────────────────────────
+
+use super::types::DashboardFilter;
+use rusqlite::types::ToSql;
+
+pub(super) struct FilterClause {
+    pub where_sql: String,
+    pub params: Vec<Box<dyn ToSql>>,
+}
+
+/// Message rows copied into a side chat are context snapshots, not fresh
+/// activity. All Dashboard queries that consume `messages` must apply this
+/// predicate; side-chat messages created after the snapshot retain the default
+/// `0` value and remain visible in analytics.
+pub(super) fn dashboard_message_scope(message_alias: &str) -> String {
+    format!("{}.is_side_snapshot = 0", message_alias)
+}
+
+/// Build WHERE clause fragments for session-based queries.
+/// `session_alias` is the table alias for sessions (e.g. "s").
+/// `message_alias` is the optional table alias for messages (e.g. "m"), used when
+/// the query joins messages and we need to filter on message timestamp.
+pub(super) fn build_session_filter(
+    filter: &DashboardFilter,
+    session_alias: &str,
+    message_alias: Option<&str>,
+) -> FilterClause {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+
+    // Exclude cron sessions and sub-agent sessions from dashboard stats
+    clauses.push(format!("{}.is_cron = 0", session_alias));
+    clauses.push(format!("{}.parent_session_id IS NULL", session_alias));
+    // Incognito sessions never surface in Dashboard stats — by definition
+    // they leave no audit trail.
+    clauses.push(format!("{}.incognito = 0", session_alias));
+
+    if let Some(message_alias) = message_alias {
+        clauses.push(dashboard_message_scope(message_alias));
+    }
+
+    if let Some(ref start) = filter.start_date {
+        if !start.is_empty() {
+            let ts_col = if let Some(ma) = message_alias {
+                format!("{}.timestamp", ma)
+            } else {
+                format!("{}.created_at", session_alias)
+            };
+            clauses.push(format!("{} >= ?", ts_col));
+            params.push(Box::new(start.clone()));
+        }
+    }
+
+    if let Some(ref end) = filter.end_date {
+        if !end.is_empty() {
+            let ts_col = if let Some(ma) = message_alias {
+                format!("{}.timestamp", ma)
+            } else {
+                format!("{}.created_at", session_alias)
+            };
+            clauses.push(format!("{} <= ?", ts_col));
+            params.push(Box::new(end.clone()));
+        }
+    }
+
+    if let Some(ref agent_id) = filter.agent_id {
+        if !agent_id.is_empty() {
+            clauses.push(format!("{}.agent_id = ?", session_alias));
+            params.push(Box::new(agent_id.clone()));
+        }
+    }
+
+    if let Some(ref provider_id) = filter.provider_id {
+        if !provider_id.is_empty() {
+            clauses.push(format!("{}.provider_id = ?", session_alias));
+            params.push(Box::new(provider_id.clone()));
+        }
+    }
+
+    if let Some(ref model_id) = filter.model_id {
+        if !model_id.is_empty() {
+            clauses.push(format!("{}.model_id = ?", session_alias));
+            params.push(Box::new(model_id.clone()));
+        }
+    }
+
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
+
+    FilterClause { where_sql, params }
+}
+
+/// Build WHERE clause for the unified model usage ledger.
+pub(super) fn build_model_usage_filter(
+    filter: &DashboardFilter,
+    usage_alias: &str,
+) -> FilterClause {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+
+    if let Some(ref start) = filter.start_date {
+        if !start.is_empty() {
+            clauses.push(format!("{}.timestamp >= ?", usage_alias));
+            params.push(Box::new(start.clone()));
+        }
+    }
+
+    if let Some(ref end) = filter.end_date {
+        if !end.is_empty() {
+            clauses.push(format!("{}.timestamp <= ?", usage_alias));
+            params.push(Box::new(end.clone()));
+        }
+    }
+
+    if let Some(ref agent_id) = filter.agent_id {
+        if !agent_id.is_empty() {
+            clauses.push(format!("{}.agent_id = ?", usage_alias));
+            params.push(Box::new(agent_id.clone()));
+        }
+    }
+
+    if let Some(ref provider_id) = filter.provider_id {
+        if !provider_id.is_empty() {
+            clauses.push(format!("{}.provider_id = ?", usage_alias));
+            params.push(Box::new(provider_id.clone()));
+        }
+    }
+
+    if let Some(ref model_id) = filter.model_id {
+        if !model_id.is_empty() {
+            clauses.push(format!("{}.model_id = ?", usage_alias));
+            params.push(Box::new(model_id.clone()));
+        }
+    }
+
+    if let Some(ref usage_kind) = filter.usage_kind {
+        if !usage_kind.is_empty() {
+            clauses.push(format!("{}.kind = ?", usage_alias));
+            params.push(Box::new(usage_kind.clone()));
+        }
+    }
+
+    if let Some(ref operation) = filter.operation {
+        if !operation.is_empty() {
+            clauses.push(format!("{}.operation = ?", usage_alias));
+            params.push(Box::new(operation.clone()));
+        }
+    }
+
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
+
+    FilterClause { where_sql, params }
+}
+
+/// Build WHERE clause for log-based queries (logs table).
+pub(super) fn build_log_filter(filter: &DashboardFilter) -> FilterClause {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+
+    if let Some(ref start) = filter.start_date {
+        if !start.is_empty() {
+            clauses.push("timestamp >= ?".to_string());
+            params.push(Box::new(start.clone()));
+        }
+    }
+
+    if let Some(ref end) = filter.end_date {
+        if !end.is_empty() {
+            clauses.push("timestamp <= ?".to_string());
+            params.push(Box::new(end.clone()));
+        }
+    }
+
+    if let Some(ref agent_id) = filter.agent_id {
+        if !agent_id.is_empty() {
+            clauses.push("agent_id = ?".to_string());
+            params.push(Box::new(agent_id.clone()));
+        }
+    }
+
+    let where_sql = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    };
+
+    FilterClause { where_sql, params }
+}
+
+pub(super) fn params_ref(params: &[Box<dyn ToSql>]) -> Vec<&dyn ToSql> {
+    params.iter().map(|p| p.as_ref()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_filters_exclude_side_snapshot_rows_only_for_message_queries() {
+        let filter = DashboardFilter::default();
+        let message_clause = build_session_filter(&filter, "s", Some("m"));
+        assert!(message_clause.where_sql.contains("m.is_side_snapshot = 0"));
+
+        let session_clause = build_session_filter(&filter, "s", None);
+        assert!(!session_clause.where_sql.contains("is_side_snapshot"));
+    }
+}

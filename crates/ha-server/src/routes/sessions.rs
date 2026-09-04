@@ -34,6 +34,8 @@ pub struct ListSessionsQuery {
     pub unassigned: Option<bool>,
     /// `true` selects sub-agent child sessions; `false` selects top-level sessions.
     pub parent_session: Option<bool>,
+    /// `true` selects pinned sessions; `false` selects unpinned sessions.
+    pub pinned: Option<bool>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
     /// Currently-open session id; allowed to appear in results even if it is
@@ -686,6 +688,32 @@ pub async fn fork_session(
     Ok(Json(result))
 }
 
+/// `POST /api/sessions/:id/side-chats` — snapshot settled context into a
+/// parent-scoped side conversation without changing the main session.
+pub async fn create_side_chat(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+) -> Result<Json<ha_core::session::SessionMeta>, AppError> {
+    let session = ctx
+        .session_db
+        .run(move |db| db.create_side_chat(&id))
+        .await?;
+    Ok(Json(session))
+}
+
+/// `GET /api/sessions/:id/side-chats` — list only side conversations owned by
+/// this source session.
+pub async fn list_side_chats(
+    State(ctx): State<Arc<AppContext>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<ha_core::session::SessionMeta>>, AppError> {
+    let sessions = ctx
+        .session_db
+        .run(move |db| db.list_side_chats(&id))
+        .await?;
+    Ok(Json(sessions))
+}
+
 /// `GET /api/sessions` — list sessions with optional filtering and pagination.
 pub async fn list_sessions(
     State(ctx): State<Arc<AppContext>>,
@@ -699,6 +727,7 @@ pub async fn list_sessions(
         let project_id = q.project_id.clone();
         let agent_id = q.agent_id.clone();
         let parent_session = q.parent_session;
+        let pinned = q.pinned;
         let limit = q.limit;
         let offset = q.offset;
         let active_session_id = q.active_session_id.clone();
@@ -716,6 +745,11 @@ pub async fn list_sessions(
                     Some(false) => ha_core::session::ParentSessionFilter::Root,
                     None => ha_core::session::ParentSessionFilter::All,
                 };
+                let pinned_filter = match pinned {
+                    Some(true) => ha_core::session::PinnedSessionFilter::Pinned,
+                    Some(false) => ha_core::session::PinnedSessionFilter::Unpinned,
+                    None => ha_core::session::PinnedSessionFilter::All,
+                };
                 db.list_sessions_paged_for_sidebar(
                     agent_id.as_deref(),
                     project_filter,
@@ -723,6 +757,7 @@ pub async fn list_sessions(
                     limit,
                     offset,
                     active_session_id.as_deref(),
+                    pinned_filter,
                 )
             })
             .await?
@@ -793,7 +828,7 @@ pub async fn delete_session(
     let cron_db = crate::routes::helpers::cron_db()?.clone();
     let session_db = ctx.session_db.clone();
     ha_core::blocking::run_blocking(move || {
-        ha_core::cron::delete_conversation_and_run_logs(&cron_db, &session_db, &id)
+        ha_cron::cron::delete_conversation_and_run_logs(&cron_db, &session_db, &id)
     })
     .await?;
     Ok(Json(json!({ "deleted": true })))
@@ -1552,11 +1587,10 @@ pub async fn mark_all_sessions_read(
 
 /// `POST /api/sessions/:id/compact` — manual context compaction.
 ///
-/// In the Tauri desktop shell this runs against the live in-memory agent.
-/// The HTTP server is stateless (each `POST /api/chat` spins up a fresh
-/// agent), so there is no persistent conversation to compact here. Returns
-/// a zero-result so the settings UI can still display a value. The response
-/// uses camelCase to match `ha_core::context_compact::CompactResult`'s
+/// The HTTP shell rebuilds an agent from the session's durable canonical
+/// context, runs the same persisted manual-compaction path as the desktop
+/// shell, and returns the committed result. The response uses camelCase to
+/// match `ha_core::context_compact::CompactResult`'s
 /// `#[serde(rename_all = "camelCase")]`.
 pub async fn compact_context_now(
     State(ctx): State<Arc<AppContext>>,
@@ -1812,7 +1846,10 @@ mod tests {
                 file_path: Some(saved),
                 upload_id: None,
                 quote_lines: None,
+                quote_revealable: None,
                 quote_role: None,
+                quote_project_root: None,
+                quote_worktree_root: None,
             }];
             let meta = ha_core::attachments::persist_chat_user_attachments_meta(
                 session_id,
@@ -1896,6 +1933,7 @@ mod tests {
                     url: None,
                     origin: "user_attachment".to_string(),
                     name: Some("report.pdf".to_string()),
+                    title: None,
                     mime_type: Some("application/pdf".to_string()),
                     size_bytes: Some(6),
                     attachment_kind: Some("file".to_string()),
@@ -1903,6 +1941,11 @@ mod tests {
                     quote_path: None,
                     quote_lines: None,
                     quote_content: None,
+                    retrieved_at: None,
+                    fetch_mode: None,
+                    cache_hit: None,
+                    truncated: None,
+                    warnings: None,
                 }],
                 browser: Vec::new(),
                 files_truncated: false,

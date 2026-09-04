@@ -190,14 +190,6 @@
     "labelPlaceholder": "Nhãn (vd. Key Org A)",
     "title": "Hồ sơ luân phiên API Key"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "Cần trả lời",
-      "detail": "{{count}} câu hỏi đang chờ trong cuộc trò chuyện",
-      "detail_one": "Một câu hỏi đang chờ trong cuộc trò chuyện",
-      "openAction": "Trả lời ngay"
-    }
-  },
   "canvas": {
     "close": "Đóng",
     "export": "Xuất",
@@ -318,6 +310,16 @@
     "removeConfig": "Xóa",
     "running": "Đang chạy",
     "selectChannel": "Chọn kênh",
+    "nativeReply": "Phản hồi phát trực tiếp gốc",
+    "nativeReplyHint": "Dùng luồng phản hồi gốc của nền tảng. Khi tắt, hệ thống lập tức quay về tin nhắn thông thường.",
+    "imsgProtocolV1": "Giao thức imsg tin cậy",
+    "imsgProtocolV1Hint": "Thương lượng giao thức v1, khôi phục tràn watch và giám sát khởi động lại tiến trình con. Tắt để dùng RPC cũ.",
+    "googleChatStandardMarkdown": "Markdown tiêu chuẩn",
+    "googleChatStandardMarkdownHint": "Dùng Markdown tiêu chuẩn của Google Chat cho tin nhắn văn bản mới. Tắt để dùng cú pháp Chat cũ.",
+    "discordChannelObfuscation": "Thử làm mờ kênh riêng tư",
+    "discordChannelObfuscationHint": "Cho tài khoản này tham gia hành vi Gateway tạm thời của Discord. Kênh ẩn không bao giờ được chọn hoặc xử lý.",
+    "discordFileRequests": "Yêu cầu tệp gốc của Discord",
+    "discordFileRequestsHint": "Cho phép câu hỏi có cấu trúc mở cửa sổ tải lên một tệp. Máy chủ vẫn xác thực lại loại, kích thước và liên kết cuộc trò chuyện.",
     "showThinking": "Hiển thị quá trình suy luận trong tin nhắn IM",
     "showThinkingHint": "Khi bật, lập luận của mô hình hiển thị dưới dạng khối trích dẫn trước câu trả lời của mỗi vòng. Mặc định tắt.",
     "signalAccount": "Số điện thoại",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark (Quốc tế)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "Đã gửi tin nhắn đến “{{title}}”",
+      "receivedFrom": "Được gửi từ cuộc trò chuyện “{{title}}”",
+      "untitled": "Cuộc trò chuyện chưa đặt tên",
+      "details": "Xem chi tiết tin nhắn"
+    },
     "addWorkingDirectory": "Thêm thư mục làm việc",
     "askAnything": "Hãy cho tôi biết ý tưởng của bạn, @ tìm tệp/ghi chú/kỹ năng, # nhập nhanh, / lệnh nhanh...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "Tiếp tục trong phiên mới",
       "continuedFrom": "Tiếp nối từ",
       "created": "Đã tiếp tục trong phiên mới",
+      "createdButNotOpened": "Đã tạo nhánh `{{id}}` nhưng không thể mở. Hãy chọn nhánh đó trong danh sách phiên để tiếp tục.",
       "failed": "Không thể tiếp tục trong phiên mới",
       "sourceFallback": "phiên gốc"
+    },
+    "sideChat": {
+      "label": "Trò chuyện bên",
+      "untitled": "Trò chuyện bên {{index}}",
+      "new": "Trò chuyện bên mới",
+      "close": "Đóng bảng trò chuyện bên",
+      "nonBlocking": "Hỏi riêng mà không làm gián đoạn cuộc trò chuyện chính",
+      "askSelection": "Hỏi trong trò chuyện bên",
+      "createFailed": "Không thể tạo trò chuyện bên"
     },
     "browserPanel": {
       "backendBadgeTooltip": "Phụ trợ trình duyệt: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "Đang nén ngữ cảnh trước đó",
     "contextCompactedMsgs": "{{count}} tin cũ",
     "contextCompactionFailedTitle": "Tạm dừng nén ngữ cảnh",
+    "contextCompactionRetry": "Thử nén lại",
     "contextCompaction": {
       "preparing": "Đang nén ngữ cảnh trước đó",
       "summarizing": "Đang tạo tóm tắt phiên",
@@ -553,6 +572,7 @@
       "noMatches": "Không có mục nhập nhanh phù hợp"
     },
     "cronTaskStarted": "Một tác vụ định kỳ đã được kích hoạt",
+    "scheduledOrigin": "Tác vụ đã lên lịch: {{name}}",
     "cronTrigger": "Tác vụ định kỳ",
     "loopTriggered": "Đã kích hoạt một bước vòng lặp",
     "loopTrigger": "Vòng lặp",
@@ -651,6 +671,7 @@
     "markAllRead": "Đánh dấu tất cả là đã đọc",
     "markAsRead": "Đánh dấu là đã đọc",
     "pinSession": "Ghim",
+    "pinnedSessions": "Đã ghim",
     "unpinSession": "Bỏ ghim",
     "minutesAgo": "{{count}} phút trước",
     "modelsCount": "{{count}} mô hình",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "Môi trường cách ly",
       "off": {
-        "desc": "Tự động chọn máy chủ, WSL hoặc môi trường cách ly.",
-        "label": "Tự động"
+        "desc": "Chạy trên máy chủ; hành vi phê duyệt không thay đổi.",
+        "label": "Tắt môi trường cách ly"
       },
       "setupTitle": "Thiết lập Docker để bật môi trường cách ly",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "Xác thực thất bại",
     "reasonBilling": "Thanh toán / hạn mức vượt quá",
     "reasonContextOverflow": "Ngữ cảnh vượt giới hạn",
+    "reasonDispatchUnknown": "Không rõ kết quả gửi — không tự động thử lại",
     "reasonModelNotFound": "Không tìm thấy mô hình",
     "reasonOverloaded": "Dịch vụ quá tải",
     "reasonRateLimit": "Vượt giới hạn tần suất",
@@ -899,6 +921,7 @@
     "statusThinking": "Suy nghĩ",
     "statusUpdated": "Cập nhật",
     "stopReply": "Dừng trả lời",
+    "continuePausedWork": "Tiếp tục công việc đã tạm dừng",
     "stopGenerationDone": "Đã dừng tạo",
     "subagentFrom": "Được ủy quyền bởi {{agent}}",
     "subagentResultCompleted": "Đã hoàn tất",
@@ -923,6 +946,7 @@
     "thinking": "Đang suy nghĩ...",
     "thinkingAutoDisabled": "{{provider}}/{{model}} không hỗ trợ chế độ tư duy hiện tại. Suy nghĩ đã tự động bị vô hiệu hóa và yêu cầu đã được thử lại.",
     "visionAutoDisabled": "{{provider}} / {{model}} không hỗ trợ đầu vào hình ảnh. Đã bỏ qua hình ảnh và tiếp tục trả lời.",
+    "visionBridgeConfigureAction": "Cấu hình cầu nối thị giác",
     "toolCalling": "Đang gọi công cụ...",
     "totalTokens": "Tổng",
     "unknownProvider": "Nhà cung cấp không xác định",
@@ -983,6 +1007,9 @@
       "failed": "Không thể xuất cuộc trò chuyện.",
       "untitled": "Không có tiêu đề"
     },
+    "capabilityMention": {
+      "heading": "Plugin và trình kết nối"
+    },
     "skillMention": {
       "heading": "Kỹ năng",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Cần có tiện ích mở rộng của Chrome"
     },
     "conversationEmpty": "Không có tin nhắn trong cuộc trò chuyện này",
-    "pendingCancelForceInsert": "Hủy chèn vòng này",
+    "pendingCancelForceInsert": "Chuyển sang gửi sau phản hồi",
     "pendingSaving": "Đang lưu",
     "pendingSavingTip": "Đang lưu tin nhắn và tệp đính kèm vào hàng đợi có thể khôi phục.",
     "pendingInserting": "Đang chèn",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "Gửi ngay",
     "pendingFallbackAfterReply": "Gửi sau khi trả lời",
     "pendingFallbackAfterReplyTip": "Chưa gặp điểm hoàn thành công cụ và sẽ được gửi sau khi phản hồi hiện tại kết thúc.",
-    "pendingForceInsertTip": "Nó sẽ đợi cho đến khi công cụ đang được thực thi hoàn tất rồi chèn nó vào mô hình mà không làm gián đoạn công cụ hiện tại.",
+    "pendingForceInsertTip": "Chèn vào mô hình sau khi tất cả công cụ đang chạy trong đợt này hoàn tất, không làm gián đoạn các công cụ đó; nếu lượt này không còn đạt đến ranh giới công cụ nào, tin nhắn sẽ được gửi sau phản hồi.",
+    "pendingInsert": "Chèn",
     "pendingInserted": "chèn vào",
     "pendingInsertedTip": "Nó đã được chèn vào mô hình sau khi hoàn thành vòng công cụ này.",
-    "pendingQueuedShort": "Xếp hàng",
+    "pendingHeldAfterStop": "Đã tạm dừng gửi",
+    "pendingHeldAfterStopTip": "Phản hồi hiện tại đã bị dừng nên tin nhắn này sẽ không được gửi tự động.",
+    "pendingMoreActions": "Thao tác khác với tin nhắn",
+    "pendingQueuedShort": "Gửi sau phản hồi",
     "pendingQueuedTip": "Nó đã được thêm vào hàng đợi và sẽ được gửi sau khi trả lời hiện tại kết thúc.",
     "pendingQueueTitle": "Sẽ được gửi",
-    "pendingWaitingToolBoundary": "Chờ điểm hoàn thành công cụ",
-    "pendingWaitingToolBoundaryTip": "Đợi lệnh gọi công cụ mới nhất hoàn tất; nếu công cụ này không còn được gọi ở vòng này nữa, nó sẽ được gửi sau khi phản hồi hoàn tất.",
+    "pendingWaitingToolBoundary": "Đang chờ chèn",
+    "pendingWaitingToolBoundaryTip": "Đang chờ tất cả công cụ chạy trong đợt này hoàn tất trước khi chèn; nếu lượt này không còn đạt đến ranh giới công cụ nào, tin nhắn sẽ được gửi sau phản hồi.",
     "processNotification": "quá trình kết thúc",
     "rightPanel": {
       "collapse": "Thu gọn bảng bên phải",
       "expand": "Mở rộng bảng bên phải",
       "switch": "Chuyển bảng bên phải",
       "dock": "Thanh panel bên phải",
-      "openPanel": "Mở {{panel}}",
-      "switchToPanel": "Chuyển sang {{panel}}",
-      "collapsePanel": "Thu gọn {{panel}}",
-      "expandPanel": "Mở rộng {{panel}}",
+      "resize": "Điều chỉnh chiều rộng bàn làm việc",
       "workflowActiveCount": "{{count}} quy trình đang hoạt động",
       "workflowAttentionCount": "{{count}} quy trình cần chú ý",
       "backgroundRunningCount": "{{count}} tác vụ nền đang chạy",
-      "subagentRunningCount": "{{count}} tác nhân phụ đang chạy"
+      "subagentRunningCount": "{{count}} tác nhân phụ đang chạy",
+      "openPanel": "Mở {{panel}}",
+      "switchToPanel": "Chuyển sang {{panel}}",
+      "collapsePanel": "Thu gọn {{panel}}",
+      "expandPanel": "Mở rộng {{panel}}"
     },
     "visionBridgeEngaged": "Mô hình chính không xem được hình ảnh, nên {{model}} đã mô tả chúng thay cho nó.",
     "visionBridgeUnavailable": "Mô hình thị giác không mô tả được hình ảnh, nên hình ảnh đã bị bỏ qua.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "Thêm đích",
     "agent": "Agent",
     "archivedProject": "(đã lưu trữ)",
+    "workspaceModePersistent": "Cây làm việc chuyên dụng",
+    "workspaceCleanup": "Sau mỗi lần chạy",
+    "workspaceCleanupOption": {
+      "retain": "Giữ lại",
+      "discardIfClean": "Xóa nếu không có thay đổi",
+      "always": "Luôn xóa"
+    },
+    "workspaceCleanupHint": {
+      "retain": "Worktree của mỗi lần chạy được giữ lại cho tới khi bạn lưu trữ hoặc xóa nó.",
+      "discardIfClean": "Chỉ xóa khi lần chạy không để lại thay đổi và không có commit mới — không bao giờ mất thứ bạn còn cần.",
+      "always": "Xóa sau mỗi lần chạy, kể cả các thay đổi chưa commit. Chỉ dùng khi kết quả thật sự được gửi đi nơi khác."
+    },
+    "workspaceModeHint": "Dự án dùng thư mục của nó; Mới tạo một cây cho mỗi lần chạy; Chuyên dụng tái sử dụng một cây cho mỗi tác vụ. Nhánh cơ sở áp dụng cho cây làm việc.",
+    "workspaceActionBlocked": "Không khả dụng: {{reason}}",
+    "workspaceActionReturn": "Trả lại",
+    "workspaceActionResume": "Trả lại và tiếp tục",
+    "workspaceActionDone": "Đã hoàn tất {{action}}",
     "atGrace": "Bù trễ (giây)",
     "atGraceHint": "Cửa sổ chạy bù: một tác vụ một lần đến hạn khi ứng dụng đang đóng vẫn chạy nếu trễ không quá số giây này; quá thì bị đánh dấu là bỏ lỡ (0 = nghiêm ngặt, không chạy bù).",
     "atMinute": "Tại phút",
     "atTime": "Lúc",
     "autoAgent": "Tự động (dự án/mặc định)",
+    "cancelRunFailed": "Không thể dừng lần chạy này",
     "completed": "Đã hoàn thành",
     "conversationEmpty": "Không có tin nhắn trong hội thoại này",
     "conversationsSelectHint": "Chọn một lần chạy để xem",
@@ -1463,7 +1513,7 @@
     "cronHelp": "Định dạng: giây phút giờ ngày tháng thứ (ví dụ 0 0 9 * * 1-5 = ngày trong tuần 9 sáng)",
     "dateTime": "Ngày & giờ",
     "daySuffix": "",
-    "deleteConfirmDesc": "Thao tác này sẽ xóa vĩnh viễn tác vụ đã lên lịch và lịch sử chạy của nó.",
+    "deleteConfirmDesc": "Việc xóa chỉ dừng lịch chạy trong tương lai. Lịch sử chạy, cuộc trò chuyện và cây làm việc sẽ được giữ lại.",
     "deleteConfirmTitle": "Xóa \"{{name}}\"?",
     "deleteFailed": "Không thể xóa \"{{name}}\"",
     "deleteSuccess": "Đã xóa \"{{name}}\"",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "Mỗi tháng vào ngày",
     "failures": "Thất bại",
     "filterAll": "Tất cả",
+    "filterAttention": "Cần xử lý",
+    "schedulerPrimary": "Bộ lập lịch: tiến trình chính",
+    "schedulerSecondary": "Bộ lập lịch: tiến trình phụ (không chạy được tác vụ)",
+    "schedulerRunning": "Đang chạy {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "Tự động tắt sau {{failures}}/{{max}} lần thất bại liên tiếp",
+      "runFailed": "Lần chạy gần nhất thất bại",
+      "missed": "Đã bỏ lỡ lần chạy theo lịch",
+      "deliveryStale": "Một đích gửi không còn hợp lệ",
+      "failing": "{{failures}}/{{max}} lần thất bại liên tiếp"
+    },
     "freq_custom": "Tùy chỉnh",
     "freq_daily": "Hàng ngày",
     "freq_hourly": "Hàng giờ",
@@ -1521,6 +1582,19 @@
     "name": "Tên tác vụ",
     "namePlaceholder": "ví dụ: Tóm tắt hàng ngày",
     "newJob": "Tác vụ mới",
+    "conversationTarget": "Chạy trong",
+    "conversationTargetNew": "Cuộc trò chuyện mới mỗi lần chạy",
+    "conversationTargetExisting": "Cuộc trò chuyện hiện có",
+    "sessionTargetPlaceholder": "Chọn cuộc trò chuyện",
+    "sessionTargetSearchPlaceholder": "Tìm cuộc trò chuyện",
+    "sessionTargetEmpty": "Không có cuộc trò chuyện phù hợp",
+    "errorSessionTargetRequired": "Hãy chọn cuộc trò chuyện để chạy tác vụ",
+    "copyAsNewTask": "Sao chép thành tác vụ mới",
+    "deletedTaskHint": "Tác vụ này đã bị xóa: lịch sử được giữ lại và không còn lần chạy nào được lên lịch.",
+    "runAgain": "Chạy lại",
+    "createWithModel": "Tạo bằng mô hình",
+    "manualSetup": "Thiết lập thủ công",
+    "createWithModelPrompt": "Hãy giúp tôi tạo một tác vụ theo lịch. Tôi muốn tác vụ tự động ... khi ...",
     "nextRun": "Lần chạy tiếp theo",
     "noConversations": "Chưa có lịch sử chạy",
     "noConversationsYet": "Tài khoản này chưa có cuộc trò chuyện nào được ghi (để bot nhận tin nhắn trước)",
@@ -1536,8 +1610,13 @@
     "paused": "Tạm dừng",
     "prefixDeliveryWithName": "Thêm tên tác vụ vào đầu",
     "prefixDeliveryWithNameDesc": "Đặt tiền tố phân phối thành công bằng [tác vụ định kỳ] {name} để có thể phân biệt được nhiều tác vụ phân phối tới cùng một cuộc trò chuyện",
+    "preflightTitle": "Kiểm tra trước khi chạy",
+    "preflightDescription": "Hãy xem lại lịch và môi trường thực thi thực tế trước khi tiếp tục.",
+    "preflightIssue": "Cần kiểm tra: {{code}}",
     "project": "Dự án",
+    "reloadLatest": "Tải phiên bản mới nhất",
     "removeTarget": "Xóa đích",
+    "revisionConflict": "Tác vụ này đã thay đổi ở nơi khác. Bản nháp của bạn vẫn được giữ; chỉ tải phiên bản mới nhất khi bạn sẵn sàng thay thế bản nháp.",
     "resume": "Tiếp tục",
     "runHistory": "Lịch sử chạy",
     "runNow": "Chạy ngay",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "Đang chạy",
     "runStatusSuccess": "Thành công",
     "schedule": "Lịch trình",
+    "scheduleSession": "Lên lịch cuộc trò chuyện này",
+    "sessionTurnTarget": "Cuộc trò chuyện đích",
+    "sessionTurnLiveHint": "Agent, dự án, không gian kiến thức, thư mục làm việc, chế độ quyền và sandbox được đọc trực tiếp từ cuộc trò chuyện này ở mỗi lần chạy.",
     "scheduleAt": "Một lần",
     "scheduleCron": "Đã lên lịch",
     "scheduleEvery": "Lặp lại",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "Chạy không giới hạn",
+      "unlimitedModeWarning": "Tắt các giới hạn đánh giá về chi phí, thời gian, token, lượt gọi, Agent và mức đồng thời. Lần chạy có thể kéo dài vô thời hạn và phát sinh chi phí Provider ngoài kiểm soát; các biện pháp bảo vệ về quyền, bảo mật, cách ly, hủy và dọn dẹp vẫn có hiệu lực.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "Xem trước",
-    "resizePanel": "Đổi kích thước bảng xem trước"
+    "resizePanel": "Đổi kích thước bảng xem trước",
+    "pathBreadcrumb": "Đường dẫn tệp",
+    "revealFolder": "Hiển thị thư mục trong bảng Tệp",
+    "copyPath": "Sao chép đường dẫn đầy đủ"
   },
   "fileBrowser": {
     "panelTitle": "Tệp",
+    "primaryFolder": "Thư mục chính",
+    "defaultProjectFolder": "Thư mục dự án mặc định",
     "jumpToFile": "Hiển thị trong trình duyệt tệp",
     "copied": "Đã sao chép",
     "copyFailed": "Sao chép thất bại",
@@ -2733,7 +2850,10 @@
     "zoomOut": "Thu nhỏ",
     "zoomIn": "Phóng to",
     "fitWidth": "Vừa chiều rộng",
-    "officeNoContent": "Không thể trích xuất nội dung từ tệp này."
+    "officeNoContent": "Không thể trích xuất nội dung từ tệp này.",
+    "openInNewTab": "Mở trong tab mới",
+    "collapseTree": "Ẩn danh sách tệp",
+    "expandTree": "Hiện danh sách tệp"
   },
   "diffPanel": {
     "fileTooLarge": "Tệp quá lớn, chỉ hiển thị 256KB đầu tiên",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "Cao",
     "low": "Thấp",
+    "max": "Tối đa",
     "medium": "Trung bình",
     "minimal": "Tối thiểu",
     "none": "Tắt",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "Đã xử lý"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "đóng {{count}} Agent",
+          "close_other": "đóng {{count}} Agent",
+          "closeAll": "đóng tất cả Agent",
+          "message_one": "gửi tin nhắn tới {{count}} Agent",
+          "message_other": "gửi tin nhắn tới {{count}} Agent",
+          "observe_one": "kiểm tra {{count}} Agent",
+          "observe_other": "kiểm tra {{count}} Agent",
+          "resume_one": "tiếp tục {{count}} Agent",
+          "resume_other": "tiếp tục {{count}} Agent"
+        },
+        "cron": {
+          "pause_one": "tạm dừng {{count}} lịch",
+          "pause_other": "tạm dừng {{count}} lịch",
+          "resume_one": "tiếp tục {{count}} lịch",
+          "resume_other": "tiếp tục {{count}} lịch"
+        },
+        "job": {
+          "cancel_one": "hủy {{count}} tác vụ",
+          "cancel_other": "hủy {{count}} tác vụ"
+        },
+        "process": {
+          "close_one": "đóng {{count}} tiến trình",
+          "close_other": "đóng {{count}} tiến trình"
+        },
+        "team": {
+          "pause_one": "tạm dừng {{count}} nhóm",
+          "pause_other": "tạm dừng {{count}} nhóm",
+          "resume_one": "tiếp tục {{count}} nhóm",
+          "resume_other": "tiếp tục {{count}} nhóm"
+        },
+        "workflow": {
+          "cancel_one": "hủy {{count}} quy trình",
+          "cancel_other": "hủy {{count}} quy trình",
+          "pause_one": "tạm dừng {{count}} quy trình",
+          "pause_other": "tạm dừng {{count}} quy trình",
+          "resume_one": "tiếp tục {{count}} quy trình",
+          "resume_other": "tiếp tục {{count}} quy trình"
+        }
+      },
+      "aggregate": {
+        "failed_one": "{{count}} thất bại",
+        "failed_other": "{{count}} thất bại",
+        "pending_one": "đang chờ {{count}}",
+        "pending_other": "đang chờ {{count}}",
+        "refused_one": "bị từ chối {{count}}",
+        "refused_other": "bị từ chối {{count}}",
+        "requested_one": "đã yêu cầu {{count}}",
+        "requested_other": "đã yêu cầu {{count}}",
+        "resumed_one": "{{count}} đã tiếp tục",
+        "resumed_other": "{{count}} đã tiếp tục",
+        "terminal_one": "đã kết thúc {{count}}",
+        "terminal_other": "đã kết thúc {{count}}"
+      },
+      "allTargets": "Tất cả Agent",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} đã kết thúc",
+        "alreadyTerminal_other": "{{count}} đã kết thúc",
+        "refused_one": "{{count}} bị từ chối",
+        "refused_other": "{{count}} bị từ chối"
+      },
+      "failureDetails": "Lỗi tiếp tục",
+      "state": {
+        "accepted": "Đã yêu cầu · {{action}}",
+        "alreadyTerminal_one": "{{count}} mục tiêu đã kết thúc trước đó",
+        "alreadyTerminal_other": "{{count}} mục tiêu đã kết thúc trước đó",
+        "completed": "Đã hoàn tất · {{action}}",
+        "failed": "Thất bại · {{action}}",
+        "noAgentsToClose": "Không có Agent nào cần đóng",
+        "noResumeNeeded": "Nhóm đã hoàn tất · không cần tiếp tục",
+        "partial": "Hoàn tất một phần · {{action}}",
+        "refused": "Bị từ chối · {{action}}",
+        "running": "Đang thực hiện · {{action}}"
+      }
     },
     "skill": {
       "completed": "Đã nạp kỹ năng: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "Đã hoàn thành {{name}}",
           "failed": "{{name}} thất bại",
           "running": "Đang chạy {{name}}"
+        },
+        "sessions_create": {
+          "completed": "Đã tạo {{name}}",
+          "failed": "Không thể tạo {{name}}",
+          "running": "Đang tạo {{name}}"
         },
         "sessions_list": {
           "completed": "Đã hoàn thành {{name}}",
@@ -3587,13 +3790,16 @@
     "popOutActive": "Đã mở trong cửa sổ riêng",
     "question": {
       "answered": "Đã trả lời",
+      "customAnswer": "Nội dung bổ sung",
       "customPlaceholder": "Nhập câu trả lời tùy chỉnh...",
       "customRequired": "Nhập câu trả lời tùy chỉnh hoặc chọn tùy chọn khác.",
       "default": "mặc định",
       "multiSelect": "nhiều",
+      "options": "Các lựa chọn ban đầu",
       "pending": "Đang chờ câu trả lời của bạn…",
       "preview": "Xem trước",
       "recommended": "Khuyến nghị",
+      "response": "Câu trả lời của bạn",
       "retry": "Thử lại",
       "submit": "Gửi câu trả lời",
       "timedOut": "hết thời gian",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "Bỏ lưu trữ",
     "unassigned": "Chưa gán",
     "uploadLogo": "Tải logo lên",
+    "linkedDirs": {
+      "add": "Thêm thư mục",
+      "defaultPrimary": "Thư mục dự án mặc định (được tạo tự động)",
+      "empty": "Chưa liên kết thư mục bổ sung",
+      "folderActions": "Thao tác thư mục",
+      "hint": "Gắn các thư mục mà dự án cần. Phiên chat mới, đường dẫn tương đối, Git và chỉ dẫn dự án dùng thư mục chính.",
+      "invalid": "Thư mục liên kết không hợp lệ",
+      "label": "Thư mục nguồn",
+      "makePrimary": "Đặt làm thư mục chính",
+      "primary": "Thư mục chính",
+      "remove": "Xóa {{path}}",
+      "removeFolder": "Xóa thư mục"
+    },
     "workingDir": {
       "clear": "Xóa",
       "hint": "Các phiên trong dự án này mặc định dùng thư mục này; cài đặt cấp phiên sẽ ghi đè.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "Backend ACP",
     "acpBinary": "Tệp nhị phân",
+    "acpDistribution": "Mô tả bản phân phối",
+    "acpDistributionPackage": "Gói hoặc sản phẩm",
+    "acpDistributionRequired": "Backend cũ này bị chặn cho đến khi bản phân phối khởi chạy được khai báo rõ ràng.",
+    "acpDistributionVersion": "Phiên bản cố định",
+    "acpLaunchArgs": "Đối số khởi chạy",
+    "acpProtocol": "Giao thức",
+    "acpTrustDistribution": "Khai báo bản phân phối",
     "acpControl": "Mặt phẳng điều khiển ACP",
     "acpControlDesc": "Quản lý các agent ACP bên ngoài (Claude Code, Codex CLI, Gemini CLI, v.v.)",
     "acpEnabled": "Bật mặt phẳng điều khiển ACP",
@@ -4194,6 +4420,7 @@
         "send_attachment": "Gửi tệp đính kèm tới kênh IM",
         "session_status": "Truy vấn trạng thái hiện tại của phiên",
         "sessions_history": "Đọc lịch sử tin nhắn từ phiên khác",
+        "sessions_create": "Tạo một phiên trò chuyện thông thường mới",
         "sessions_list": "Liệt kê siêu dữ liệu của mọi phiên",
         "sessions_send": "Gửi tin nhắn tới phiên khác để kích hoạt công việc",
         "update_settings": "Sửa cài đặt AppConfig",
@@ -4213,6 +4440,7 @@
         "send_attachment": "Gửi tệp đính kèm",
         "session_status": "Trạng thái phiên",
         "sessions_history": "Lịch sử phiên",
+        "sessions_create": "Tạo phiên",
         "sessions_list": "Liệt kê phiên",
         "sessions_send": "Gửi giữa các phiên",
         "update_settings": "Cập nhật cài đặt",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Quản lý tích hợp Telegram, WeChat, Feishu, Discord, Slack và các kênh IM khác",
     "charLimitExceeded": "Vượt quá giới hạn, nội dung thừa sẽ bị cắt bớt",
     "chat": "Trò chuyện",
+    "chatEnterToSend": "Nhấn Enter để gửi",
+    "chatEnterToSendDesc": "Khi bật, Enter gửi và Shift+Enter xuống dòng. Khi tắt, Enter xuống dòng và Ctrl+Enter gửi.",
     "chatAutoExpandThinking": "Tự động mở rộng quá trình suy nghĩ",
     "chatAutoExpandThinkingDesc": "Tự động mở rộng các khối suy nghĩ trong bóng chat. Khi tắt, nhấn để mở rộng thủ công.",
     "chatAutoCollapseCompletedTurns": "Thu gọn lượt đã hoàn tất",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "Tỷ lệ tối đa của cửa sổ ngữ cảnh mà một kết quả công cụ duy nhất có thể chiếm (10%–60%). Tăng để bảo toàn việc đọc tệp lớn và web fetches",
     "contextCompactMicrocompact": "Nén vi mô",
     "contextCompactMicrocompactEnabled": "Bật nén vi mô",
-    "contextCompactMicrocompactEnabledDesc": "Xóa kết quả công cụ tạm thời cũ với chi phí bằng không (ls/grep/find v.v.), chạy trước các tầng nén khác",
+    "contextCompactMicrocompactEnabledDesc": "Xóa kết quả công cụ tạm thời cũ (ls/grep/find v.v.) mà không gọi thêm mô hình; chạy trước các tầng nén khác",
     "contextCompactMicrocompactTools": "Danh sách công cụ nén vi mô",
     "contextCompactMicrocompactToolsDesc": "Kết quả cũ của các công cụ được chọn sẽ tự động bị xóa",
     "contextCompactMinPrunableChars": "Tổng tối thiểu có thể cắt",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "Giữ N vòng tin nhắn gần nhất và mở rộng về đầu lượt người dùng sở hữu",
     "contextCompactPruning": "Cắt bỏ kết quả công cụ",
     "contextCompactReactiveMicrocompact": "Microcompact phản ứng",
-    "contextCompactReactiveMicrocompactDesc": "Giữa các vòng lặp công cụ, khi mức dùng vượt ngưỡng, hãy xóa các tool_results tạm thời (ls/grep/find/…). Tier 0 — không tốn chi phí và không làm mất hiệu lực bộ nhớ đệm lời nhắc.",
+    "contextCompactReactiveMicrocompactDesc": "Giữa các vòng lặp công cụ, khi mức dùng vượt ngưỡng, hãy xóa các tool_results tạm thời (ls/grep/find/…). Tier 0 không gọi thêm mô hình, nhưng việc thay đổi lịch sử yêu cầu có thể làm mất hiệu lực bộ nhớ đệm lời nhắc sau điểm bị thay đổi.",
     "contextCompactReactiveTriggerRatio": "Tỉ lệ kích hoạt",
     "contextCompactReactiveTriggerRatioDesc": "Tỉ lệ sử dụng kích hoạt microcompact phản ứng (mặc định 75%).",
     "contextCompactSaved": "Đã lưu cài đặt",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "Agent mặc định",
     "defaultModel": "Mô hình mặc định",
     "defaultModelDesc": "Mô hình chính sử dụng",
-    "deferredToolsEnabled": "Tải công cụ trễ",
-    "deferredToolsEnabledDesc": "Cho phép tải dựa trên tool_search. Các công cụ vẫn được đưa vào cho đến khi bạn trì hoãn chúng ở bên dưới. Có hiệu lực ở cuộc trò chuyện tiếp theo.",
-    "deferredToolsPerToolDesc": "Chỉ bật những công cụ có lược đồ cần được khám phá thông qua tool_search thay vì gửi lên trước.",
+    "deferredToolsEnabled": "Chính sách tải lược đồ công cụ",
+    "deferredToolsEnabledDesc": "Chế độ Đề xuất tải các công cụ tích hợp không thiết yếu và mọi công cụ MCP động qua tool_search khi cần. Tích hợp trực tiếp vẫn tuân theo cài đặt trì hoãn riêng của từng máy chủ MCP.",
+    "deferredToolsModeCustom": "Tùy chỉnh",
+    "deferredToolsModeDisabled": "Tích hợp trực tiếp",
+    "deferredToolsModeRecommended": "Đề xuất",
+    "deferredToolsPerToolDesc": "Các công cụ tích hợp này được tải qua tool_search. Thay đổi một công tắc sẽ chọn chế độ Tùy chỉnh.",
     "deferredToolsPerToolTitle": "Công cụ tích hợp bị trì hoãn",
     "devClearAll": "Xóa tất cả",
     "devClearAllDesc": "Xóa tất cả dữ liệu và đặt lại về mặc định",
@@ -5253,8 +5486,12 @@
       "intro": "Chạy lệnh tùy chỉnh / HTTP / lời nhắc / sub-agent tại các sự kiện vòng đời. Tương thích cấp trường với hooks của Claude Code.",
       "disableAll": "Tắt tất cả hooks",
       "disableAllDesc": "Công tắc tổng — tắt mọi hook trên tất cả scope.",
-      "allowProjectScope": "Cho phép hook dự án & cục bộ",
-      "allowProjectScopeDesc": "Cho phép .hope-agent/hooks.json và hooks.local.json trong thư mục làm việc thêm hook — tiện để chia sẻ với nhóm của bạn. Mặc định tắt vì chúng có thể tự chạy lệnh, nên chỉ bật cho các dự án bạn tin tưởng.",
+      "trustedProjectScopes": "Không gian làm việc Hook đáng tin cậy",
+      "trustedProjectScopesDesc": "Phê duyệt tệp Hook dự án và cục bộ theo từng không gian làm việc. Nhập đường dẫn tuyệt đối chính xác; bí danh và liên kết tượng trưng sẽ bị từ chối.",
+      "workspacePath": "Đường dẫn tuyệt đối của không gian làm việc",
+      "trustWorkspace": "Tin cậy nội dung",
+      "noTrustedWorkspaces": "Chưa có tệp Hook không gian làm việc nào được tin cậy.",
+      "trustContentBound": "Sự tin cậy được gắn với nội dung Hook khi thêm không gian làm việc. Thay đổi, di chuyển hoặc bí danh đường dẫn sẽ vô hiệu hóa. Để phê duyệt lại, hãy xóa và lưu không gian, rồi thêm và lưu lại.",
       "scopeNote": "Bảng này chỉnh sửa hooks phạm vi user. Phạm vi project (.hope-agent/hooks.json, chia sẻ qua repo), local (hooks.local.json) và managed (/etc/hope-agent/hooks.json) dựa trên tệp và được hợp nhất phía trên.",
       "pickEvent": "Chọn sự kiện…",
       "addHook": "Thêm hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "Trình xử lý này chạy LLM / sub-agent nội tuyến và sẽ làm chậm mỗi lần sự kiện chặn này kích hoạt. Hãy ưu tiên command / http ở đây, hoặc chuyển sang sự kiện quan sát (vd. PostToolUse).",
       "invalidJson": "JSON không hợp lệ",
       "modelInheritDefault": "Theo mặc định tự động hóa",
-      "defaultShell": "Mặc định"
+      "defaultShell": "Mặc định",
+      "allowProjectScope": "Cho phép hook dự án & cục bộ",
+      "allowProjectScopeDesc": "Cho phép .hope-agent/hooks.json và hooks.local.json trong thư mục làm việc thêm hook — tiện để chia sẻ với nhóm của bạn. Mặc định tắt vì chúng có thể tự chạy lệnh, nên chỉ bật cho các dự án bạn tin tưởng."
     },
     "hours": "giờ",
     "inheritGlobal": "Kế thừa cài đặt toàn cục",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "Xóa máy chủ \"{{name}}\"? Điều này không thể hoàn tác được.",
       "confirmDeleteTitle": "Xóa \"{{name}}\"?",
       "connectTimeout": "Hết thời gian kết nối",
+      "connectionSettings": "Chiến lược kết nối",
       "cwdLabel": "Thư mục làm việc (tùy chọn)",
       "cwdPlaceholder": "kế thừa ứng dụng cwd",
       "deferredToolsLabel": "Tải schema công cụ trễ",
+      "directToolsLabel": "Tải trực tiếp schema công cụ",
       "deleted": "Máy chủ \"{{name}}\" đã bị xóa",
       "deniedTools": "Danh sách từ chối công cụ",
       "descriptionLabel": "Mô tả (tùy chọn)",
       "descriptionPlaceholder": "Máy chủ này làm gì",
       "disabled": "Đã tắt",
       "eagerLabel": "Kết nối khi khởi động",
+      "effectiveDeferredByGlobal": "Chính sách Đề xuất toàn cục đã tải trễ các công cụ của máy chủ này.",
       "edit": "Chỉnh sửa",
       "editTitle": "Chỉnh sửa máy chủ MCP — {{name}}",
       "emptyDesc": "Thêm máy chủ MCP hoặc nhập từ cấu hình Claude Desktop. Máy chủ stdio hiện đã dùng được; giao thức truyền tải HTTP/SSE/WebSocket từ xa sẽ được hỗ trợ trong giai đoạn sau.",
@@ -5749,11 +5991,13 @@
       "importJson": "Nhập JSON",
       "invalidName": "Tên phải khớp với ^[a-z0-9_-]{1,32}$ (chữ thường, chữ số, dấu gạch dưới, dấu gạch nối)",
       "loadFailed": "Không tải được máy chủ",
+      "lazyLabel": "Kết nối khi cần",
       "nameImmutable": "Tên không thể thay đổi sau khi tạo. Xóa và thêm lại để đổi tên.",
       "nameLabel": "Tên",
       "reconnect": "Kết nối lại",
       "remoteTransportPhase4": "Các chuyến vận tải HTTP/SSE/WebSocket sẽ cập bến Giai đoạn 4.",
       "saved": "Đã lưu",
+      "securitySettings": "Bảo mật và phê duyệt",
       "signOut": "Đăng xuất",
       "signOutSuccess": "Đã xóa thông tin xác thực của \"{{name}}\"",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "Chạy công cụ dòng lệnh trong môi trường Docker cách ly để giới hạn quyền truy cập hệ thống.",
     "sandboxDockerAvailable": "Docker khả dụng",
     "sandboxDockerChecking": "Đang kiểm tra...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Tải Docker Desktop",
     "sandboxDockerNotInstalled": "Không phát hiện Docker, vui lòng cài đặt Docker Desktop trước",
     "sandboxDockerNotRunning": "Docker đã được cài đặt nhưng chưa chạy, vui lòng khởi động Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker không khả dụng",
     "sandboxImage": "Hình ảnh",
     "sandboxImageDesc": "Ảnh Docker được môi trường cách ly sử dụng.",
+    "sandboxImageDigestRequired": "Ghim ảnh theo dạng name@sha256:<mã băm 64 ký tự>; thẻ có thể thay đổi sẽ bị từ chối.",
     "sandboxMemoryLimit": "Giới hạn bộ nhớ",
     "sandboxNetworkBridge": "Cầu",
     "sandboxNetworkHost": "Máy chủ",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "thùng chứa",
     "sandboxSectionResources": "Giới hạn tài nguyên",
     "sandboxSectionSecurity": "Tăng cường bảo mật",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "giây",
     "security": "Chính sách bảo mật",
     "selectDefaultModel": "Chọn mô hình mặc định",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "Số Agents con tối đa từ phiên cha này có thể chạy cùng lúc. Phần vượt quá sẽ chờ trong hàng đợi.",
     "subagentMaxDepth": "Độ sâu lồng nhau tối đa",
     "subagentMaxDepthDesc": "Số tầng ủy quyền sub-agent được phép dưới Agent này. Giá trị cao hơn cho phép con tạo con của riêng chúng.",
+    "subagentProviderRetryAttempts": "Số lần khôi phục cổng",
+    "subagentProviderRetryAttemptsDesc": "Số lần thử tiếp sau khi mọi nhà cung cấp và mô hình dự phòng đều thất bại. 0 để tắt.",
+    "subagentProviderRetryBackoff": "Thời gian chờ cơ sở",
+    "subagentProviderRetryBackoffDesc": "Thời gian chờ trước lần thử lại đầu tiên; các lần sau tăng theo cấp số nhân.",
     "subagentTimeout": "Hết thời gian mặc định",
     "subagentTimeoutDesc": "Thời gian chạy tối đa của Agent con. 0 nghĩa là không giới hạn thời gian. Dùng khi lệnh gọi không đặt timeout_secs riêng.",
     "subagentTimeoutUnit": "giây",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "Áp dụng bản vá",
     "toolAskUserQuestionDesc": "Gửi câu hỏi có cấu trúc dạng trắc nghiệm hoặc tự do cho người dùng",
     "toolAskUserQuestionName": "Hỏi Người Dùng",
+    "toolAudioGenerateDesc": "Tạo giọng nói, nhạc hoặc hiệu ứng âm thanh từ văn bản",
     "toolBrowserDesc": "Điều khiển trình duyệt để thực hiện các hành động",
     "toolBrowserName": "Trình duyệt",
     "toolCallNarration": "Cập nhật tiến độ",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "Quản lý tiến trình",
     "toolProjectReadFileDesc": "Đọc các file đã tải lên dự án của phiên hiện tại",
     "toolProjectReadFileName": "Đọc File Dự Án",
+    "toolReadContextResourceDesc": "Đọc ảnh chụp @file hoặc @plan bất biến được liên kết với lượt hiện tại",
     "toolReadDesc": "Đọc nội dung tệp, hỗ trợ phân trang và nhận diện ảnh",
     "toolReadName": "Đọc tệp",
     "toolRecallMemoryDesc": "Tìm và truy xuất bộ nhớ đã lưu",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "Gửi Đính Kèm",
     "toolSendNotificationDesc": "Gửi tin nhắn thông báo desktop",
     "toolSendNotificationName": "Gửi thông báo",
+    "toolSessionContinueDesc": "Chỉ tiếp tục cuộc trò chuyện đã tạm dừng sau yêu cầu rõ ràng của người dùng",
     "toolSessionStatusDesc": "Truy vấn agent, mô hình, số lượng tin nhắn và mốc thời gian của một phiên",
     "toolSessionStatusName": "Trạng Thái Phiên",
     "toolSessionToNoteDesc": "Chắt lọc cuộc hội thoại thành một ghi chú có cấu trúc.",
     "toolSessionToNoteName": "Lưu hội thoại thành ghi chú",
     "toolSessionsHistoryDesc": "Phân trang lịch sử tin nhắn của một phiên",
     "toolSessionsHistoryName": "Lịch Sử Phiên",
+    "toolSessionsCreateDesc": "Tạo phiên trò chuyện thông thường mới, tùy chọn liên kết với Project và khởi chạy Agent bằng tin nhắn hoặc tệp đính kèm đầu tiên",
     "toolSessionsListDesc": "Liệt kê các phiên khác (tiêu đề, agent, mô hình, số lượng tin nhắn)",
     "toolSessionsListName": "Danh Sách Phiên",
     "toolSessionsSearchDesc": "Tìm trong tin nhắn chat đã lưu và trả về các cửa sổ ngữ cảnh khớp",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "Gửi Đến Phiên",
     "toolSubagentDesc": "Ủy quyền tác vụ cho sub-agent để thực thi",
     "toolSubagentName": "Sub-Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "Tạo một tác vụ có thể theo dõi cho phiên hiện tại",
     "toolTaskCreateName": "Tạo tác vụ",
     "toolTaskListDesc": "Liệt kê tất cả các tác vụ trong phiên hiện tại",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "Đã cập nhật",
     "weatherWind": "Gió",
     "webFetch": "Tìm nạp web",
+    "webFetchMaxTokensCap": "Ngân sách token tối đa",
+    "webFetchMaxTokensCapDesc": "Giới hạn cứng cho max_tokens trong lời gọi công cụ",
+    "webFetchMaxConcurrentPerHost": "Yêu cầu đồng thời cho mỗi máy chủ",
+    "webFetchMinHostDelay": "Độ trễ tối thiểu mỗi máy chủ (ms)",
+    "webFetchSectionRendering": "Kết xuất động",
+    "webFetchRenderMode": "Chế độ kết xuất mặc định",
+    "webFetchRenderNever": "Không bao giờ (chỉ tải trực tiếp)",
+    "webFetchRenderAuto": "Tự động (khi cần)",
+    "webFetchRenderAlways": "Luôn luôn",
+    "webFetchRenderModeDesc": "Dùng trình duyệt cô lập mới, không mang cookie hay trạng thái tài khoản",
+    "webFetchRenderTimeout": "Thời gian chờ kết xuất (giây)",
+    "webFetchCacheEntries": "Ảnh chụp bộ nhớ đệm",
     "webFetchCacheTtl": "TTL bộ nhớ đệm (phút)",
     "webFetchCacheTtlDesc": "Thời gian lưu các trang đã lấy. Đặt 0 để tắt bộ nhớ đệm.",
     "webFetchDesc": "Cấu hình cách công cụ web_fetch trích xuất nội dung từ URL, bao gồm bộ nhớ đệm, bảo mật và giới hạn nội dung.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "Thiếu điểm cuối",
     "memoryExternalProviderBlockPolicyUnsupported": "Chính sách không được hỗ trợ",
     "memoryExternalProviderBlockAdapterUnavailable": "Bộ chuyển đổi không có sẵn",
+    "memoryExternalProviderBlockCompatibilityUnverified": "Chưa xác minh khả năng tương thích",
+    "memoryExternalProviderBlockCompatibilityBlocked": "Phiên bản nhà cung cấp không an toàn",
     "memoryExternalProviderBlockLastError": "Lỗi cuối cùng",
     "memoryExternalProviderErrors": {
       "load": "Không thể tải nhà cung cấp bộ nhớ ngoài",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "Không thể tải kết nối nhà cung cấp bộ nhớ ngoài",
       "saveCredentials": "Không lưu được kết nối của nhà cung cấp bộ nhớ ngoài",
       "clearCredentials": "Không xóa được kết nối của nhà cung cấp bộ nhớ ngoài",
+      "testConnection": "Không kiểm tra được kết nối của nhà cung cấp bộ nhớ ngoài",
       "copyPreflightDiagnostics": "Không sao chép được preflight của nhà cung cấp bộ nhớ ngoài",
       "copySyncDiagnostics": "Không sao chép được báo cáo đồng bộ hóa nhà cung cấp bộ nhớ ngoài",
       "detail": "Chi tiết: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "Thông tin xác thực được lưu trữ riêng biệt với quyền truy cập tệp bị hạn chế.",
     "memoryExternalProviderConnectionSaved": "Đã lưu kết nối",
     "memoryExternalProviderConnectionCleared": "Đã xóa kết nối",
+    "memoryExternalProviderConnectionTest": "Kiểm tra kết nối",
+    "memoryExternalProviderCompatibilityPassed": "Đã vượt qua kiểm tra kết nối và khả năng tương thích",
+    "memoryExternalProviderCompatibilityUnverified": "Đã kết nối nhưng không thể xác minh phiên bản nhà cung cấp",
+    "memoryExternalProviderCompatibilityBlocked": "Phiên bản nhà cung cấp thấp hơn mức tối thiểu an toàn",
+    "memoryExternalProviderCompatibilitySummary": "Trạng thái: {{status}} · phát hiện {{detected}} · tối thiểu {{minimum}}",
     "memoryExternalProviderEndpoint": "Điểm cuối",
     "memoryExternalProviderEndpointKeep": "Đã lưu trữ: {{origin}} · để trống để giữ lại",
     "memoryExternalProviderSubjectId": "ID phạm vi từ xa",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "Thời lượng mặc định",
       "durationOption": "{{seconds}} giây"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "Xóa một bộ nhớ"
     },
+    "fork": {
+      "description": "Tiếp tục trong phiên mới"
+    },
     "handover": {
       "description": "Bàn giao phiên sang một cuộc trò chuyện IM"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "Bắt đầu cuộc trò chuyện mới"
+    },
+    "side": {
+      "description": "Bắt đầu trò chuyện bên mà không làm gián đoạn trò chuyện chính"
     },
     "noResults": "Không có lệnh khớp",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "Tạm dừng",
     "progress": "Tiến độ",
     "resume": "Tiếp tục",
+    "resumeFeedback": {
+      "counts": "{{resumed}} đã tiếp tục · {{failed}} thất bại",
+      "noOpDescription": "Tất cả thành viên đã hoàn tất; không có lượt chạy mới nào được bắt đầu.",
+      "noOpTitle": "Không cần tiếp tục",
+      "partialTitle": "Nhóm đã tiếp tục một phần",
+      "refusedTitle": "Yêu cầu tiếp tục nhóm bị từ chối",
+      "resumedTitle": "Nhóm đã tiếp tục",
+      "resuming": "Đang tiếp tục…"
+    },
     "review": "Kiểm tra",
     "reviewer": "Người kiểm tra",
     "send": "Gửi",
@@ -9282,6 +9572,7 @@
       "timed_out": "Hết thời gian — đã áp dụng giá trị mặc định"
     },
     "ask_user_question": "Hỏi người dùng",
+    "audio_generate": "Tạo Âm Thanh",
     "browser": "Trình duyệt",
     "canvas": "Canvas",
     "delete_memory": "Xóa bộ nhớ",
@@ -9313,13 +9604,16 @@
     "process": "Quản lý tiến trình",
     "rawCall": "Xem lệnh gọi gốc",
     "read": "Đọc tệp",
+    "read_context_resource": "Đọc Tài Nguyên Ngữ Cảnh",
     "recall_memory": "Gọi bộ nhớ",
     "restore_settings_backup": "Khôi phục bản sao cài đặt",
     "save_memory": "Lưu bộ nhớ",
     "send_attachment": "Gửi đính kèm",
     "send_notification": "Gửi thông báo",
+    "session_continue": "Tiếp Tục Phiên",
     "session_status": "Trạng thái phiên",
     "sessions_history": "Lịch sử phiên",
+    "sessions_create": "Tạo phiên",
     "sessions_list": "Danh sách phiên",
     "sessions_send": "Gửi đến phiên",
     "skill": "Tải kỹ năng",
@@ -9329,6 +9623,8 @@
     "task_list": "Danh sách nhiệm vụ",
     "task_update": "Cập nhật nhiệm vụ",
     "team": "Nhóm Agent",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "Tìm công cụ",
     "update_core_memory": "Cập nhật bộ nhớ lõi",
     "update_memory": "Cập nhật bộ nhớ",
@@ -9589,6 +9885,9 @@
     "openPanel": "Mở không gian làm việc",
     "resizePanel": "Đổi kích thước bảng không gian làm việc",
     "sourceFromSearch": "Tìm kiếm",
+    "sourceFetchDirect": "Tải",
+    "sourceFetchRendered": "Kết xuất",
+    "sourceFetchCache": "Bộ nhớ đệm",
     "sourceFromUser": "Người dùng",
     "sourceFromAttachment": "Tệp đính kèm",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "bảo vệ",
     "defaultName": "Sản phẩm"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "Tác vụ nền",
     "openPanel": "Tác vụ nền",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "Sửa bằng AI",
       "fixStarted": "AI đang sửa",
       "fixBusy": "Cuộc trò chuyện đang diễn ra, vui lòng thử lại sau",
-      "fixPrompt": "Vui lòng sửa vấn đề được phát hiện qua tự kiểm tra thiết kế: {{detail}}. Dùng token hệ thống thiết kế (var(--ds-*)) để gom màu sắc và thay thế kiểu mã hóa cứng. Chỉ thực hiện thay đổi tối thiểu cần thiết và giữ nguyên phần còn lại của thiết kế."
+      "fixPrompt": "Vui lòng sửa vấn đề được phát hiện qua tự kiểm tra thiết kế: {{detail}}. Dùng token hệ thống thiết kế (var(--ds-*)) để gom màu sắc và thay thế kiểu mã hóa cứng. Chỉ thực hiện thay đổi tối thiểu cần thiết và giữ nguyên phần còn lại của thiết kế.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "Bộ công cụ hệ thống thiết kế",
@@ -12533,7 +12836,15 @@
       "copyLink": "Sao chép liên kết",
       "copied2": "Đã sao chép",
       "loadErr": "Không tải được trạng thái chia sẻ",
-      "shareTo": "Chia sẻ đến"
+      "shareTo": "Chia sẻ đến",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Triển khai lên Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "Tất cả sản phẩm khớp với mã của chúng",
       "checkStale": "{{n}} sản phẩm có cập nhật mã",
       "chatPrompt": "Mã đã triển khai đã khác với thiết kế này. Hãy cập nhật thiết kế hiện tại để phản ánh các thay đổi mã được tham chiếu, giữ nguyên ý đồ thiết kế và mọi thứ còn lại."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "Tên",
       "shortDescription": "Mô tả ngắn (không bắt buộc)",
       "prompt": "Bạn muốn thú cưng trông như thế nào?",
+      "version": "Phiên bản bảng sprite",
+      "versionV2": "v2 · Khuyên dùng",
+      "versionV1": "v1 · Cũ",
+      "versionV2Description": "Bao gồm 16 hướng nhìn theo chiều kim đồng hồ của Codex v2.",
+      "versionV1Description": "Tạo bảng sprite chín hàng ban đầu cho máy khách cũ.",
       "generate": "Tạo bản xem trước",
       "generating": "Đang tạo bản xem trước…",
       "failed": "Không thể tạo thú cưng này"
+    },
+    "upgrade": {
+      "action": "Nâng cấp lên v2",
+      "upgraded": "Đã tạo bản sao v2. Thú cưng v1 gốc vẫn được giữ lại.",
+      "alreadyExists": "Bản nâng cấp v2 này đã có trong thư viện.",
+      "failed": "Không thể nâng cấp thú cưng này lên v2"
     },
     "export": {
       "action": "Xuất cho Codex",
@@ -12848,7 +13218,7 @@
       "failed": "Không thể xuất thú cưng này"
     },
     "window": {
-      "interact": "Tương tác với thú cưng Hope",
+      "interact": "Tương tác với {{name}}",
       "tuckAway": "Cất thú cưng"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "Cấu hình",
       "user": "Cài đặt người dùng"
     }
+  },
+  "toolchainDoctor": {
+    "title": "Chẩn đoán chuỗi công cụ",
+    "description": "Kiểm tra chỉ đọc cho môi trường hệ thống và các công cụ phát triển tùy chọn. Hope Agent không cài đặt, nâng cấp, khởi động hoặc cấu hình lại bất kỳ thành phần nào.",
+    "refresh": "Kiểm tra lại",
+    "loading": "Đang kiểm tra chuỗi công cụ cục bộ…",
+    "loadFailed": "Kiểm tra chuỗi công cụ thất bại",
+    "readOnlyNotice": "Chỉ báo cáo phiên bản, tính khả dụng, khả năng kết nối Docker, loại ngữ cảnh, loại chủ sở hữu socket và wrapper tạm thời mà không lộ đường dẫn hay thông tin xác thực.",
+    "detectedVersion": "Đã phát hiện {{version}}",
+    "notDetected": "Không phát hiện",
+    "minimumVersion": "Tối thiểu {{version}}",
+    "diagnosticFacts": "Mã chẩn đoán",
+    "status": {
+      "detected": "Đã phát hiện",
+      "supported": "Được hỗ trợ",
+      "degraded": "Hạn chế",
+      "blocked": "Bị chặn"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Cần trả lời",
+      "detail": "{{count}} câu hỏi đang chờ trong cuộc trò chuyện",
+      "detail_one": "Một câu hỏi đang chờ trong cuộc trò chuyện",
+      "openAction": "Trả lời ngay"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

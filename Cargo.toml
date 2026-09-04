@@ -1,21 +1,34 @@
 [workspace]
-# TEMP-FIX: members trimmed to crates that exist on disk and have complete
-# dependency closures, so the desktop/server service can build/start. The
-# removed members (ha-memory, ha-goal, ha-workflow, ha-config-schema,
-# ha-design, ha-dash, ha-cron, ha-improve, ha-knowledge, ha-local-llm,
-# ha-skills, ha-mac, ha-mcp, ha-media, ha-pet, ha-updater, ha-vcs, ha-weather,
-# ha-eval-runtime) are not present in this fork's tree (old monolithic
-# architecture vs new split-crate workspace brought in by a main merge).
-# ha-acp / ha-browser / ha-channel depend on the missing ha-config-schema and
-# are temporarily excluded too. Restore all of them once the merge is resolved.
 members = [
     "src-tauri",
     "crates/ha-base",
     "crates/ha-agent-loop",
     "crates/ha-agent-runtime",
+    "crates/ha-memory",
+    "crates/ha-goal",
+    "crates/ha-workflow",
+    "crates/ha-browser",
+    "crates/ha-config-schema",
+    "crates/ha-design",
     "crates/ha-core",
+    "crates/ha-dash",
+    "crates/ha-cron",
+    "crates/ha-channel",
+    "crates/ha-improve",
+    "crates/ha-knowledge",
+    "crates/ha-local-llm",
     "crates/ha-server",
+    "crates/ha-skills",
+    "crates/ha-acp",
+    "crates/ha-mac",
+    "crates/ha-mcp",
+    "crates/ha-media",
+    "crates/ha-pet",
+    "crates/ha-updater",
+    "crates/ha-vcs",
+    "crates/ha-weather",
     "crates/ha-browser-host",
+    "crates/ha-eval-runtime",
     "crates/ha-eval-spec",
     "crates/ha-eval",
 ]
@@ -27,7 +40,7 @@ resolver = "2"
 [workspace.package]
 license = "MIT"
 authors = ["shiwenwen"]
-repository = "https://github.com/zhukai9527/hope-agent"
+repository = "https://github.com/shiwenwen/hope-agent"
 edition = "2021"
 # MSRV 不显式声明：rust-toolchain.toml 已经锁 1.95 作为构建工具链；
 # 这三个 crate 不发布到 crates.io，没有作为下游依赖被消费的场景。

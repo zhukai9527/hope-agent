@@ -1,65 +1,16 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
-// ── Channel ID ───────────────────────────────────────────────────
-// Enum variants ordered to match the canonical channel display order.
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ChannelId {
-    Telegram,
-    #[serde(rename = "wechat")]
-    WeChat,
-    #[serde(rename = "whatsapp")]
-    WhatsApp,
-    Discord,
-    Irc,
-    #[serde(rename = "googlechat")]
-    GoogleChat,
-    Slack,
-    Signal,
-    #[serde(rename = "imessage")]
-    IMessage,
-    Line,
-    Feishu,
-    #[serde(rename = "qqbot")]
-    QqBot,
-    /// Extension channels not in the built-in list.
-    #[serde(untagged)]
-    Custom(String),
-}
-
-impl ChannelId {
-    /// Parse the canonical lowercase form (the value stored in SQLite
-    /// `channel_conversations.channel_id` and emitted by `Display`) back
-    /// to a `ChannelId`, falling back to `Custom(s)` for extension
-    /// channels via the existing `#[serde(untagged)]` variant. Use this
-    /// from EventBus / DB callbacks where you only have the string form
-    /// — both `eviction_watcher` and `startup_watcher` go through here.
-    pub fn from_storage_str(s: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_value(serde_json::Value::String(s.to_string()))
-    }
-}
-
-impl std::fmt::Display for ChannelId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ChannelId::Telegram => write!(f, "telegram"),
-            ChannelId::WeChat => write!(f, "wechat"),
-            ChannelId::WhatsApp => write!(f, "whatsapp"),
-            ChannelId::Discord => write!(f, "discord"),
-            ChannelId::Irc => write!(f, "irc"),
-            ChannelId::GoogleChat => write!(f, "googlechat"),
-            ChannelId::Slack => write!(f, "slack"),
-            ChannelId::Signal => write!(f, "signal"),
-            ChannelId::IMessage => write!(f, "imessage"),
-            ChannelId::Line => write!(f, "line"),
-            ChannelId::Feishu => write!(f, "feishu"),
-            ChannelId::QqBot => write!(f, "qqbot"),
-            ChannelId::Custom(s) => write!(f, "{}", s),
-        }
-    }
-}
+// 类型已下沉 ha-config-schema（AppConfig 类型闭包）：配置类类型与其
+// inherent impl / Display / 设置键常量原地再导出，既有路径不变。
+// 本文件保留运行时类型（消息 / 事件 / 能力 / 投递结果等）。
+pub use ha_config_schema::channel::{
+    ChannelAccountConfig, ChannelId, DmPolicy, GroupPolicy, ImReplyMode, SecurityConfig,
+    TelegramChannelConfig, TelegramGroupConfig, TelegramTopicConfig,
+    SETTINGS_KEY_AUTO_TRANSCRIBE_VOICE, SETTINGS_KEY_DISCORD_CHANNEL_OBFUSCATION,
+    SETTINGS_KEY_DISCORD_FILE_REQUESTS, SETTINGS_KEY_GOOGLE_CHAT_STANDARD_MARKDOWN,
+    SETTINGS_KEY_IMSG_PROTOCOL_V1, SETTINGS_KEY_IM_REPLY_MODE, SETTINGS_KEY_KB_ACCESS_CHATS,
+    SETTINGS_KEY_KB_ACCESS_OPT_IN, SETTINGS_KEY_NATIVE_REPLY, SETTINGS_KEY_SHOW_THINKING,
+};
 
 // ── Chat Type ────────────────────────────────────────────────────
 
@@ -100,155 +51,6 @@ pub enum MediaType {
     Sticker,
     Voice,
     Animation,
-}
-
-// ── IM Reply Mode ────────────────────────────────────────────────
-// Controls how the dispatcher delivers multi-round assistant output (text +
-// tool-produced media) over an IM channel. Three modes, all channels honor
-// the same setting — streaming vs non-streaming only changes whether each
-// round's text is rendered with a typewriter preview or as a single shot.
-//
-// **Round** here = one LLM `process_round` (an assistant message that may
-// contain narration + tool_calls). `RoundTextAccumulator` watches the
-// `text_delta` / `tool_call` / `tool_result` event stream and groups events
-// into per-round buckets; the dispatcher fans them out per `ImReplyMode`.
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ImReplyMode {
-    /// (Default) Each round's text + media is delivered in time order, as
-    /// independent messages — narration → tool media → next narration → ...
-    /// Streaming channels still get a typewriter effect *per round*, just
-    /// not "one growing message"; non-streaming channels send each round in
-    /// one shot. Mirrors how the model actually narrated the work.
-    #[default]
-    Split,
-    /// Drop pre-tool narration; deliver only the final round's text plus all
-    /// tool media in one outbound burst. No streaming preview.
-    Final,
-    /// Streaming-only: render the full merged response in a single growing
-    /// preview message (Telegram edit / Feishu cardkit / Telegram DM draft),
-    /// finalize at the end, then send all media. Non-streaming channels
-    /// degrade to `Final` since they have no preview transport to speak of.
-    Preview,
-}
-
-impl ImReplyMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Split => "split",
-            Self::Final => "final",
-            Self::Preview => "preview",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "split" | "s" => Some(Self::Split),
-            "final" | "f" => Some(Self::Final),
-            "preview" | "p" => Some(Self::Preview),
-            _ => None,
-        }
-    }
-}
-
-// ── DM Policy ────────────────────────────────────────────────────
-// Direct-message access policy per channel account.
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DmPolicy {
-    #[default]
-    Open,
-    Allowlist,
-    Pairing,
-}
-
-// ── Group Policy ─────────────────────────────────────────────────
-// Group-message access policy per channel account.
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GroupPolicy {
-    /// Groups bypass allowlist check, only mention-gating applies
-    #[default]
-    Open,
-    /// Only allow groups explicitly listed in `groups` config
-    Allowlist,
-    /// Block all group messages entirely
-    Disabled,
-}
-
-// ── Telegram Group Config ────────────────────────────────────────
-// Per-group configuration for Telegram chats and forums.
-
-/// Per-topic configuration within a group or DM.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramTopicConfig {
-    /// If true, bot only responds when @mentioned or replied to.
-    /// None = inherit from parent group/account default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub require_mention: Option<bool>,
-    /// If false, disable the bot for this topic.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Optional allowlist for topic senders (Telegram user IDs).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allow_from: Vec<String>,
-    /// Route this topic to a specific agent (overrides group-level).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    /// Optional system prompt snippet for this topic.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-}
-
-/// Per-group configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramGroupConfig {
-    /// If true, bot only responds when @mentioned or replied to.
-    /// None = default to true (require mention).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub require_mention: Option<bool>,
-    /// Per-group override for group policy.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group_policy: Option<GroupPolicy>,
-    /// If false, disable the bot for this group.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Optional allowlist for group senders (Telegram user IDs).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allow_from: Vec<String>,
-    /// Route this group to a specific agent (overrides account-level).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    /// Optional system prompt snippet for this group.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    /// Per-topic configuration (key is message_thread_id as string).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub topics: HashMap<String, TelegramTopicConfig>,
-}
-
-/// Per-channel (Telegram Channel broadcast) configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramChannelConfig {
-    /// If true, bot only responds when @mentioned or replied to.
-    /// None = default to true.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub require_mention: Option<bool>,
-    /// If false, ignore messages from this channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Route this channel to a specific agent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    /// Optional system prompt for this channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
 }
 
 // ── Parse Mode ───────────────────────────────────────────────────
@@ -320,7 +122,259 @@ pub struct ChannelCapabilities {
     /// Currently only Feishu (cardkit) implements this.
     #[serde(default)]
     pub supports_card_stream: bool,
+    /// Native rich-reply streaming contract exposed by this channel.
+    /// `None` keeps the legacy draft/card/message preview paths active.
+    #[serde(default)]
+    pub native_reply: Option<NativeReplyCapabilities>,
 }
+
+// ── Native Reply Streaming ────────────────────────────────────
+
+/// Target-scoped native reply capabilities. Unlike the legacy preview flags,
+/// these limits describe the platform's native streaming/rich-message API and
+/// are intentionally independent from `streaming_preview_max_bytes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeReplyCapabilities {
+    #[serde(default)]
+    pub preview_chat_types: Vec<ChatType>,
+    #[serde(default)]
+    pub final_chat_types: Vec<ChatType>,
+    pub update_mode: ReplyStreamUpdateMode,
+    /// Whether acknowledged preview revisions are already durable messages or
+    /// merely an expiring visualization whose `commit` performs a separate
+    /// persistent mutation. A preview-only failure cannot suppress the
+    /// ephemeral stream's durable final lane, while an ambiguous persistent
+    /// commit still must not be retried.
+    #[serde(default)]
+    pub preview_persistence: ReplyStreamPreviewPersistence,
+    /// Requirements below apply to `open_reply_stream` only. Standalone final
+    /// rich replies are gated independently by `final_chat_types` and the
+    /// adapter's target preflight.
+    #[serde(default)]
+    pub requires_reply_anchor: bool,
+    /// Whether a non-empty [`ReplyStreamTarget::thread_id`] satisfies
+    /// `requires_reply_anchor` for `open_reply_stream`. Providers must opt in:
+    /// supporting threads generally does not imply that the native streaming
+    /// API accepts a thread id as its reply anchor.
+    #[serde(default)]
+    pub supports_thread_anchor: bool,
+    #[serde(default)]
+    pub requires_recipient_user_id: bool,
+    #[serde(default)]
+    pub requires_recipient_tenant_id: bool,
+    #[serde(default)]
+    pub supports_task_updates: bool,
+    #[serde(default)]
+    pub supports_plan_updates: bool,
+    /// The adapter can compile canonical Markdown into provider-native
+    /// structured blocks. This never authorizes callers to pass arbitrary
+    /// provider block JSON through the common contract.
+    #[serde(default)]
+    pub supports_blocks: bool,
+    /// Media kinds that the native rich-reply endpoint can embed into the
+    /// canonical final document. Items outside this list stay on the legacy
+    /// media delivery path.
+    #[serde(default)]
+    pub embedded_media_types: Vec<MediaType>,
+    /// Maximum number of media items that can be embedded into one native
+    /// final reply. `None` means the adapter does not advertise an embedding
+    /// budget; callers must not interpret it as unlimited. Missing values from
+    /// older serialized capabilities therefore remain conservatively disabled.
+    #[serde(default)]
+    pub max_embedded_media_items: Option<u16>,
+    #[serde(default)]
+    pub refresh_after_secs: Option<u64>,
+    #[serde(default)]
+    pub max_delta_chars: Option<u32>,
+}
+
+/// How a native stream consumes text updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplyStreamUpdateMode {
+    /// Each push contains only text not accepted by earlier pushes.
+    Append,
+    /// Each push replaces the currently visible draft with a full snapshot.
+    Snapshot,
+}
+
+/// Delivery semantics of the provider-owned preview before `commit`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplyStreamPreviewPersistence {
+    /// Accepted preview revisions may already be user-visible durable content.
+    /// Falling back after acceptance could duplicate the reply.
+    #[default]
+    Persistent,
+    /// Preview revisions expire automatically and `commit` is an independent
+    /// persistent send. A preview failure may abandon further refreshes, but
+    /// it never makes the durable final ineligible.
+    Ephemeral,
+}
+
+/// Fully resolved destination for a native stream or rich final reply.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReplyStreamTarget {
+    pub account_id: String,
+    pub chat_id: String,
+    pub chat_type: ChatType,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<String>,
+    pub recipient_user_id: Option<String>,
+    /// Platform-neutral tenant/workspace identity for the recipient. Slack
+    /// Connect maps this to `recipient_team_id`; single-tenant channels leave
+    /// it unset.
+    pub recipient_tenant_id: Option<String>,
+}
+
+/// One revision of an in-flight native reply.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReplyStreamFrame {
+    /// Strictly increasing within one stream, including keepalive refreshes.
+    /// A successful `open_reply_stream` consumes its first revision; later
+    /// `push` calls must use larger values. A keepalive repeats the acknowledged
+    /// snapshot/task state with an empty delta under a fresh revision.
+    pub revision: u64,
+    /// Canonical full Markdown at this revision. Snapshot adapters consume
+    /// this field; append adapters ignore it. This value is never clipped:
+    /// provider-specific visible-window limits belong inside the adapter so a
+    /// snapshot implementation never has to depend on delta reconstruction.
+    pub markdown_snapshot: String,
+    /// Canonical Markdown accepted since the preceding acknowledged revision.
+    /// Append adapters consume this field; snapshot adapters ignore it.
+    pub markdown_delta: String,
+    pub phase: ReplyStreamPhase,
+    /// Complete, locally generated, user-safe task snapshot for this revision.
+    /// Adapters diff it against their last ACK. It must never contain tool
+    /// arguments, raw results, credentials, file contents, or private paths.
+    pub tasks: Vec<ReplyStreamTask>,
+    /// Complete user-safe plan heading; `None` means no plan is displayed.
+    pub plan_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyStreamPhase {
+    Generating,
+    RunningTools,
+    Finalizing,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReplyStreamTask {
+    pub id: String,
+    pub title: String,
+    pub status: ReplyStreamTaskStatus,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyStreamTaskStatus {
+    Pending,
+    InProgress,
+    Complete,
+    Error,
+}
+
+/// Canonical final reply passed to a channel's native rich-message endpoint.
+#[derive(Clone)]
+pub struct RichReply {
+    pub markdown: String,
+    /// Authorized outbound media offered to the native rich-message adapter.
+    /// The adapter reports consumed indices in [`RichReplyReceipt`]; all
+    /// remaining items are delivered through the legacy media path.
+    pub media: Vec<OutboundMedia>,
+    /// A successful native receipt confirms that all actions were delivered;
+    /// adapters that cannot preserve them must return `InvalidContent` before
+    /// the terminal mutation and must never silently truncate actions.
+    pub buttons: Vec<Vec<InlineButton>>,
+}
+
+/// Successful result of committing a native rich reply. Provider rejection,
+/// transport failure, and delivery ambiguity are always returned as a typed
+/// [`ReplyStreamError`], never encoded inside this receipt.
+#[derive(Clone)]
+pub struct RichReplyReceipt {
+    /// Identifier of the last persisted native message. Adapters that split a
+    /// long rich document return the final segment's identifier.
+    pub message_id: String,
+    /// Successful native embeds, expressed as a unique contiguous prefix of
+    /// indices into `RichReply.media` (`[0, 1, .., n]`). This keeps attachment
+    /// order stable when the worker delivers the remaining suffix through the
+    /// legacy lane. A malformed/non-prefix receipt is terminally fail-closed:
+    /// the worker will not risk duplicating provider-accepted media.
+    pub consumed_media: Vec<usize>,
+}
+
+impl RichReplyReceipt {
+    pub fn text_only(message_id: impl Into<String>) -> Self {
+        Self {
+            message_id: message_id.into(),
+            consumed_media: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyAbortReason {
+    Cancelled,
+    Failed,
+    Detached,
+}
+
+/// Classification used by the worker to make retry and fallback decisions
+/// without depending on provider-specific error codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyStreamErrorKind {
+    Unsupported,
+    InvalidTarget,
+    InvalidContent,
+    Rejected,
+    RateLimited,
+    /// A temporary failure that occurred before any provider mutation was
+    /// issued, so a caller may safely choose another delivery lane. Timeouts,
+    /// disconnects, 5xx responses, or unreadable acknowledgements are always
+    /// [`Self::Ambiguous`], never `Transient`.
+    Transient,
+    Expired,
+    Ambiguous,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ReplyStreamError {
+    pub kind: ReplyStreamErrorKind,
+    pub message: String,
+}
+
+impl ReplyStreamError {
+    pub fn new(kind: ReplyStreamErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self::new(ReplyStreamErrorKind::Unsupported, message)
+    }
+}
+
+impl std::fmt::Display for ReplyStreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::fmt::Debug for ReplyStreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReplyStreamError")
+            .field("kind", &self.kind)
+            .field("message", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl std::error::Error for ReplyStreamError {}
 
 // ── Card Stream Handle ───────────────────────────────────────────
 // Resource identifiers returned from a `create_card_stream` call.
@@ -379,6 +433,11 @@ pub struct MsgContext {
     pub sender_id: String,
     pub sender_name: Option<String>,
     pub sender_username: Option<String>,
+    /// Sender's tenant/workspace identity when the platform exposes one
+    /// (notably Slack Connect). Kept separate from `account_id`, which names
+    /// the local bot configuration rather than the remote user's workspace.
+    #[serde(default)]
+    pub sender_tenant_id: Option<String>,
     pub chat_id: String,
     pub chat_type: ChatType,
     pub chat_title: Option<String>,
@@ -594,233 +653,24 @@ pub struct InlineButton {
     pub url: Option<String>,
 }
 
-// ── Security Config ──────────────────────────────────────────────
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SecurityConfig {
-    #[serde(default)]
-    pub dm_policy: DmPolicy,
-    /// Legacy group allowlist (by chat_id). Kept for backward compatibility.
-    #[serde(default)]
-    pub group_allowlist: Vec<String>,
-    #[serde(default)]
-    pub user_allowlist: Vec<String>,
-    #[serde(default)]
-    pub admin_ids: Vec<String>,
-
-    // ── Layered group / channel config ────────────────────────────
-    /// Account-level group policy (open | allowlist | disabled).
-    #[serde(default)]
-    pub group_policy: GroupPolicy,
-    /// Per-group configuration (key is chat_id string; "*" = wildcard default).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub groups: HashMap<String, TelegramGroupConfig>,
-    /// Per-channel (Telegram Channel) configuration (key is chat_id string).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub channels: HashMap<String, TelegramChannelConfig>,
-}
-
-// ── Channel Account Config ───────────────────────────────────────
-// Persisted configuration for a single account on a channel.
+// ── Channel Health ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ChannelAccountConfig {
-    pub id: String,
-    pub channel_id: ChannelId,
-    pub label: String,
-    #[serde(default = "crate::default_true")]
-    pub enabled: bool,
-    /// Agent ID bound to this channel account. If None, falls back to global default.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
-    /// Opaque per-channel credential blob (e.g. {"token": "..."}).
-    #[serde(default)]
-    pub credentials: serde_json::Value,
-    /// Channel-specific settings (e.g. {"transport": "polling"}).
-    #[serde(default)]
-    pub settings: serde_json::Value,
-    #[serde(default)]
-    pub security: SecurityConfig,
-    /// When true, all tool calls from this IM channel are automatically approved.
-    #[serde(default)]
-    pub auto_approve_tools: bool,
-    /// When true (default), the eviction watcher emits a system message
-    /// into the IM chat when it gets evicted from a session because
-    /// another chat took it over (1:1 attach invariant). Toggleable per
-    /// account. Subscribers listen on the `channel:session_evicted`
-    /// EventBus topic emitted by `ChannelDB::{attach,update}_session`.
-    #[serde(default = "crate::default_true")]
-    pub notify_session_eviction: bool,
-    /// When true (default), `channel::worker::startup_watcher` posts a
-    /// short "back online" notice into every chat on this account that
-    /// was active within `AppConfig.startup_notification.window_secs`
-    /// after a fresh process boot. Toggleable per account.
-    #[serde(default = "crate::default_true")]
-    pub notify_startup: bool,
+pub struct AccountCapabilitySnapshot {
+    /// Adapter-owned, fixed identifier such as `signal-cli` or
+    /// `whatsapp-bridge`; never copied from an arbitrary Bridge response.
+    pub source: String,
+    /// Sanitized, length-bounded runtime version when it can be detected.
+    pub version: Option<String>,
+    pub observed_at: String,
+    /// Adapter allowlist only. Unrecognized external strings cannot grant a
+    /// capability or become UI/log output.
+    pub capabilities: Vec<String>,
+    /// `compatible`, `warning`, `blocked`, or `unknown`.
+    pub compatibility: String,
+    pub warning: Option<String>,
 }
-
-/// Settings JSON key controlling IM reply mode (see [`ImReplyMode`]).
-pub const SETTINGS_KEY_IM_REPLY_MODE: &str = "imReplyMode";
-
-/// Settings JSON key controlling whether the model's thinking/reasoning
-/// content is included in outbound IM messages (toggled via the `/reason`
-/// slash command). Default `false` — reasoning stays out of IM messages.
-pub const SETTINGS_KEY_SHOW_THINKING: &str = "showThinking";
-
-/// Settings JSON key controlling whether incoming voice / audio messages
-/// are auto-transcribed by the STT subsystem before reaching the chat
-/// engine. Default `false` — transcription costs API quota per message,
-/// so the user has to opt in per account.
-pub const SETTINGS_KEY_AUTO_TRANSCRIBE_VOICE: &str = "autoTranscribeVoice";
-
-/// Settings JSON key — account-level opt-in to knowledge-base access from this
-/// IM channel (WS8). Default `false`: IM turns get zero KB access (design D10)
-/// unless the owner explicitly enables it per account. For group / non-DM chats
-/// this opt-in is necessary but **not** sufficient — each group chat must also be
-/// confirmed in [`SETTINGS_KEY_KB_ACCESS_CHATS`].
-pub const SETTINGS_KEY_KB_ACCESS_OPT_IN: &str = "kbAccessOptIn";
-
-/// Settings JSON key — array of confirmed group/non-DM chat ids allowed KB
-/// access (WS8). A DM only needs the account-level opt-in; a group additionally
-/// needs its chat id listed here (confirmed via the in-chat `/kb on` command or
-/// the account dialog).
-pub const SETTINGS_KEY_KB_ACCESS_CHATS: &str = "kbAccessChats";
-
-impl ChannelAccountConfig {
-    /// Read `settings.imReplyMode`, falling back to `ImReplyMode::default()`
-    /// when missing or unparseable.
-    pub fn im_reply_mode(&self) -> ImReplyMode {
-        self.settings
-            .get(SETTINGS_KEY_IM_REPLY_MODE)
-            .and_then(|v| v.as_str())
-            .and_then(ImReplyMode::parse)
-            .unwrap_or_default()
-    }
-
-    /// Write `settings.imReplyMode = mode` in place. Creates the settings
-    /// object if it was previously `null` / non-object.
-    pub fn set_im_reply_mode(&mut self, mode: ImReplyMode) {
-        if !self.settings.is_object() {
-            self.settings = serde_json::json!({});
-        }
-        if let Some(obj) = self.settings.as_object_mut() {
-            obj.insert(
-                SETTINGS_KEY_IM_REPLY_MODE.to_string(),
-                serde_json::Value::String(mode.as_str().to_string()),
-            );
-        }
-    }
-
-    /// Read `settings.showThinking`. Default `false` — reasoning is not
-    /// included in IM messages unless the user opts in via `/reason on` or
-    /// the channel-account dialog toggle.
-    pub fn show_thinking(&self) -> bool {
-        self.settings
-            .get(SETTINGS_KEY_SHOW_THINKING)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    }
-
-    /// Write `settings.showThinking = on`. Creates the settings object if
-    /// it was previously `null` / non-object.
-    pub fn set_show_thinking(&mut self, on: bool) {
-        if !self.settings.is_object() {
-            self.settings = serde_json::json!({});
-        }
-        if let Some(obj) = self.settings.as_object_mut() {
-            obj.insert(
-                SETTINGS_KEY_SHOW_THINKING.to_string(),
-                serde_json::Value::Bool(on),
-            );
-        }
-    }
-
-    /// Read `settings.autoTranscribeVoice`. Default `false` — opt-in
-    /// because each transcription consumes STT API quota.
-    pub fn auto_transcribe_voice(&self) -> bool {
-        self.settings
-            .get(SETTINGS_KEY_AUTO_TRANSCRIBE_VOICE)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    }
-
-    /// Write `settings.autoTranscribeVoice = on`. Creates the settings
-    /// object if it was previously `null` / non-object.
-    pub fn set_auto_transcribe_voice(&mut self, on: bool) {
-        if !self.settings.is_object() {
-            self.settings = serde_json::json!({});
-        }
-        if let Some(obj) = self.settings.as_object_mut() {
-            obj.insert(
-                SETTINGS_KEY_AUTO_TRANSCRIBE_VOICE.to_string(),
-                serde_json::Value::Bool(on),
-            );
-        }
-    }
-
-    /// Read `settings.kbAccessOptIn` (WS8). Default `false` — IM channels have
-    /// zero KB access unless the owner opts the account in.
-    pub fn kb_access_opt_in(&self) -> bool {
-        self.settings
-            .get(SETTINGS_KEY_KB_ACCESS_OPT_IN)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    }
-
-    /// Write `settings.kbAccessOptIn = on`. Creates the settings object if it
-    /// was previously `null` / non-object.
-    pub fn set_kb_access_opt_in(&mut self, on: bool) {
-        if !self.settings.is_object() {
-            self.settings = serde_json::json!({});
-        }
-        if let Some(obj) = self.settings.as_object_mut() {
-            obj.insert(
-                SETTINGS_KEY_KB_ACCESS_OPT_IN.to_string(),
-                serde_json::Value::Bool(on),
-            );
-        }
-    }
-
-    /// Whether a specific group/non-DM `chat_id` is confirmed for KB access
-    /// (WS8). DMs ignore this list (the account opt-in alone suffices).
-    pub fn kb_access_chat_confirmed(&self, chat_id: &str) -> bool {
-        self.settings
-            .get(SETTINGS_KEY_KB_ACCESS_CHATS)
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().any(|v| v.as_str() == Some(chat_id)))
-            .unwrap_or(false)
-    }
-
-    /// Add / remove a group `chat_id` from the confirmed list (WS8). Returns the
-    /// resulting confirmed state. Idempotent.
-    pub fn set_kb_access_chat(&mut self, chat_id: &str, on: bool) -> bool {
-        if !self.settings.is_object() {
-            self.settings = serde_json::json!({});
-        }
-        let obj = match self.settings.as_object_mut() {
-            Some(o) => o,
-            None => return false,
-        };
-        let arr = obj
-            .entry(SETTINGS_KEY_KB_ACCESS_CHATS.to_string())
-            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
-        if !arr.is_array() {
-            *arr = serde_json::Value::Array(Vec::new());
-        }
-        let list = arr.as_array_mut().expect("just ensured array");
-        let present = list.iter().any(|v| v.as_str() == Some(chat_id));
-        if on && !present {
-            list.push(serde_json::Value::String(chat_id.to_string()));
-        } else if !on && present {
-            list.retain(|v| v.as_str() != Some(chat_id));
-        }
-        on
-    }
-}
-
-// ── Channel Health ───────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -831,12 +681,18 @@ pub struct ChannelHealth {
     pub error: Option<String>,
     pub uptime_secs: Option<u64>,
     pub bot_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_snapshot: Option<AccountCapabilitySnapshot>,
 }
 
 // ── Delivery Result ──────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Legacy outbound result. `success=true` is a confirmed acknowledgement;
+/// `success=false` is only a generic failure and does **not** prove that the
+/// provider performed no mutation. Callers must not automatically retry a
+/// non-idempotent send from this value alone.
 pub struct DeliveryResult {
     pub success: bool,
     pub message_id: Option<String>,
@@ -858,6 +714,15 @@ impl DeliveryResult {
             message_id: None,
             error: Some(error.into()),
         }
+    }
+}
+
+// `InlineButton` 的固有 impl 必须待在定义它的 crate 里（Rust 孤儿规则）。
+// IM 侧的 approval / ask_user 卡片按这个值匹配回调，故随类型留 kernel。
+impl InlineButton {
+    /// Returns the effective callback identifier: `callback_data` if set, otherwise `text`.
+    pub fn callback_id(&self) -> &str {
+        self.callback_data.as_deref().unwrap_or(&self.text)
     }
 }
 

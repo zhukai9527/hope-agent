@@ -18,7 +18,7 @@ This chapter covers everyday use: how to use the chat interface, how to send ima
 
 ## 3.1 The chat interface
 
-- **Send**: `Enter` sends, `Shift+Enter` inserts a line break.
+- **Send**: by default, `Enter` sends and `Shift+Enter` inserts a line break. You can switch to `Enter` for a line break and `Ctrl+Enter` to send in Settings → Chat & Context → Basics.
 - **Stop**: while a reply is being generated, the send button turns into a square "Stop" button; click it to interrupt the current reply (equivalent to `/stop`).
 - **Browse history**: with the cursor in an empty input box, press `↑` / `↓` to browse messages you sent earlier (much like terminal history).
 - **Queue while busy**: if you send a message while the AI is still replying, it goes into a "pending queue"—you can edit it, delete it, or send it as the next standalone round. Whether queued messages are sent automatically once the AI is idle is controlled by the "Auto-send queued messages" setting (on by default).
@@ -69,21 +69,40 @@ Some special tools have their own cards, such as the question card (`ask_user_qu
 
 ### The right-side panel
 
-The right side of the chat interface shows only one context panel at a time (they are mutually exclusive); you can drag the edge to widen it, or maximize it:
+The right side of the chat interface is a single, unified dockable tab bar, sitting inline with the title bar (the "right-side panel dock"). Click a tab to switch; drag a tab to reorder it (or use `Alt+Shift+Arrow` on the keyboard); each tab has a close button in its top-right corner, and middle-click also closes it; the "+" dropdown at the end of the tab bar opens a new tab (for the "Files" tab specifically, "+" always opens *another* empty file browser—it never re-focuses a tab that's already open). The whole tab area can be maximized to fill the window, or restored, and can also be collapsed away entirely—both actions apply to the entire tab area, not to a single tab.
 
-- **File Diff panel**—shows the AI's changes to files (split / unified view); see [07 · Tools & Permissions](07-tools-and-permissions.md).
+Width is auto-allocated based on window width by default (roughly 1:1 with the conversation pane, adjusting dynamically as the window resizes, with a minimum width floor on both sides); you can also drag the edge to resize it manually (the manual ratio is remembered, and can be reset back to auto). When the window is narrow, the right side temporarily switches to a single full-width view, stepping the conversation pane aside.
+
+Current tab types:
+
+- **Files**—a full mini file browser (see below).
 - **Workspace**—aggregates the current task's progress, the files read and modified, the URLs visited, Git status, goals, and so on; open it from the status bar above the input box.
-- **Plan panel**—the design document under [Plan Mode](08-autonomous-tasks.md#85-plan-mode).
-- **Browser / macOS control / Canvas / Team / Background jobs / File browser / File preview / Pull Request**—each corresponds to its own feature; see the relevant chapters.
+- **Diff**—shows the AI's changes to files (split / unified view); see [07 · Tools & Permissions](07-tools-and-permissions.md).
+- **Plan**—the design document under [Plan Mode](08-autonomous-tasks.md#85-plan-mode).
+- **Canvas / Browser / macOS control / Team / Background jobs / Sub-agent / Pull Request**—each corresponds to its own feature; see the relevant chapters.
+- **File preview**—a single-file preview opened by clicking a file card in a message; distinct from the "Files" tab.
+
+> Popping a tab out works two different ways—don't conflate them. "Browser" and "macOS control" support switching to an **in-app floating window** (a "Float window" button; the window can be dragged, resized from 8 directions, and remembers its position), with a "Reattach" action to dock it back into the tab bar. "Files", "Plan", and "Canvas" support popping out into a **separate native OS window** instead (a "Pop out" / "Open in a separate window" button, desktop-only), also with its own "Reattach" action. Workspace, Diff, Team, Background jobs, Sub-agent, Pull Request, and File preview have no pop-out mode at all—they can only be docked in the tab bar and reordered by dragging.
+
+The **Files** tab is an all-in-one mini file browser: a file tree on the left plus a preview on the right. The tree can be collapsed to show only the preview (the "Hide file list" button in the preview pane); once collapsed, clicking a folder name in the preview's breadcrumb automatically re-expands the tree and jumps to that folder. Selecting a new file within the same Files tab only updates that tab's preview—it never opens a new tab automatically. To compare multiple files side by side, right-click a file in the tree and choose "Open in new tab", or click "+" on the tab bar to open a fresh, empty Files tab and navigate manually. The path in the preview header is a clickable breadcrumb: clicking a folder name jumps back to the file list, expanded and scrolled to that folder; clicking the file name itself copies the full path without navigating.
+
+Plain HTML files (not the "managed" HTML produced by Artifacts / Canvas) default to a syntax-highlighted source view, with a "View source" / "Rendered" toggle in the preview header (shared with the Markdown preview's toggle, but Markdown defaults to "Rendered" while HTML defaults to "View source"—the opposite of each other). Switching to "Rendered" strips executable content first—scripts, `iframe`s, `on*` event attributes—and keeps only offline-safe links (`data:`, `blob:`, and in-page anchors) before showing the result in an empty-sandbox `iframe`: page scripts never run, no external resources load (only embedded `data:` / `blob:` assets are kept), and clicking a link never navigates away from the preview. Managed HTML from Artifacts / Canvas uses a separate rendering path that runs normally and is unaffected by this toggle.
+
+> "The right-side panel" here refers to the whole tab-dock area as a single, unnamed surface—there is no separate product name for it in the UI. "Workspace" is now just one of many tabs (the one that aggregates task progress); don't conflate the two.
 
 ### Message rendering
 
 Replies support full Markdown, syntax-highlighted code, math formulas (KaTeX), and Mermaid diagrams. In the desktop app, the AI can also write clickable local path links (clicking opens them in the file manager).
 
+### Selecting text: copy and quote to chat
+
+In file previews (code / text, Markdown, rich Office previews), managed HTML / Artifact previews, and the Design Space canvas, selecting some text pops up a small toolbar next to the selection with "Copy selection" and "Quote to chat" buttons; right-clicking without a selection (context menu) brings up the same toolbar, falling back to "Copy all". "Quote to chat" doesn't send anything immediately—it creates a removable staged quote block above the input box; code / text quotes also carry the file path and exact start/end line numbers (DOM-based previews like rendered Markdown or Office documents include line numbers when they can be resolved, and fall back to text-only otherwise). Clicking a staged quote jumps back to its source location, and you can delete any staged quote before sending. Previews with no selectable text—images, PDFs, audio/video, and so on—don't support this.
+
 ### Related settings (Settings → Chat & Context → Basics)
 
 | Setting | Default | What it does |
 | --- | --- | --- |
+| Press Enter to send | On | When off, `Enter` inserts a line break and `Ctrl+Enter` sends |
 | Auto-send queued messages | On | Whether messages you send while the AI is busy are queued and sent automatically |
 | Auto-expand the thinking process | On | Whether Thinking blocks are expanded by default while streaming |
 | Collapse intermediate messages when done | On | Whether completed rounds are collapsed automatically |
@@ -95,7 +114,8 @@ Replies support full Markdown, syntax-highlighted code, math formulas (KaTeX), a
 ## 3.5 Managing and searching sessions
 
 - **New conversation**: "New" in the sidebar, or `/new`. When you start a new conversation inside a project, it stays as a draft first and is only saved once you send the first message.
-- **Session list**: the sidebar is sorted by most recently updated and can be pinned. It has two browsing tabs, "Sessions" and "Sub-Agents". Sessions for scheduled tasks, Incognito, the Knowledge Space, and the Design Space **do not appear in the main list**.
+- **The AI creating a session / sending a message**: the model can call the built-in `sessions_create` tool to create a new regular session—optionally bound to a Project (defaults to the current one), with an Agent (resolved via the Project's default-agent chain, or the current Agent, when omitted), a title, inline attachments (up to 64, text or Base64 content only—no file paths), and a first message. Supplying a message or attachments immediately starts the target Agent's first turn. The resulting session is a **fully persistent, sidebar-visible regular session**, no different from one you created by hand—you can switch to it, stop it, and continue it normally. `sessions_send` similarly submits a new turn to an **existing** regular session; it's refused whenever the source or target is an Incognito session, or the target isn't a regular session (e.g. a scheduled task, IM, Knowledge Space, Design Space, or sub-agent session). Neither tool prompts for approval by default (like most non-edit built-in tools); if you want the AI to pause for confirmation before creating a session or sending into one, add them to the agent's custom approval tool list under Agent settings → Approval.
+- **Session list**: the sidebar is sorted by most recently updated and can be pinned (pinned sessions are gathered into a dedicated "Pinned" group at the top of the sidebar, aggregated across projects and IM channels; the group disappears when nothing is pinned, and can be collapsed / expanded). It has two browsing tabs, "Sessions" and "Sub-Agents". Sessions for scheduled tasks, Incognito, the Knowledge Space, and the Design Space **do not appear in the main list**. Hovering over a session row pops up a details card showing its project, working directory, model, and Git status (branch, changed-file count, added/removed lines, conflicts); you can pin or archive the session directly from the card without switching to it first.
 - **Switch / rename / archive**: click to switch; you can rename manually (a manual name won't be overwritten by the auto title). Archiving hides a conversation from everyday lists and search while retaining its messages, project, and Agent association.
 - **Restore / permanently delete**: in **Settings → Archived conversations**, search or filter by type and project, then restore any conversation. Permanent deletion is available only there and asks for confirmation; it also removes messages and attachments and cannot be undone.
 - **Continue in a new session (Fork)**: copies the current session into a new, independent session (copying the conversation content and configuration, but not any running goal, ongoing progression, or background jobs).
@@ -147,9 +167,9 @@ The priority is "session setting > project setting > default workspace". A sessi
 
 ## 3.8 Context compaction for long conversations
 
-The amount of conversation a model can remember is limited (the context window). As a conversation grows and approaches the limit, Hope Agent **compacts it automatically in layers**, so long conversations and long tasks can continue without suddenly "losing memory" or erroring out. Compaction happens automatically; you'll usually just see a compaction notice at the top.
+The amount of conversation a model can remember is limited (the context window). As a conversation grows and approaches the limit, Hope Agent **compacts it automatically in layers**, so long conversations and long tasks can continue without suddenly "losing memory" or erroring out. Compaction happens automatically; you'll usually just see a (gray, when it completes) compaction notice at the top. If compaction doesn't finish cleanly, the notice turns into an amber banner instead, with a title spelling out the specific reason—for example "Summary generation timed out", "Cleaned up context, but summary generation timed out", "Summary was needed, but was not completed", or "Cleaned up context, but summary was not completed", falling back to "Context compression paused" when it doesn't fit those cases—plus a subtitle with how many messages were processed, how many files were recovered, and so on. The banner also has a "Retry compression" button on the right, which spins and disables itself while it's running to prevent double-clicks.
 
-Compaction starts with "cleaning up stale tool results at zero cost" and works its way up to "summarizing old history"; after summarizing, it also automatically re-injects the current contents of recently edited files, so the AI doesn't forget the file it's working on.
+Compaction starts with deterministic projections that do not call another model, then works its way up to summarizing old history. Projection changes can still invalidate part of the prompt cache, so they are not literally free. A summary preserves known file touchpoints and managed references; file contents are re-injected only when the current session has a verified authorization binding. Otherwise Hope Agent safely skips the body and the model can use the normal file tools when needed—it never treats an old tool argument as permission to read a host path.
 
 **Manual commands**:
 
@@ -180,8 +200,8 @@ The first time the egg appears at the bottom of the sidebar, Hope shows a short 
 - Running text updates live with a shimmer and changes to a green check when complete. The fixed-height preview shows up to two lines; Markdown headings, emphasis, code, and links become readable plain text instead of exposing `#`, `*`, or backticks. Hover a bubble to dismiss it, reply, or stop that specific conversation.
 - Automatic appearance does not count as read. A Ready or Blocked bubble marks only its displayed message boundary as read after you dwell and move away, open the conversation, submit a quick reply, dismiss it, or deliberately collapse the expanded stack; Running, Ask User, and approval waits are not cleared this way. Unread counts then refresh from the authoritative session state.
 - Clicking the pet brings up the Hope main window; dragging only moves the pet and does not accidentally open the window. Clicking an activity returns to its exact conversation; multiple activities expand into a scrollable bubble stack, with separate compact cards for questions and approvals. Right-click the pet for compact Settings and Close actions directly over it; Settings brings up the main window at the Pets section. Restart and monitor changes restore it within the visible work area.
-- Import can scan Codex custom pets or accept a dropped folder, zip, `pet.json + image`, PNG, or WebP. Dropping several packages creates a preview for each. You can also paste a `codex://` or HTTPS link, or open a `hope-agent://pets/install?...` link. Every route stops at preview until you confirm installation.
-- The built-in Hope pet and custom pets can be exported as a Codex-compatible zip. Create generates an original pet; this is an explicit image-generation action that counts toward usage, not a background Pet runtime request.
+- Import accepts a folder, zip, `pet.json + image`, PNG, or WebP from any source, with a separate preview for each dropped package. It also accepts direct HTTPS zip, manifest, or atlas URLs from any public origin. For an ordinary web page, the skill locates the actual downloadable artifact instead of executing the site's suggested installer. Automation runs `hope-agent pet preview --source <path-or-url> --json`, waits for you to review its name, warnings, and `packageHash`, then passes that hash to `hope-agent pet import`. Every route requires confirmation, and the source never changes the destination: a Hope import writes only to Hope's pet library.
+- The built-in Hope pet and custom pets can be exported as a Codex-compatible zip. Create defaults to Codex v2 with 16 look directions, while v1 remains selectable for older clients; when idle, a v2 pet follows the pointer inside its window and returns to a front-facing pose near the center. This is an explicit image-generation action that counts toward usage, not a background Pet runtime request. Any v1 pet in the library can create a v2 copy with one click. The original v1 remains available, and an actively selected source switches to its v2 copy only after installation succeeds.
 - `/pet` toggles the window; `/pet on|off|status` controls it explicitly. HTTP, ACP, and IM cannot remotely open the always-on-top desktop window.
 
 With Reduce Motion enabled, the pet stays on a static frame. Custom pets remain on this device. Select another pet before deleting one; the confirmation toast offers Undo.
@@ -195,6 +215,8 @@ Type `/` in the chat input box or in any IM channel to trigger a slash command. 
 | Command | Purpose |
 | --- | --- |
 | `/new` | Create a new session |
+| `/fork` | Copy the current settled conversation history and continue in a new session; active goals, loops, and workflows are not copied |
+| `/side [question]` | Open a side chat without interrupting the main conversation; omit the question to type it later, or select message text and choose “Ask in side chat” |
 | `/clear` | Delete all messages in the current session |
 | `/compact` | Compact the current session's context |
 | `/stop` | Stop the current reply |

@@ -14,6 +14,8 @@ import { logger } from "@/lib/logger"
 import { applyInlineHighlight, clearInlineHighlight } from "@/lib/inlineHighlight"
 import { hasActiveTextSelection } from "@/lib/contextMenuGuard"
 import { AnimatedCollapse, AnimatedPresenceBox } from "@/components/ui/animated-presence"
+import { Button } from "@/components/ui/button"
+import { UI_MOTION } from "@/components/ui/motion"
 import {
   extractMessageFileAttachments,
   formatDuration,
@@ -23,7 +25,9 @@ import {
 } from "./chatUtils"
 import { ChatWelcomeHero } from "./ChatWelcomeHero"
 import { SkillMentionText } from "./skill-mention/SkillMentionText"
+import { collapseWhitespaceWithTypedMentions } from "./mentions/typedMentions"
 import MessageBubble from "./MessageBubble"
+import ScheduleEntityCard from "./message/ScheduleEntityCard"
 import { assistantTurnHasFileMutations, editableLastUserMessageIndex } from "./message/messageEdit"
 import {
   goalCompletionReportFromMessage,
@@ -43,6 +47,8 @@ import type {
   Message,
   AgentSummaryForSidebar,
   PendingMessageQuote,
+  ScheduleEntityMetadata,
+  ToolCall,
 } from "@/types/chat"
 import type { PlanModeState } from "./plan-mode/usePlanMode"
 import { PANEL_SCROLL_FADE } from "./right-panel/panelFade"
@@ -112,6 +118,10 @@ interface MessageListProps {
   /** Pad the transcript bottom when no composer sits below it (read-only
    *  sub-agent / cron session viewers) so the last message isn't flush to the edge. */
   bottomInset?: boolean
+  /** Give the latest human turn a viewport-sized frame. Sending then places
+   *  the user row near the top while a short assistant reply grows into the
+   *  reserved space without pushing the conversation upward. */
+  anchorLatestTurn?: boolean
   /** Soften the top/bottom scroll edges with the shared panel mask. Applied to
    *  the scroll container only, so the floating jump-to-latest button stays crisp. */
   scrollFade?: boolean
@@ -124,18 +134,23 @@ interface MessageListProps {
   onForkFromMessage?: (message: Message) => void
   onEditAndResend?: (message: Message, content: string) => Promise<void>
   onOpenMemorySettings?: () => void
+  onConfigureVisionBridge?: () => void
   onOpenKnowledge?: (target?: KnowledgeFocusTarget) => void
   onAddQuickPrompt?: (content: string) => void
   onAddMessageQuote?: (quote: PendingMessageQuote) => void
+  onAskInSideChat?: (quote: PendingMessageQuote) => void
   renderMessageActions?: (msg: Message, index: number) => ReactNode
   displayMode?: ChatDisplayMode
   autoCollapseCompletedTurns?: boolean
   /** Reports whether the latest transcript tail is inside the reading window. */
   onAtBottomChange?: (atBottom: boolean) => void
+  /** Right lane, in px, to keep clear for the conversation-owned environment card. */
+  environmentInsetPx?: number
 }
 
 const AT_BOTTOM_THRESHOLD_PX = 48
 const LOAD_MORE_THRESHOLD_PX = 200
+export const CHAT_CONTENT_MAX_WIDTH_PX = 880
 const CHAT_CONTENT_MAX_WIDTH_CLASS = "max-w-[880px]"
 // Windowed view: cap simultaneously-rendered messages so a long-running
 // session that's been Load-More'd many times doesn't accumulate thousands of
@@ -147,6 +162,7 @@ const COMPACT_USER_ANCHOR_LEAD_PX = 32
 const COMPACT_USER_REPLY_VISIBLE_MIN_PX = 56
 const COMPACT_USER_ANCHOR_EXIT_MS = 200
 const ASK_USER_FOLLOW_FRAMES = 16
+const COMPLETED_TURN_LAYOUT_SETTLE_MS = UI_MOTION.collapse + 80
 
 interface MessageRenderItem {
   msg: Message
@@ -166,9 +182,16 @@ interface CompletedTurnCollapseRow {
   assistantCount: number
   elapsedMs?: number
   expanded: boolean
+  scheduleCards: Array<{ key: string; metadata: ScheduleEntityMetadata }>
 }
 
 type MessageRenderRow = { kind: "message"; item: MessageRenderItem } | CompletedTurnCollapseRow
+
+interface TranscriptSegment {
+  key: string
+  humanTurnOriginalIndex: number | null
+  rows: MessageRenderRow[]
+}
 
 interface CompactUserAnchor {
   dbId?: number
@@ -176,6 +199,7 @@ interface CompactUserAnchor {
   bodyStartRowKey: string
   bodyEndRowKey: string
   text: string
+  typedMentions: NonNullable<Message["typedMentions"]>
 }
 
 function preferredScrollBehavior(): ScrollBehavior {
@@ -193,9 +217,21 @@ function shouldPassExecutionStateToBubble(
   return loading || executionState !== "running"
 }
 
+/**
+ * An autonomous occurrence — scheduled task, wakeup, loop tick — lands between
+ * turns and reads as its own exchange, so it starts a turn despite rendering
+ * centered; folding it into the previous human turn hides the very prompt that
+ * explains the answer below it. Subagent / workflow results belong to the turn
+ * that spawned them and stay non-starts.
+ */
+function isTriggeredTurnStart(msg: Message): boolean {
+  return !!msg.isCronTrigger || !!msg.isWakeupTrigger || !!msg.isLoopTrigger
+}
+
 function isHumanTurnStart(msg: Message): boolean {
   if (msg.fromAgentId) return false
   if (msg.role === "user" && !isCenteredSystemMessage(msg)) return true
+  if (msg.role === "user" && isTriggeredTurnStart(msg)) return true
   return msg.slashEvent?.displayAs === "user"
 }
 
@@ -291,6 +327,44 @@ function hideFooterFilesOnItems(items: MessageRenderItem[]): MessageRenderItem[]
   )
 }
 
+function messageTools(msg: Message): ToolCall[] {
+  if (msg.contentBlocks) {
+    return msg.contentBlocks.flatMap((block) => (block.type === "tool_call" ? [block.tool] : []))
+  }
+  return msg.toolCalls ?? []
+}
+
+function scheduleCardsFromItems(
+  items: MessageRenderItem[],
+): Array<{ key: string; metadata: ScheduleEntityMetadata }> {
+  const cards = new Map<string, { key: string; metadata: ScheduleEntityMetadata }>()
+  for (const item of items) {
+    for (const tool of messageTools(item.msg)) {
+      const metadata = tool.metadata
+      if (metadata?.kind !== "schedule_entity") continue
+      const key = `${metadata.entityType}:${metadata.entityId}`
+      if (!cards.has(key)) cards.set(key, { key, metadata })
+    }
+  }
+  return [...cards.values()]
+}
+
+function hideScheduleCardsOnItems(items: MessageRenderItem[]): MessageRenderItem[] {
+  return items.map((item) => {
+    let changed = false
+    const hideMetadata = (tool: ToolCall): ToolCall => {
+      if (tool.metadata?.kind !== "schedule_entity") return tool
+      changed = true
+      return { ...tool, metadata: undefined }
+    }
+    const contentBlocks = item.msg.contentBlocks?.map((block) =>
+      block.type === "tool_call" ? { ...block, tool: hideMetadata(block.tool) } : block,
+    )
+    const toolCalls = item.msg.toolCalls?.map(hideMetadata)
+    return changed ? { ...item, msg: { ...item.msg, contentBlocks, toolCalls } } : item
+  })
+}
+
 function assistantProcessBlockCount(blocks: NonNullable<Message["contentBlocks"]>): number {
   return blocks.filter(
     (block) => block.type === "thinking" || block.type === "tool_call" || block.type === "text",
@@ -332,11 +406,21 @@ function itemContainsAnyHighlightTerm(item: MessageRenderItem, terms: string[] |
   return containsAnyHighlightTerm(messageSearchText(item.msg), terms)
 }
 
-function compactAnchorTextForMessage(msg: Message): string | null {
-  const text = (msg.planComment?.comment || msg.slashEvent?.command || msg.content)
-    .replace(/\s+/g, " ")
-    .trim()
-  return text || null
+function compactAnchorTextForMessage(
+  msg: Message,
+): { text: string; typedMentions: NonNullable<Message["typedMentions"]> } | null {
+  let source = msg.content
+  let typedMentions = msg.typedMentions ?? []
+  if (msg.planComment?.comment) {
+    source = msg.planComment.comment
+    typedMentions = []
+  } else if (msg.slashEvent?.command) {
+    source = msg.slashEvent.command
+    typedMentions = []
+  }
+
+  const compact = collapseWhitespaceWithTypedMentions(source, typedMentions)
+  return compact.text ? { text: compact.text, typedMentions: compact.mentions } : null
 }
 
 function findActiveCompactUserAnchor(
@@ -556,7 +640,8 @@ function buildMessageRenderRows(
       ...rawCollapsedItems.map(filesFromRenderItem),
       ...rawCollapsedItems.map((collapsedItem) => collapsedItem.footerFiles),
     )
-    const collapsedItems = hideFooterFilesOnItems(rawCollapsedItems)
+    const scheduleCards = scheduleCardsFromItems(rawCollapsedItems)
+    const collapsedItems = hideScheduleCardsOnItems(hideFooterFilesOnItems(rawCollapsedItems))
     const finalAssistantWithHoistedFiles: MessageRenderItem =
       hoistedFiles.length > 0
         ? {
@@ -589,12 +674,8 @@ function buildMessageRenderRows(
         finalAssistantItem,
       ),
       expanded,
+      scheduleCards,
     })
-    if (expanded) {
-      for (const collapsedItem of collapsedItems) {
-        rows.push({ kind: "message", item: collapsedItem })
-      }
-    }
     const tailItems = turnItems.slice(finalAssistantPos)
     if (finalAssistantSplit) {
       rows.push({
@@ -615,6 +696,33 @@ function buildMessageRenderRows(
     i = nextTurn
   }
   return rows
+}
+
+function buildTranscriptSegments(rows: MessageRenderRow[]): TranscriptSegment[] {
+  const segments: TranscriptSegment[] = []
+  let current: TranscriptSegment | null = null
+
+  for (const row of rows) {
+    const startsHumanTurn = row.kind === "message" && isHumanTurnStart(row.item.msg)
+    if (startsHumanTurn) {
+      current = {
+        key: `transcript-turn:${rowKeyForItem(row.item)}`,
+        humanTurnOriginalIndex: row.item.originalIndex,
+        rows: [],
+      }
+      segments.push(current)
+    } else if (!current) {
+      current = {
+        key: "transcript-prelude",
+        humanTurnOriginalIndex: null,
+        rows: [],
+      }
+      segments.push(current)
+    }
+    current.rows.push(row)
+  }
+
+  return segments
 }
 
 function CompletedTurnCollapseSummary({
@@ -641,22 +749,24 @@ function CompletedTurnCollapseSummary({
     <div
       key={row.key}
       data-message-key={row.key}
-      className="grid w-full min-w-0 grid-cols-1 justify-items-stretch pb-3"
+      className="mb-2 flex w-full min-w-0 items-center border-b border-border/40 pb-1"
     >
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         aria-expanded={row.expanded}
         onClick={() => onToggle(row.key)}
-        className="group flex h-9 w-full cursor-pointer items-center gap-1.5 border-b border-border/50 px-0 text-left text-sm font-medium text-muted-foreground/75 transition-colors hover:text-muted-foreground"
+        className="group -ml-1.5 h-7 w-fit max-w-full cursor-pointer justify-start gap-1 rounded-md px-1.5 text-left text-sm font-normal text-muted-foreground/80 hover:bg-transparent hover:text-muted-foreground/80"
       >
         <span className="truncate">{label}</span>
         <ChevronRight
           className={cn(
-            "h-4 w-4 shrink-0 transition-transform duration-200",
+            "h-3.5 w-3.5 shrink-0 transition-transform duration-200",
             row.expanded && "rotate-90",
           )}
         />
-      </button>
+      </Button>
     </div>
   )
 }
@@ -700,19 +810,23 @@ export default function MessageList({
   onOpenSubagentRun,
   subagentRunsSnapshot,
   bottomInset,
+  anchorLatestTurn = false,
   scrollFade,
   onOpenDiff,
   onResume,
   onForkFromMessage,
   onEditAndResend,
   onOpenMemorySettings,
+  onConfigureVisionBridge,
   onOpenKnowledge,
   onAddQuickPrompt,
   onAddMessageQuote,
+  onAskInSideChat,
   renderMessageActions,
   displayMode = "bubble",
   autoCollapseCompletedTurns = true,
   onAtBottomChange,
+  environmentInsetPx = 0,
 }: MessageListProps) {
   const { t } = useTranslation()
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -738,7 +852,11 @@ export default function MessageList({
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const askUserFollowRafRef = useRef<number | null>(null)
   const lastAskUserFollowKeyRef = useRef<string | null>(null)
+  const completedTurnLayoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<MessageContextMenuState | null>(null)
+  const messageSelectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const messageSelectionPointerActiveRef = useRef(false)
+  const suppressMessageSelectionUntilRef = useRef(0)
   const editableUserMessageIndex = useMemo(
     () =>
       onEditAndResend
@@ -886,12 +1004,62 @@ export default function MessageList({
     ],
   )
   const pendingQuestionRequestId = pendingQuestionGroup?.requestId ?? null
+  const transcriptSegments = useMemo(() => buildTranscriptSegments(renderRows), [renderRows])
+  const transcriptSegmentObservationKey = useMemo(
+    () => transcriptSegments.map((segment) => segment.key).join("\u0000"),
+    [transcriptSegments],
+  )
+  const latestTurnFrameKey = useMemo(() => {
+    // Around-window search results do not represent the live transcript tail,
+    // so framing their last visible turn would manufacture a false "latest"
+    // position and interfere with forward pagination.
+    if (!anchorLatestTurn || hasMoreAfter) return null
+
+    let latestHumanTurnIndex = -1
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (isHumanTurnStart(messages[i])) {
+        latestHumanTurnIndex = i
+        break
+      }
+    }
+    if (latestHumanTurnIndex < 0) return null
+
+    return (
+      transcriptSegments.find((segment) => segment.humanTurnOriginalIndex === latestHumanTurnIndex)
+        ?.key ?? null
+    )
+  }, [anchorLatestTurn, hasMoreAfter, messages, transcriptSegments])
 
   useEffect(() => {
     setExpandedCompletedTurns(new Set())
+    if (completedTurnLayoutTimerRef.current !== null) {
+      clearTimeout(completedTurnLayoutTimerRef.current)
+      completedTurnLayoutTimerRef.current = null
+    }
   }, [sessionKey])
 
   const toggleCompletedTurn = useCallback((key: string) => {
+    // A manual disclosure is a reading action. Suspend the transcript's
+    // follow-bottom ResizeObserver while the collapse height animates so the
+    // newly revealed details push the final reply and every later row down in
+    // normal document flow instead of being cancelled out by scroll pinning.
+    userScrollLockRef.current = true
+    if (completedTurnLayoutTimerRef.current !== null) {
+      clearTimeout(completedTurnLayoutTimerRef.current)
+    }
+    completedTurnLayoutTimerRef.current = setTimeout(() => {
+      const container = containerRef.current
+      if (container) {
+        const distanceFromBottom =
+          container.scrollHeight - container.scrollTop - container.clientHeight
+        const isAtBottom = distanceFromBottom < AT_BOTTOM_THRESHOLD_PX
+        atBottomRef.current = isAtBottom
+        setAtBottom(isAtBottom)
+        if (isAtBottom) userScrollLockRef.current = false
+      }
+      completedTurnLayoutTimerRef.current = null
+    }, COMPLETED_TURN_LAYOUT_SETTLE_MS)
+
     setExpandedCompletedTurns((prev) => {
       const next = new Set(prev)
       if (next.has(key)) {
@@ -937,12 +1105,12 @@ export default function MessageList({
       const { msg } = row.item
       if (!msg.fromAgentId && !isCenteredSystemMessage(msg) && isUserAlignedMessage(msg)) {
         finishPendingAnchor()
-        const text = compactAnchorTextForMessage(msg)
-        if (text) {
+        const anchorText = compactAnchorTextForMessage(msg)
+        if (anchorText) {
           pendingAnchor = {
             dbId: msg.dbId,
             rowKey,
-            text,
+            ...anchorText,
           }
         }
       } else if (pendingAnchor) {
@@ -1161,15 +1329,19 @@ export default function MessageList({
   }, [sessionKey])
 
   // ResizeObserver: re-pin to bottom whenever the layout changes while we're
-  // tracking bottom. Two targets:
+  // tracking bottom. Three target groups:
   //   - contentRef: content total height grows from async-rendered subtrees
   //     (markdown, shiki, katex, mermaid, images).
   //   - containerRef: scroll container height shrinks/grows when siblings
   //     (memory toast, ChatInput textarea expanding) take/return space —
   //     without this, sibling-resize hides the bottom of the conversation
   //     because the browser doesn't auto-adjust scrollTop.
+  //   - every stable transcript segment: latest-turn framing gives contentRef
+  //     a fixed viewport height, so rows before the frame and the frame itself
+  //     must be observed directly for async growth (previews, diagrams, images).
   // Re-attach on sessionKey change because outer `<div key={sessionKey}>`
-  // remounts both refs to fresh DOM nodes.
+  // remounts the refs to fresh DOM nodes. Segment-key changes also rebind the
+  // observer after windowing adds/removes stable turn wrappers.
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return
     const el = containerRef.current
@@ -1183,8 +1355,11 @@ export default function MessageList({
     })
     ro.observe(content)
     ro.observe(el)
+    for (const segment of content.querySelectorAll<HTMLElement>("[data-transcript-segment]")) {
+      ro.observe(segment)
+    }
     return () => ro.disconnect()
-  }, [sessionKey, updateCompactUserAnchor])
+  }, [hasMore, sessionKey, transcriptSegmentObservationKey, updateCompactUserAnchor])
 
   // Scroll listener: track atBottom + trigger load-more near top.
   // The user-intent listeners (wheel/touch/keyboard) below set
@@ -1438,6 +1613,9 @@ export default function MessageList({
     () => () => {
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current)
+      if (completedTurnLayoutTimerRef.current) {
+        clearTimeout(completedTurnLayoutTimerRef.current)
+      }
       // Drop any lingering inline highlight on unmount / session swap so
       // ranges from the previous bubble don't bleed into the new one.
       clearInlineHighlight()
@@ -1464,6 +1642,153 @@ export default function MessageList({
       window.removeEventListener("scroll", close, true)
     }
   }, [contextMenu])
+
+  const syncMessageSelection = useCallback(() => {
+    const selection = window.getSelection()
+    const closeAutomaticMenu = () => {
+      setContextMenu((current) => (current?.selectedText ? null : current))
+    }
+    if (
+      !selection ||
+      selection.isCollapsed ||
+      selection.rangeCount === 0 ||
+      !selection.anchorNode ||
+      !selection.focusNode
+    ) {
+      closeAutomaticMenu()
+      return
+    }
+    const rowForNode = (node: Node): HTMLElement | null => {
+      const element = node instanceof Element ? node : node.parentElement
+      const row = element?.closest<HTMLElement>("[data-message-index]") ?? null
+      return row && rootRef.current?.contains(row) ? row : null
+    }
+    const anchorRow = rowForNode(selection.anchorNode)
+    const focusRow = rowForNode(selection.focusNode)
+    if (!anchorRow || anchorRow !== focusRow) {
+      // Cross-message selections keep native copy semantics and never become
+      // a quote attributed to one arbitrary row.
+      closeAutomaticMenu()
+      return
+    }
+    const index = Number(anchorRow.dataset.messageIndex)
+    const msg = Number.isInteger(index) ? messagesRef.current[index] : undefined
+    if (
+      !msg ||
+      (msg.role !== "user" && msg.role !== "assistant") ||
+      msg.isMeta ||
+      isCenteredSystemMessage(msg)
+    ) {
+      closeAutomaticMenu()
+      return
+    }
+    const selectedText = selection.toString()
+    if (!selectedText.trim()) {
+      closeAutomaticMenu()
+      return
+    }
+    const range = selection.getRangeAt(0)
+    // Chromium/WebKit expose Range#getBoundingClientRect, but keep a row
+    // fallback for older embedded engines (and non-layout test DOMs) so a
+    // valid selection never crashes the transcript listener.
+    const rect =
+      typeof range.getBoundingClientRect === "function"
+        ? range.getBoundingClientRect()
+        : anchorRow.getBoundingClientRect()
+    const menuWidth = 260
+    const menuHeight = 44
+    const centeredX = rect.left + rect.width / 2 - menuWidth / 2
+    const aboveY = rect.top - menuHeight - 8
+    const preferredY = aboveY >= 8 ? aboveY : rect.bottom + 8
+    setContextMenu({
+      x: Math.max(8, Math.min(centeredX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(preferredY, window.innerHeight - menuHeight - 8)),
+      index,
+      selectedText,
+      quoteRole: msg.role,
+    })
+  }, [])
+
+  const scheduleMessageSelectionSync = useCallback(
+    (delay: number) => {
+      if (messageSelectionTimerRef.current) clearTimeout(messageSelectionTimerRef.current)
+      messageSelectionTimerRef.current = setTimeout(() => {
+        messageSelectionTimerRef.current = null
+        if (Date.now() < suppressMessageSelectionUntilRef.current) return
+        syncMessageSelection()
+      }, delay)
+    },
+    [syncMessageSelection],
+  )
+
+  useEffect(() => {
+    const belongsToTranscript = (target: EventTarget | null) =>
+      target instanceof Node && Boolean(rootRef.current?.contains(target))
+    const onPointerDown = (event: PointerEvent) => {
+      if (!event.isPrimary || !belongsToTranscript(event.target)) return
+      if (event.button === 2) {
+        suppressMessageSelectionUntilRef.current = Date.now() + 250
+        if (messageSelectionTimerRef.current) clearTimeout(messageSelectionTimerRef.current)
+        return
+      }
+      if (event.button !== 0) return
+      messageSelectionPointerActiveRef.current = true
+      if (messageSelectionTimerRef.current) clearTimeout(messageSelectionTimerRef.current)
+    }
+    const finishPointerSelection = (event: PointerEvent) => {
+      if (!event.isPrimary || !messageSelectionPointerActiveRef.current) return
+      messageSelectionPointerActiveRef.current = false
+      scheduleMessageSelectionSync(0)
+    }
+    const onPointerCancel = (event: PointerEvent) => {
+      if (!event.isPrimary) return
+      messageSelectionPointerActiveRef.current = false
+    }
+    const onPointerOut = (event: PointerEvent) => {
+      if (
+        event.isPrimary &&
+        messageSelectionPointerActiveRef.current &&
+        (event.pointerType === "mouse" || !event.pointerType) &&
+        !event.relatedTarget
+      ) {
+        messageSelectionPointerActiveRef.current = false
+        scheduleMessageSelectionSync(0)
+      }
+    }
+    const onWindowBlur = () => {
+      messageSelectionPointerActiveRef.current = false
+      if (messageSelectionTimerRef.current) {
+        clearTimeout(messageSelectionTimerRef.current)
+        messageSelectionTimerRef.current = null
+      }
+    }
+    const onSelectionChange = () => {
+      if (
+        messageSelectionPointerActiveRef.current ||
+        Date.now() < suppressMessageSelectionUntilRef.current
+      ) {
+        return
+      }
+      // Keyboard selection and mobile selection handles have no reliable row
+      // pointer-up. Debounce their intermediate Selection states.
+      scheduleMessageSelectionSync(100)
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    document.addEventListener("pointerup", finishPointerSelection, true)
+    document.addEventListener("pointercancel", onPointerCancel, true)
+    document.addEventListener("pointerout", onPointerOut, true)
+    document.addEventListener("selectionchange", onSelectionChange)
+    window.addEventListener("blur", onWindowBlur)
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true)
+      document.removeEventListener("pointerup", finishPointerSelection, true)
+      document.removeEventListener("pointercancel", onPointerCancel, true)
+      document.removeEventListener("pointerout", onPointerOut, true)
+      document.removeEventListener("selectionchange", onSelectionChange)
+      window.removeEventListener("blur", onWindowBlur)
+      if (messageSelectionTimerRef.current) clearTimeout(messageSelectionTimerRef.current)
+    }
+  }, [scheduleMessageSelectionSync])
 
   const handleJumpToLatest = useCallback(() => {
     const el = containerRef.current
@@ -1536,8 +1861,8 @@ export default function MessageList({
       if (!selectedText.trim()) return
       e.preventDefault()
       setContextMenu({
-        x: Math.max(8, Math.min(e.clientX, window.innerWidth - 176)),
-        y: Math.max(8, Math.min(e.clientY, window.innerHeight - 92)),
+        x: Math.max(8, Math.min(e.clientX, window.innerWidth - 260)),
+        y: Math.max(8, Math.min(e.clientY, window.innerHeight - 52)),
         index,
         selectedText,
         quoteRole: msg.role,
@@ -1599,6 +1924,181 @@ export default function MessageList({
     [messages, subagentRunsSnapshot],
   )
 
+  // `insideProcessedFold`: the turn's folded steps. Folding is presentation
+  // only, so they drop their own action bar — it belongs to the turn's final
+  // reply, one per bubble.
+  const renderMessageItem = (item: MessageRenderItem, insideProcessedFold = false) => {
+    const { msg, originalIndex } = item
+    const rowKey = rowKeyForItem(item)
+    const isLast = originalIndex === messages.length - 1
+    // Only the last bubble cares about the `loading` prop (drives
+    // streaming-bubble class, dots placeholder, MarkdownRenderer streaming
+    // hint). Older bubbles stay stable when global loading flips.
+    const bubbleLoading = isLast ? loading : false
+    const bubbleExecutionState = shouldPassExecutionStateToBubble(
+      isLast,
+      bubbleLoading,
+      executionState,
+    )
+      ? executionState
+      : null
+    const forceExpandUserContent = msg.dbId != null && searchExpandedUserMessageId === msg.dbId
+
+    return (
+      <div
+        key={rowKey}
+        data-message-key={rowKey}
+        data-message-id={msg.dbId ?? undefined}
+        data-message-source-id={item.sourceDbId ?? undefined}
+        data-message-index={originalIndex}
+        className={cn(
+          "grid w-full min-w-0 grid-cols-1 rounded-lg transition-colors",
+          itemMatchesMessageId(item, highlightMessageId) && "message-hit-pulse",
+          isTimelineMode
+            ? isCenteredSystemMessage(msg)
+              ? "justify-items-center pb-4"
+              : isUserAlignedMessage(msg) && !msg.fromAgentId
+                ? "justify-items-end pb-4"
+                : msg.role === "assistant"
+                  ? "justify-items-stretch pb-0"
+                  : "justify-items-start pb-4"
+            : cn(
+                "pb-4",
+                isCenteredSystemMessage(msg)
+                  ? "justify-items-center"
+                  : isUserAlignedMessage(msg) && !msg.fromAgentId
+                    ? "justify-items-end"
+                    : "justify-items-start",
+              ),
+          isLast && originalIndex >= animationBaseline && "animate-fade-slide-in",
+        )}
+      >
+        <MessageBubble
+          msg={msg}
+          index={originalIndex}
+          isLast={isLast}
+          loading={bubbleLoading}
+          executionState={bubbleExecutionState}
+          agents={agents}
+          isHovered={hoveredMsgIndex === originalIndex}
+          onHover={setHoveredMsgIndex}
+          onContextMenu={handleContextMenu}
+          isCopied={copiedIndex === originalIndex}
+          onCopy={handleCopyMessage}
+          onAddQuickPrompt={onAddQuickPrompt}
+          sessionId={sessionId}
+          onOpenPlanPanel={onOpenPlanPanel}
+          onViewChildSession={onViewChildSession}
+          onSwitchModel={onSwitchModel}
+          onViewSystemPrompt={onViewSystemPrompt}
+          compacting={compacting}
+          onCompactContext={onCompactContext}
+          onOpenDashboardTab={onOpenDashboardTab}
+          onOpenDiff={onOpenDiff}
+          onResume={onResume}
+          onForkFromMessage={onForkFromMessage}
+          canEditAndResend={editableUserMessageIndex === originalIndex}
+          editHasFileMutations={
+            editableUserMessageIndex === originalIndex && editedTurnHasFileMutations
+          }
+          onEditAndResend={onEditAndResend}
+          onOpenMemorySettings={onOpenMemorySettings}
+          onConfigureVisionBridge={onConfigureVisionBridge}
+          onOpenKnowledge={onOpenKnowledge}
+          displayMode={displayMode}
+          footerFiles={item.footerFiles}
+          hideOwnFooterFiles={item.hideOwnFooterFiles}
+          goalCompletionReportOverride={item.goalCompletionReport}
+          suppressGoalCompletionFooter={item.suppressGoalCompletionFooter}
+          hideActionBar={insideProcessedFold}
+          forceExpandUserContent={forceExpandUserContent}
+          onForceExpandedUserContentDismiss={
+            forceExpandUserContent
+              ? () =>
+                  setSearchExpandedUserMessageId((current) =>
+                    current === msg.dbId ? null : current,
+                  )
+              : undefined
+          }
+        />
+        {renderMessageActions?.(msg, originalIndex)}
+      </div>
+    )
+  }
+
+  const renderMessageRow = (row: MessageRenderRow) => {
+    if (row.kind === "completed-turn-collapse") {
+      return (
+        <div key={row.key} className="w-full min-w-0">
+          <CompletedTurnCollapseSummary row={row} onToggle={toggleCompletedTurn} />
+          <AnimatedCollapse open={row.expanded} overflow="visible-when-open" unmountOnExit>
+            <div data-testid="completed-turn-details" className="min-w-0">
+              {row.items.map((item) => renderMessageItem(item, true))}
+            </div>
+          </AnimatedCollapse>
+          {row.scheduleCards.map((card) => (
+            <ScheduleEntityCard key={card.key} metadata={card.metadata} />
+          ))}
+        </div>
+      )
+    }
+    return renderMessageItem(row.item)
+  }
+
+  const transcriptTail = (
+    <>
+      {hasMoreAfter && (
+        <div className="pt-2 pb-1">
+          <LoadMoreRow loadingMore={loadingMoreAfter} onLoadMore={onLoadMoreAfter} />
+        </div>
+      )}
+
+      <AnimatedCollapse open={hasFooterContent} durationMs={220}>
+        <div className="flex flex-col gap-4 pt-2 pb-6">
+          {pendingQuestionGroup && (
+            <div className="w-full">
+              <AskUserQuestionBlock
+                key={pendingQuestionGroup.requestId}
+                group={pendingQuestionGroup}
+                onSubmitted={onQuestionSubmitted}
+                variant={askUserVariant}
+              />
+            </div>
+          )}
+          {planCardVisible && planCardData && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] w-full">
+                <PlanCardBlock
+                  data={planCardData}
+                  planState={planState ?? "off"}
+                  onOpenPanel={onOpenPlanPanel}
+                  onApprove={onApprovePlan}
+                  onExit={onExitPlan}
+                />
+              </div>
+            </div>
+          )}
+          {planSubagentRunning && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/5 border border-blue-500/20 text-sm text-blue-600 dark:text-blue-400 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <span className="animate-spin h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full shrink-0" />
+              <span>{t("planMode.planningInProgress")}</span>
+            </div>
+          )}
+          {showEmpty && !historyLoading && !heroComposer && (
+            <div className="flex min-h-[50vh] items-center justify-center animate-in fade-in-0 duration-300">
+              <ChatWelcomeHero
+                incognito={incognito}
+                context={welcomeContext}
+                projectName={projectName}
+                onProjectSuggestion={onProjectSuggestion}
+              />
+            </div>
+          )}
+        </div>
+      </AnimatedCollapse>
+    </>
+  )
+
   return (
     <SubagentRunsProvider
       sessionId={subagentRunsSnapshot || hasSubagentContent ? (sessionId ?? null) : null}
@@ -1633,179 +2133,48 @@ export default function MessageList({
             isTimelineMode && "px-5 sm:px-6",
             scrollFade && PANEL_SCROLL_FADE,
           )}
+          // Inline so no `px-*` in the list above can win the merge.
+          style={environmentInsetPx ? { paddingRight: environmentInsetPx } : undefined}
         >
           <div
             ref={contentRef}
             className={cn(
               "mx-auto w-full pt-4",
+              latestTurnFrameKey && "h-full",
               bottomInset && "pb-6",
               CHAT_CONTENT_MAX_WIDTH_CLASS,
             )}
           >
             {hasMore && displayedStart === 0 && (
-              <div className="pt-6">
+              <div data-transcript-segment className="pt-6">
                 <LoadMoreRow loadingMore={loadingMore} onLoadMore={onLoadMore} />
               </div>
             )}
 
-            {renderRows.map((row) => {
-              if (row.kind === "completed-turn-collapse") {
-                return (
-                  <CompletedTurnCollapseSummary
-                    key={row.key}
-                    row={row}
-                    onToggle={toggleCompletedTurn}
-                  />
-                )
-              }
-
-              const { msg, originalIndex } = row.item
-              const rowKey = rowKeyForItem(row.item)
-              const isLast = originalIndex === messages.length - 1
-              // Only the last bubble cares about the `loading` prop (drives
-              // streaming-bubble class, dots placeholder, MarkdownRenderer
-              // streaming hint). Pass false to all others so global loading
-              // flips don't re-render the entire list — that's the source of
-              // the post-stream "flicker" (markdown / shiki / katex subtree
-              // rebuilds when each bubble's loading prop changes).
-              const bubbleLoading = isLast ? loading : false
-              const bubbleExecutionState = shouldPassExecutionStateToBubble(
-                isLast,
-                bubbleLoading,
-                executionState,
-              )
-                ? executionState
-                : null
-              const forceExpandUserContent =
-                msg.dbId != null && searchExpandedUserMessageId === msg.dbId
-              return (
-                <div
-                  key={rowKey}
-                  data-message-key={rowKey}
-                  data-message-id={msg.dbId ?? undefined}
-                  data-message-source-id={row.item.sourceDbId ?? undefined}
-                  className={cn(
-                    "grid w-full min-w-0 grid-cols-1 rounded-lg transition-colors",
-                    itemMatchesMessageId(row.item, highlightMessageId) && "message-hit-pulse",
-                    isTimelineMode
-                      ? isCenteredSystemMessage(msg)
-                        ? "justify-items-center pb-4"
-                        : isUserAlignedMessage(msg) && !msg.fromAgentId
-                          ? "justify-items-end pb-4"
-                          : msg.role === "assistant"
-                            ? "justify-items-stretch pb-0"
-                            : "justify-items-start pb-4"
-                      : cn(
-                          "pb-4",
-                          isCenteredSystemMessage(msg)
-                            ? "justify-items-center"
-                            : isUserAlignedMessage(msg) && !msg.fromAgentId
-                              ? "justify-items-end"
-                              : "justify-items-start",
-                        ),
-                    isLast && originalIndex >= animationBaseline && "animate-fade-slide-in",
-                  )}
-                >
-                  <MessageBubble
-                    msg={msg}
-                    index={originalIndex}
-                    isLast={isLast}
-                    loading={bubbleLoading}
-                    executionState={bubbleExecutionState}
-                    agents={agents}
-                    isHovered={hoveredMsgIndex === originalIndex}
-                    onHover={setHoveredMsgIndex}
-                    onContextMenu={handleContextMenu}
-                    isCopied={copiedIndex === originalIndex}
-                    onCopy={handleCopyMessage}
-                    onAddQuickPrompt={onAddQuickPrompt}
-                    sessionId={sessionId}
-                    onOpenPlanPanel={onOpenPlanPanel}
-                    onViewChildSession={onViewChildSession}
-                    onSwitchModel={onSwitchModel}
-                    onViewSystemPrompt={onViewSystemPrompt}
-                    compacting={compacting}
-                    onCompactContext={onCompactContext}
-                    onOpenDashboardTab={onOpenDashboardTab}
-                    onOpenDiff={onOpenDiff}
-                    onResume={onResume}
-                    onForkFromMessage={onForkFromMessage}
-                    canEditAndResend={editableUserMessageIndex === originalIndex}
-                    editHasFileMutations={
-                      editableUserMessageIndex === originalIndex && editedTurnHasFileMutations
-                    }
-                    onEditAndResend={onEditAndResend}
-                    onOpenMemorySettings={onOpenMemorySettings}
-                    onOpenKnowledge={onOpenKnowledge}
-                    displayMode={displayMode}
-                    footerFiles={row.item.footerFiles}
-                    hideOwnFooterFiles={row.item.hideOwnFooterFiles}
-                    goalCompletionReportOverride={row.item.goalCompletionReport}
-                    suppressGoalCompletionFooter={row.item.suppressGoalCompletionFooter}
-                    forceExpandUserContent={forceExpandUserContent}
-                    onForceExpandedUserContentDismiss={
-                      forceExpandUserContent
-                        ? () =>
-                            setSearchExpandedUserMessageId((current) =>
-                              current === msg.dbId ? null : current,
-                            )
-                        : undefined
-                    }
-                  />
-                  {renderMessageActions?.(msg, originalIndex)}
-                </div>
-              )
-            })}
-
-            {hasMoreAfter && (
-              <div className="pt-2 pb-1">
-                <LoadMoreRow loadingMore={loadingMoreAfter} onLoadMore={onLoadMoreAfter} />
-              </div>
-            )}
-
-            <AnimatedCollapse open={hasFooterContent} durationMs={220}>
-              <div className="flex flex-col gap-4 pt-2 pb-6">
-                {pendingQuestionGroup && (
-                  <div className="w-full">
-                    <AskUserQuestionBlock
-                      key={pendingQuestionGroup.requestId}
-                      group={pendingQuestionGroup}
-                      onSubmitted={onQuestionSubmitted}
-                      variant={askUserVariant}
-                    />
-                  </div>
-                )}
-                {planCardVisible && planCardData && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[85%] w-full">
-                      <PlanCardBlock
-                        data={planCardData}
-                        planState={planState ?? "off"}
-                        onOpenPanel={onOpenPlanPanel}
-                        onApprove={onApprovePlan}
-                        onExit={onExitPlan}
-                      />
+            {anchorLatestTurn ? (
+              <>
+                {transcriptSegments.map((segment) => {
+                  const isLatestTurnFrame = segment.key === latestTurnFrameKey
+                  return (
+                    <div
+                      key={segment.key}
+                      data-transcript-segment
+                      data-testid={isLatestTurnFrame ? "latest-turn-frame" : undefined}
+                      className={cn(isLatestTurnFrame && "min-h-[calc(100%-4rem)]")}
+                    >
+                      {segment.rows.map(renderMessageRow)}
+                      {isLatestTurnFrame && transcriptTail}
                     </div>
-                  </div>
-                )}
-                {planSubagentRunning && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/5 border border-blue-500/20 text-sm text-blue-600 dark:text-blue-400 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    <span className="animate-spin h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full shrink-0" />
-                    <span>{t("planMode.planningInProgress")}</span>
-                  </div>
-                )}
-                {showEmpty && !historyLoading && !heroComposer && (
-                  <div className="flex min-h-[50vh] items-center justify-center animate-in fade-in-0 duration-300">
-                    <ChatWelcomeHero
-                      incognito={incognito}
-                      context={welcomeContext}
-                      projectName={projectName}
-                      onProjectSuggestion={onProjectSuggestion}
-                    />
-                  </div>
-                )}
-              </div>
-            </AnimatedCollapse>
+                  )
+                })}
+                {!latestTurnFrameKey && transcriptTail}
+              </>
+            ) : (
+              <>
+                {renderRows.map(renderMessageRow)}
+                {transcriptTail}
+              </>
+            )}
           </div>
         </div>
 
@@ -1845,7 +2214,10 @@ export default function MessageList({
               )}
             >
               <span className="min-w-0 flex-1 truncate">
-                <SkillMentionText text={compactUserAnchor.text} />
+                <SkillMentionText
+                  text={compactUserAnchor.text}
+                  typedMentions={compactUserAnchor.typedMentions}
+                />
               </span>
             </button>
           </div>
@@ -1931,6 +2303,7 @@ export default function MessageList({
             if (content) handleCopyMessage(content, index)
           }}
           onAddToChat={onAddMessageQuote}
+          onAskInSideChat={onAskInSideChat}
           onClose={() => setContextMenu(null)}
         />
       </div>

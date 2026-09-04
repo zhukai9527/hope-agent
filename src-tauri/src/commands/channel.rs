@@ -1,7 +1,7 @@
-use crate::channel::accounts::{self, UpdateAccountParams};
 use crate::channel::types::*;
 use crate::commands::CmdError;
 use anyhow::Context;
+use ha_channel::channel::accounts::{self, UpdateAccountParams};
 use ha_core::blocking::run_blocking;
 
 // ── List Plugins ─────────────────────────────────────────────────
@@ -143,25 +143,7 @@ pub async fn channel_health(account_id: String) -> Result<ChannelHealth, CmdErro
     let registry = crate::get_channel_registry()
         .ok_or_else(|| CmdError::msg("Channel registry not initialized"))?;
 
-    // Get running status
-    let mut health = registry.health(&account_id).await;
-
-    // If not running, try probe from config
-    if !health.is_running {
-        let store = ha_core::config::cached_config();
-        if let Some(account) = store.channels.find_account(&account_id) {
-            if let Some(plugin) = registry.get_plugin(&account.channel_id) {
-                if let Ok(probe_health) = plugin.probe(account).await {
-                    health.probe_ok = probe_health.probe_ok;
-                    health.bot_name = probe_health.bot_name;
-                    health.error = probe_health.error;
-                    health.last_probe = probe_health.last_probe;
-                }
-            }
-        }
-    }
-
-    Ok(health)
+    Ok(registry.health_with_probe(&account_id).await)
 }
 
 #[tauri::command]
@@ -169,7 +151,7 @@ pub async fn channel_health_all() -> Result<Vec<(String, ChannelHealth)>, CmdErr
     let registry = crate::get_channel_registry()
         .ok_or_else(|| CmdError::msg("Channel registry not initialized"))?;
 
-    Ok(registry.list_running().await)
+    Ok(registry.list_health_with_probes().await)
 }
 
 // ── Validation ───────────────────────────────────────────────────
@@ -264,8 +246,8 @@ pub async fn channel_list_sessions(
 #[tauri::command]
 pub async fn channel_wechat_start_login(
     account_id: Option<String>,
-) -> Result<crate::channel::wechat::login::WeChatLoginStart, CmdError> {
-    crate::channel::wechat::login::start_login(account_id.as_deref())
+) -> Result<ha_channel::channel::wechat::login::WeChatLoginStart, CmdError> {
+    ha_channel::channel::wechat::login::start_login(account_id.as_deref())
         .await
         .map_err(Into::into)
 }
@@ -274,8 +256,8 @@ pub async fn channel_wechat_start_login(
 pub async fn channel_wechat_wait_login(
     session_key: String,
     timeout_ms: Option<u64>,
-) -> Result<crate::channel::wechat::login::WeChatLoginWait, CmdError> {
-    crate::channel::wechat::login::wait_login(&session_key, timeout_ms)
+) -> Result<ha_channel::channel::wechat::login::WeChatLoginWait, CmdError> {
+    ha_channel::channel::wechat::login::wait_login(&session_key, timeout_ms)
         .await
         .map_err(Into::into)
 }
@@ -305,28 +287,31 @@ pub async fn channel_handover_session(
         .map(crate::channel::types::ChatType::from_lowercase)
         .unwrap_or(crate::channel::types::ChatType::Dm);
 
-    {
-        let channel_id = channel_id.clone();
-        let account_id = account_id.clone();
-        let chat_id = chat_id.clone();
-        let session_id = session_id.clone();
-        let thread_id = thread_id.clone();
+    // Reserve provider order before publishing the new binding. The consumed
+    // reservation fixes the active generation and replay watermark atomically
+    // with that durable attach.
+    let catchup = ha_channel::channel::attach_sync::prepare_attach_catchup(
+        &session_id,
+        &channel_id,
+        &account_id,
+        &chat_id,
+        thread_id.as_deref(),
+    );
+
+    let catchup = {
         run_blocking(move || {
-            channel_db.attach_session(
-                &channel_id,
-                &account_id,
-                &chat_id,
-                thread_id.as_deref(),
-                &session_id,
+            catchup.attach(
+                &channel_db,
                 ha_core::channel::db::ATTACH_SOURCE_HANDOVER,
+                None,
                 None,
                 None,
                 &resolved_chat_type,
             )
         })
         .await
-        .map_err(|e| CmdError::msg(format!("Handover failed: {}", e)))?;
-    }
+        .map_err(|e| CmdError::msg(format!("Handover failed: {}", e)))?
+    };
 
     // Replay the latest assistant turn (text + media) so the receiving
     // IM chat isn't dropped into a session with zero visible context.
@@ -341,12 +326,13 @@ pub async fn channel_handover_session(
         if let Some(plugin) = registry.get_plugin(&parsed_channel) {
             let store = ha_core::config::cached_config();
             if let Some(account) = store.channels.find_account(&account_id).cloned() {
-                ha_core::channel::attach_sync::deliver_handover_catchup(
+                ha_channel::channel::attach_sync::deliver_handover_catchup(
                     plugin,
                     &account,
                     &session_id,
                     &chat_id,
                     thread_id.as_deref(),
+                    catchup,
                 )
                 .await;
             }

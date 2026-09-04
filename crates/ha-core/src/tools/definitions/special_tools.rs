@@ -10,7 +10,7 @@ use super::types::{CoreSubclass, ToolDefinition, ToolTier};
 pub fn get_subagent_tool() -> ToolDefinition {
     ToolDefinition {
         name: TOOL_SUBAGENT.into(),
-        description: "Spawn and manage sub-agents to delegate tasks. This tool is self-managed asynchronous work: spawn/resume persist a durable subagent run and return its run/thread handle immediately, so do not pass run_in_background or wrap it in a generic tool job. Use send to follow up: it steers an active attempt or resumes a terminal one in the same child conversation. Results are durably pushed when complete; use check(wait=true) only as a fallback.".into(),
+        description: "Spawn and manage asynchronous sub-agents. Spawns return durable run/thread handles immediately; do not wrap them in generic background jobs. `send` steers an active attempt or continues an eligible terminal thread. `kill`/`kill_all` request shutdown, not pause; confirm terminal status. Stopped, denied, or cancelled work requires a fresh spawn after an explicit user request. Results are pushed when complete; use check(wait=true) only as a fallback.".into(),
         tier: ToolTier::Configured {
             default_for_main: true,
             default_for_others: true,
@@ -28,19 +28,23 @@ pub fn get_subagent_tool() -> ToolDefinition {
                 "action": {
                     "type": "string",
                     "enum": ["spawn", "send", "resume", "check", "list", "result", "kill", "kill_all", "steer", "batch_spawn", "wait_all", "spawn_and_wait"],
-                    "description": "Action: spawn (delegate task), send (canonical follow-up: steer active or resume terminal), resume/steer (compatibility aliases), check (poll/wait), list (all runs), result (full output), kill/kill_all, batch_spawn, wait_all, spawn_and_wait"
+                    "description": "Action: spawn; send (steer active or continue eligible terminal); resume/steer (compatibility); check/list/result; kill/kill_all; batch_spawn/wait_all/spawn_and_wait."
                 },
                 "task": {
                     "type": "string",
-                    "description": "Task description for the sub-agent (required for spawn and resume; resume treats it as the follow-up task)"
+                    "description": "Task text for spawn or resume."
                 },
                 "agent_id": {
                     "type": "string",
                     "description": "Agent to delegate to (defaults to the main Agent)"
                 },
+                "agent_ref": {
+                    "type": "string",
+                    "description": "Opaque turn-local Agent reference from a typed @agent binding. Prefer this over copying a display name; it is resolved and re-authorized at execution time."
+                },
                 "run_id": {
                     "type": "string",
-                    "description": "Run ID (for resume/check/result/kill/steer). Resume accepts only a terminal run owned by the current parent session."
+                    "description": "Run ID for resume/check/result/kill/steer; resume requires an eligible terminal run owned by the current parent."
                 },
                 "thread_id": {
                     "type": "string",
@@ -49,7 +53,7 @@ pub fn get_subagent_tool() -> ToolDefinition {
                 "mode": {
                     "type": "string",
                     "enum": ["auto", "steer_only", "resume_only"],
-                    "description": "For send: auto chooses by current durable state; steer_only or resume_only fail rather than taking the other branch."
+                    "description": "For send: auto chooses between steering an active attempt and creating an eligible immutable terminal continuation; steer_only or resume_only fail rather than taking the other branch."
                 },
                 "timeout_secs": {
                     "type": "integer",
@@ -88,12 +92,13 @@ pub fn get_subagent_tool() -> ToolDefinition {
                 },
                 "tasks": {
                     "type": "array",
-                    "description": "For batch_spawn: array of task objects [{task, agent_id?, label?, timeout_secs?, model?, files?}]. Top-level files are shared by every task; task-level files are private to that child.",
+                    "description": "For batch_spawn: array of task objects [{task, agent_ref? or agent_id?, label?, timeout_secs?, model?, files?}]. Top-level files are shared by every task; task-level files are private to that child.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "task": { "type": "string" },
                             "agent_id": { "type": "string" },
+                            "agent_ref": { "type": "string" },
                             "label": { "type": "string" },
                             "timeout_secs": {
                                 "type": "integer",
@@ -218,12 +223,15 @@ pub fn get_acp_spawn_tool() -> ToolDefinition {
 }
 
 /// Get the tool_search meta-tool definition.
-/// This tool enables on-demand discovery of deferred tool schemas.
+/// This tool enables on-demand discovery and activation of deferred tool schemas.
 pub fn get_tool_search_tool() -> ToolDefinition {
     ToolDefinition {
         name: TOOL_TOOL_SEARCH.into(),
-        description: "Search for available tools by keyword query. Returns full tool schemas \
-            for matched tools. Use this to discover tools not listed in the main tool catalog."
+        description: "Search and activate available tools by keyword or exact name. This also \
+            connects configured lazy MCP servers to discover their catalogs. Matched schemas \
+            become callable on the next round; use this for tools not listed up front. When the \
+            request clearly targets one configured MCP server, set mcp_server yourself to search \
+            only that catalog; never ask the user for this internal name."
             .into(),
         tier: ToolTier::Core {
             subclass: CoreSubclass::Meta,
@@ -241,6 +249,10 @@ pub fn get_tool_search_tool() -> ToolDefinition {
                 "max_results": {
                     "type": "integer",
                     "description": "Maximum results to return (default 5, max 20)"
+                },
+                "mcp_server": {
+                    "type": "string",
+                    "description": "Optional exact configured MCP server name. When set, search only that server's tools; infer it from the MCP directory and the user's requested service."
                 }
             },
             "required": ["query"],
@@ -348,7 +360,7 @@ pub fn get_workflow_tool() -> ToolDefinition {
                 "command": {
                     "type": "string",
                     "enum": ["pause", "resume", "cancel"],
-                    "description": "For action=control: run-control command. There is intentionally no approval command; user permissions cannot be approved by the model."
+                    "description": "For action=control: pause, resume, or cancel. Inspect returned `run.state`; acceptance does not prove child termination or resumed execution. There is intentionally no approval command."
                 },
                 "reason": {
                     "type": "string",
@@ -672,7 +684,7 @@ pub fn get_audio_generate_tool_dynamic(
 pub fn get_team_tool() -> ToolDefinition {
     ToolDefinition {
         name: TOOL_TEAM.into(),
-        description: "Create and manage agent teams for coordinated multi-agent parallel work. Teams have named members (each backed by a subagent), a shared task board, and inter-member messaging. Use for complex tasks that benefit from parallel specialization (e.g., frontend + backend + tester).\n\nBefore creating a team, call `action=\"list_templates\"` to see user-configured presets that may already match your task. Use `template=\"<templateId>\"` in `create` to spawn from a preset (each member can be bound to a specific Agent with its own model/identity). Fall back to inline `members=[{name, task, agent_id?, role?, description?}]` when no preset fits.".into(),
+        description: "Create and manage agent teams for coordinated parallel work. Lifecycle actions are lead-only. `pause` fences the team and requests member shutdown; `resume` starts fresh member attempts only after prior attempts are confirmed terminal. A prior attempt that completed after pause is preserved and skipped (`disposition=no_op` when all are already complete), preventing duplicate side effects. Inspect `teamStatus` and `disposition`: control may be full, partial, or refused; an already-complete request is a no-op, and an accepted cancellation is not terminal proof.\n\nBefore creating a team, call `action=\"list_templates\"` to see user-configured presets that may already match your task. Use `template=\"<templateId>\"` in `create` to spawn from a preset (each member can be bound to a specific Agent with its own model/identity). Fall back to inline `members=[{name, task, agent_id?, role?, description?}]` when no preset fits.".into(),
         tier: ToolTier::Standard {
             default_for_main: true,
             default_for_others: true,
@@ -691,11 +703,11 @@ pub fn get_team_tool() -> ToolDefinition {
                     "enum": ["create", "dissolve", "add_member", "remove_member",
                              "send_message", "create_task", "update_task", "list_tasks",
                              "list_members", "status", "pause", "resume", "list_templates"],
-                    "description": "Team action to perform. `list_templates` returns user-configured preset templates (no other arguments needed)."
+                    "description": "Team action to perform. Lifecycle actions dissolve/add_member/remove_member/pause/resume are lead-session only; active live members may only collaborate and read. `list_templates` returns user-configured preset templates (no other arguments needed)."
                 },
                 "team_id": {
                     "type": "string",
-                    "description": "Team ID (required for all actions except create and list_templates)"
+                    "description": "Team ID (required for all actions except create and list_templates)."
                 },
                 "name": {
                     "type": "string",
@@ -759,6 +771,9 @@ mod tests {
         assert!(actions.iter().any(|action| action == "resume"));
         assert!(def.parameters["properties"].get("task").is_some());
         assert!(def.parameters["properties"].get("run_id").is_some());
+        for contract in ["not pause", "confirm terminal status", "fresh spawn"] {
+            assert!(def.description.contains(contract), "{contract}");
+        }
         assert_eq!(
             def.background_policy,
             BackgroundPolicy::SelfManaged {
@@ -782,6 +797,24 @@ mod tests {
         assert!(def.to_openai_schema()["parameters"]["properties"]
             .get("run_in_background")
             .is_none());
+    }
+
+    #[test]
+    fn team_schema_advertises_action_aware_scope_and_pause_resume_semantics() {
+        let def = super::get_team_tool();
+        for contract in [
+            "Lifecycle actions are lead-only",
+            "fresh member attempts only after prior attempts are confirmed terminal",
+            "accepted cancellation is not terminal proof",
+            "full, partial, or refused",
+        ] {
+            assert!(def.description.contains(contract), "{contract}");
+        }
+        let actions = def.parameters["properties"]["action"]["enum"]
+            .as_array()
+            .expect("team action enum");
+        assert!(actions.iter().any(|action| action == "pause"));
+        assert!(actions.iter().any(|action| action == "resume"));
     }
 
     #[test]
@@ -817,6 +850,10 @@ mod tests {
         assert!(properties.contains_key("sizeGuideline"));
         assert!(properties.contains_key("runId"));
         assert!(properties.contains_key("command"));
+        let command_description = properties["command"]["description"]
+            .as_str()
+            .expect("workflow command description");
+        assert!(command_description.contains("acceptance does not prove"));
         assert!(
             !properties.contains_key("scriptSource"),
             "scriptSource remains an execution-layer compatibility alias, but the model schema should not advertise it while `script` is required"

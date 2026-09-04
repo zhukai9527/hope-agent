@@ -1,23 +1,28 @@
 pub mod active_persisters;
 pub mod active_turn;
 pub mod context;
-pub(crate) mod durability;
+// pub：ha-acp 的 ACP stdio server 复用 StreamCoordinator（流持久化协调）。
+pub mod durability;
 mod engine;
 pub mod finalize;
-pub(crate) mod im_error_message;
-pub(crate) mod im_mirror;
+// `im_error_message`：IM 侧引擎错误文案，dispatcher（ha-channel）渲染用。
+pub mod im_error_message;
 pub(crate) mod im_system_message;
 pub(crate) mod persister;
-pub(crate) mod quote;
+// `quote`：IM 引用前缀渲染，主对话镜像（ha-channel）与 kernel 共用。
+pub mod quote;
 pub mod sink_registry;
 pub(crate) mod spool;
 pub mod stop;
 pub mod stream_broadcast;
 pub mod stream_seq;
 pub mod turn_injection;
+pub mod turn_kernel;
 mod types;
 
 use crate::turn_durability::{FlushReason, TurnDurabilitySink};
+use anyhow::Context as _;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,10 +34,149 @@ pub use stream_seq::ChatSource;
 // canonical home is `crate::agent::plan_context` (avoids agent →
 // chat_engine cycle when `streaming_loop`'s mid-turn probe needs to
 // resolve fresh plan extra context).
-pub use crate::agent::{
-    merge_extra_system_context, resolve_plan_context_for_session, PlanResolvedContext,
-};
+pub use crate::agent::{resolve_plan_context_for_session, PlanResolvedContext};
 pub use types::*;
+
+/// Delete run-owned typed-resource snapshots that never crossed an Initial
+/// Context durability barrier. Every journal block is verified first; any
+/// checksum, sequence, or payload ambiguity fails closed and leaves files in
+/// place for later inspection instead of risking deletion of committed data.
+pub(crate) fn reconcile_typed_resource_snapshots(
+    snapshot: &crate::session::StreamRunSnapshot,
+) -> anyhow::Result<usize> {
+    let mut referenced = HashSet::new();
+    let mut attempts = snapshot.attempts.iter().collect::<Vec<_>>();
+    attempts.sort_by_key(|attempt| attempt.attempt_no);
+    if attempts
+        .first()
+        .is_some_and(|attempt| attempt.attempt_no != 1)
+        || attempts
+            .windows(2)
+            .any(|pair| pair[1].attempt_no != pair[0].attempt_no.saturating_add(1))
+    {
+        anyhow::bail!("typed-resource stream attempt metadata is incomplete");
+    }
+    if snapshot.journal.iter().any(|block| {
+        !attempts
+            .iter()
+            .any(|attempt| attempt.attempt_no == block.attempt_no)
+    }) {
+        anyhow::bail!("typed-resource journal has no matching attempt metadata");
+    }
+
+    for (attempt_index, attempt) in attempts.iter().enumerate() {
+        let attempt_no = attempt.attempt_no;
+        let mut previous = attempts[..attempt_index]
+            .iter()
+            .map(|prior| prior.durable_seq)
+            .max()
+            .unwrap_or(0);
+
+        let mut blocks = snapshot
+            .journal
+            .iter()
+            .filter(|block| block.attempt_no == attempt_no)
+            .collect::<Vec<_>>();
+        blocks.sort_by_key(|block| block.block_no);
+        for block in blocks {
+            if block.run_id != snapshot.run.run_id {
+                anyhow::bail!("typed-resource journal run identity mismatch");
+            }
+            if !crate::session::verify_block(block) {
+                anyhow::bail!(
+                    "typed-resource journal checksum mismatch at {}..{}",
+                    block.seq_start,
+                    block.seq_end
+                );
+            }
+            if block.seq_start != previous.saturating_add(1) {
+                anyhow::bail!(
+                    "typed-resource journal sequence gap after {} before {}",
+                    previous,
+                    block.seq_start
+                );
+            }
+            let events: Vec<crate::session::JournalEvent> = serde_json::from_str(&block.payload)
+                .context("parse typed-resource journal block")?;
+            if events.first().map(crate::session::JournalEvent::start_seq) != Some(block.seq_start)
+                || events.last().map(|event| event.seq) != Some(block.seq_end)
+                || events
+                    .iter()
+                    .any(|event| event.start_seq() == 0 || event.start_seq() > event.seq)
+                || events
+                    .windows(2)
+                    .any(|pair| pair[1].start_seq() != pair[0].seq.saturating_add(1))
+            {
+                anyhow::bail!("typed-resource journal payload range mismatch");
+            }
+
+            for journal_event in events {
+                let event: serde_json::Value = serde_json::from_str(&journal_event.event)
+                    .context("parse typed-resource journal event")?;
+                if event.get("type").and_then(|value| value.as_str())
+                    != Some("initial_context_committed")
+                    || event
+                        .get("resourceSnapshotVersion")
+                        .and_then(|value| value.as_u64())
+                        != Some(2)
+                {
+                    continue;
+                }
+                if event
+                    .get("attemptNo")
+                    .and_then(|value| value.as_u64())
+                    .is_some_and(|event_attempt| event_attempt != u64::from(attempt_no))
+                {
+                    anyhow::bail!("typed-resource journal attempt identity mismatch");
+                }
+                let snapshots = event
+                    .get("fileSnapshots")
+                    .and_then(|value| value.as_array())
+                    .context("typed-resource Initial Context has no snapshot array")?;
+                for item in snapshots {
+                    match item.get("snapshotName") {
+                        None | Some(serde_json::Value::Null) => {}
+                        Some(serde_json::Value::String(name)) => {
+                            referenced.insert(name.clone());
+                        }
+                        Some(_) => {
+                            anyhow::bail!("typed-resource snapshot name is not a string")
+                        }
+                    }
+                }
+            }
+            previous = block.seq_end;
+        }
+
+        if previous != attempt.durable_seq {
+            anyhow::bail!(
+                "typed-resource journal durable sequence mismatch: attempt {} journal={} metadata={}",
+                attempt_no,
+                previous,
+                attempt.durable_seq
+            );
+        }
+    }
+
+    let verified_durable = attempts
+        .iter()
+        .map(|attempt| attempt.durable_seq)
+        .max()
+        .unwrap_or(0);
+    if verified_durable != snapshot.run.durable_seq {
+        anyhow::bail!(
+            "typed-resource run durable sequence mismatch: attempts={} run={}",
+            verified_durable,
+            snapshot.run.durable_seq
+        );
+    }
+
+    crate::attachments::reconcile_run_typed_resource_snapshots(
+        &snapshot.run.session_id,
+        &snapshot.run.run_id,
+        &referenced,
+    )
+}
 
 /// Public-facing snapshot of a session's chat stream state. Returned by the
 /// `get_session_stream_state` command so the frontend can decide whether to
@@ -41,6 +185,9 @@ pub use types::*;
 #[serde(rename_all = "camelCase")]
 pub struct SessionStreamState {
     pub active: bool,
+    /// Exact in-memory turn admission still exists. This can briefly outlive a
+    /// terminal stream while its owner finishes safe post-turn cleanup.
+    pub admission_active: bool,
     /// Backward-compatible alias for `accepted_seq`.
     pub last_seq: u64,
     pub accepted_seq: u64,
@@ -51,6 +198,8 @@ pub struct SessionStreamState {
     pub turn_id: Option<String>,
     pub status: Option<crate::session::ChatTurnStatus>,
     pub last_terminal_status: Option<crate::session::ChatTurnStatus>,
+    /// Durable message read boundary for the exact latest terminal turn.
+    pub last_terminal_read: Option<bool>,
     pub interrupt_reason: Option<crate::session::ChatTurnInterruptReason>,
 }
 
@@ -93,6 +242,7 @@ pub fn session_stream_state(session_id: &str) -> SessionStreamState {
         .unwrap_or(0);
     SessionStreamState {
         active,
+        admission_active: active_turn.is_some(),
         last_seq: accepted_seq,
         accepted_seq,
         durable_seq,
@@ -111,6 +261,15 @@ pub fn session_stream_state(session_id: &str) -> SessionStreamState {
             .as_ref()
             .map(|turn| turn.status)
             .filter(|status| status.is_terminal()),
+        last_terminal_read: latest_turn
+            .as_ref()
+            .filter(|turn| turn.status.is_terminal())
+            .and_then(|turn| {
+                crate::get_session_db()?
+                    .chat_turn_terminal_read(session_id, &turn.id)
+                    .ok()
+                    .flatten()
+            }),
         interrupt_reason: latest_turn.and_then(|turn| turn.interrupt_reason),
     }
 }
@@ -374,11 +533,34 @@ async fn converge_abandoned_stream(
         .run(move |db| db.stream_run_snapshot(&run_id_for_snapshot))
         .await?
         .ok_or_else(|| anyhow::anyhow!("persistence run disappeared"))?;
-    if snapshot.run.status != "running" {
-        return Ok(());
-    }
     if snapshot.run.session_id != session_id || snapshot.run.turn_id.as_deref() != turn_id {
         anyhow::bail!("persistence run identity no longer matches dropped engine");
+    }
+
+    let reconciliation_snapshot = snapshot.clone();
+    match crate::blocking::run_blocking(move || {
+        reconcile_typed_resource_snapshots(&reconciliation_snapshot)
+    })
+    .await
+    {
+        Ok(removed) if removed > 0 => app_info!(
+            "chat",
+            "context_materialization_recovery",
+            "removed {} uncommitted typed-resource snapshot(s) for run {}",
+            removed,
+            run_id
+        ),
+        Ok(_) => {}
+        Err(error) => app_warn!(
+            "chat",
+            "context_materialization_recovery",
+            "left typed-resource snapshots for run {} in place because reconciliation failed: {}",
+            run_id,
+            error
+        ),
+    }
+    if snapshot.run.status != "running" {
+        return Ok(());
     }
 
     let (attempt_no, through_seq, events, journal_error) =
@@ -434,6 +616,7 @@ async fn converge_abandoned_stream(
         interrupt_reason: Some(interrupt_reason.as_str().to_string()),
         error,
         recovery_event,
+        request_plan: crate::session::RequestPlanCommit::RecoverAllForRun,
     };
     let committed = db
         .clone()
@@ -712,9 +895,17 @@ pub fn spawn_user_stop_watchdog(
                     interrupt_reason: Some("user_stop".to_string()),
                     error: None,
                     recovery_event: None,
+                    request_plan: durability.interrupted_request_plan_commit(
+                        crate::session::RequestPlanResponseOutcome::CancelledAfterResponse,
+                    ),
                 };
                 db.clone()
                     .run(move |db| db.commit_interrupted_turn(&commit))
+                    .await?;
+                durability
+                    .finalize_interrupted_request_after_turn_commit(
+                        crate::session::RequestPlanResponseOutcome::CancelledAfterResponse,
+                    )
                     .await?;
                 Ok::<(), anyhow::Error>(())
             }
@@ -857,6 +1048,124 @@ mod abandoned_stream_tests {
     use super::*;
     use crate::session::{CreateStreamRun, JournalBatch, JournalEvent, NewMessage, SessionDB};
 
+    #[test]
+    fn typed_resource_reconciliation_keeps_refs_from_every_verified_attempt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", dir.path())], || {
+            let db =
+                SessionDB::open_ephemeral_for_test(&dir.path().join("snapshots.db")).expect("db");
+            let session = db
+                .create_session(crate::agent_loader::DEFAULT_AGENT_ID)
+                .expect("session");
+            let run_id = uuid::Uuid::new_v4().to_string();
+            let registration = db
+                .create_stream_run(&CreateStreamRun {
+                    run_id: run_id.clone(),
+                    session_id: session.id.clone(),
+                    source: "http".to_string(),
+                    stream_id: None,
+                    turn_id: None,
+                    provider_shape: Some("anthropic".to_string()),
+                })
+                .expect("run");
+            db.begin_stream_attempt(
+                &run_id,
+                1,
+                Some("provider-1"),
+                Some("model-1"),
+                Some("anthropic"),
+            )
+            .expect("attempt 1");
+            let owner = uuid::Uuid::parse_str(&run_id).expect("uuid").simple();
+            let kept_name = format!("context-snapshot-run_{owner}-resource_ref_kept-selected.txt");
+            db.append_stream_journal_batch(&JournalBatch {
+                run_id: run_id.clone(),
+                attempt_no: 1,
+                block_no: 1,
+                seq_start: 1,
+                seq_end: 1,
+                events: vec![JournalEvent::single(
+                    1,
+                    serde_json::json!({
+                        "type": "initial_context_committed",
+                        "attemptNo": 1,
+                        "resourceSnapshotVersion": 2,
+                        "fileSnapshots": [{"snapshotName": &kept_name}],
+                    })
+                    .to_string(),
+                )],
+            })
+            .expect("attempt 1 journal");
+            db.supersede_stream_attempt(
+                &run_id,
+                1,
+                registration.context_revision,
+                None,
+                Some("retry"),
+            )
+            .expect("supersede attempt 1");
+            db.begin_stream_attempt(
+                &run_id,
+                2,
+                Some("provider-2"),
+                Some("model-2"),
+                Some("openai_chat"),
+            )
+            .expect("attempt 2");
+            db.append_stream_journal_batch(&JournalBatch {
+                run_id: run_id.clone(),
+                attempt_no: 2,
+                block_no: 1,
+                seq_start: 2,
+                seq_end: 2,
+                events: vec![JournalEvent::single(
+                    2,
+                    serde_json::json!({"type": "stream_attempt_started"}).to_string(),
+                )],
+            })
+            .expect("attempt 2 journal");
+
+            let attachment_dir = crate::paths::attachments_dir(&session.id).expect("path");
+            std::fs::create_dir_all(&attachment_dir).expect("attachment dir");
+            let orphan_name =
+                format!("context-snapshot-run_{owner}-resource_ref_orphan-selected.txt");
+            std::fs::write(attachment_dir.join(&kept_name), b"kept").expect("kept snapshot");
+            std::fs::write(attachment_dir.join(&orphan_name), b"orphan").expect("orphan snapshot");
+
+            let snapshot = db
+                .stream_run_snapshot(&run_id)
+                .expect("snapshot")
+                .expect("run exists");
+            assert_eq!(
+                reconcile_typed_resource_snapshots(&snapshot).expect("reconcile"),
+                1
+            );
+            assert!(attachment_dir.join(&kept_name).exists());
+            assert!(!attachment_dir.join(&orphan_name).exists());
+
+            let missing_block_orphan =
+                format!("context-snapshot-run_{owner}-resource_ref_missing-selected.txt");
+            std::fs::write(
+                attachment_dir.join(&missing_block_orphan),
+                b"leave on missing journal block",
+            )
+            .expect("missing-block orphan");
+            let mut missing_block_snapshot = snapshot.clone();
+            missing_block_snapshot.journal.clear();
+            assert!(reconcile_typed_resource_snapshots(&missing_block_snapshot).is_err());
+            assert!(attachment_dir.join(missing_block_orphan).exists());
+
+            let corrupt_orphan =
+                format!("context-snapshot-run_{owner}-resource_ref_corrupt-selected.txt");
+            std::fs::write(attachment_dir.join(&corrupt_orphan), b"leave in place")
+                .expect("corrupt orphan");
+            let mut corrupt_snapshot = snapshot;
+            corrupt_snapshot.journal[0].checksum = "invalid".to_string();
+            assert!(reconcile_typed_resource_snapshots(&corrupt_snapshot).is_err());
+            assert!(attachment_dir.join(corrupt_orphan).exists());
+        });
+    }
+
     #[tokio::test]
     async fn legacy_stop_watchdog_rejects_a_completed_replacement_turn() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -870,6 +1179,14 @@ mod abandoned_stream_tests {
         let stopped = db
             .create_chat_turn(&session.id, "desktop", None, None)
             .expect("stopped turn");
+        db.finish_chat_turn_once(
+            &stopped.id,
+            crate::session::ChatTurnStatus::Interrupted,
+            Some(crate::session::ChatTurnInterruptReason::UserStop),
+            None,
+            None,
+        )
+        .expect("finish stopped turn");
         std::thread::sleep(std::time::Duration::from_millis(2));
         let replacement = db
             .create_chat_turn(&session.id, "desktop", None, None)

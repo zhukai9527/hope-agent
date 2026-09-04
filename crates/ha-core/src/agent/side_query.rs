@@ -58,36 +58,22 @@ impl AssistantAgent {
     /// `cache_control` blocks for Anthropic, leading `system`/input items
     /// for OpenAI-family) — including them here would churn the snapshot
     /// every user turn and defeat the invariant this snapshot upholds.
-    pub(super) fn save_cache_safe_params(
+    #[doc(hidden)]
+    pub fn save_cache_safe_params(
         &self,
         system_prompt: String,
         tool_schemas: Vec<serde_json::Value>,
-        conversation_history: Vec<serde_json::Value>,
-        model: &str,
+        provider_ready_history: Vec<serde_json::Value>,
+        provider_format: ProviderFormat,
     ) {
-        let mut conversation_history = conversation_history;
-        crate::context_compact::round_grouping::strip_rounds(&mut conversation_history);
-        let format = ProviderFormat::from(&self.provider);
-        // The snapshot must be byte-identical to what the main stream actually
-        // sends, so a cached side query hits the same prompt cache. For
-        // text-only OpenAIChat backends the main stream folds image content to
-        // text (see `expand_openai_chat_image_markers_for_api`); fold the
-        // snapshot the same way, otherwise a cached side query would still post
-        // `image_url` and get the same 400 (disabling memory/summarize side
-        // features). Vision models are left untouched — no image inflation.
-        if format == ProviderFormat::OpenAIChat {
-            let model_supports_vision = self
-                .provider_config
-                .as_ref()
-                .map(|pc| pc.model_supports_vision(model))
-                .unwrap_or(true);
-            if !model_supports_vision {
-                conversation_history = super::events::expand_openai_chat_image_markers_for_api(
-                    &conversation_history,
-                    false,
-                );
-            }
-        }
+        // The streaming orchestrator freezes marker-backed media once and
+        // passes that exact provider projection here. Do not normalize or
+        // expand it again: a second marker expansion can observe different
+        // file bytes, and Responses normalization can erase native image
+        // items. Metadata stripping is idempotent and keeps test/legacy callers
+        // from leaking internal round ids.
+        let conversation_history =
+            crate::context_compact::prepare_messages_for_api(&provider_ready_history);
         *self
             .cache_safe_params
             .lock()
@@ -95,7 +81,7 @@ impl AssistantAgent {
             system_prompt,
             tool_schemas,
             conversation_history,
-            provider_format: format,
+            provider_format,
         }));
     }
 
@@ -422,10 +408,14 @@ impl AssistantAgent {
             "max_tokens": max_tokens,
         }));
         if let Some(usage) = usage {
-            event.input_tokens = Some(usage.input_tokens);
-            event.output_tokens = Some(usage.output_tokens);
-            event.cache_creation_input_tokens = Some(usage.cache_creation_input_tokens);
-            event.cache_read_input_tokens = Some(usage.cache_read_input_tokens);
+            if usage.input_coverage.is_present() {
+                event.input_tokens = Some(usage.input_tokens);
+                event.cache_creation_input_tokens = Some(usage.cache_creation_input_tokens);
+                event.cache_read_input_tokens = Some(usage.cache_read_input_tokens);
+            }
+            if usage.output_coverage.is_present() {
+                event.output_tokens = Some(usage.output_tokens);
+            }
         }
         crate::model_usage::record_model_usage_best_effort(event);
     }
@@ -475,6 +465,8 @@ impl AssistantAgent {
             provider_format,
             instruction,
             attachments,
+            self.get_context_window(),
+            &[],
         );
         let result = provider
             .as_adapter()
@@ -549,7 +541,8 @@ impl AssistantAgent {
     /// `KIND_VISION` (with `session_id` so incognito sessions auto-skip the
     /// ledger) instead of `KIND_SIDE_QUERY`, so the Dashboard tracks vision
     /// transcription cost distinctly.
-    pub(crate) async fn transcribe_images_for_vision_bridge(
+    #[doc(hidden)]
+    pub async fn transcribe_images_for_vision_bridge(
         &self,
         system: &str,
         instruction: &str,
@@ -605,10 +598,14 @@ impl AssistantAgent {
         event.metadata =
             Some(json!({ "path": "vision_bridge_transcribe", "max_tokens": max_tokens }));
         if let Some(usage) = usage {
-            event.input_tokens = Some(usage.input_tokens);
-            event.output_tokens = Some(usage.output_tokens);
-            event.cache_creation_input_tokens = Some(usage.cache_creation_input_tokens);
-            event.cache_read_input_tokens = Some(usage.cache_read_input_tokens);
+            if usage.input_coverage.is_present() {
+                event.input_tokens = Some(usage.input_tokens);
+                event.cache_creation_input_tokens = Some(usage.cache_creation_input_tokens);
+                event.cache_read_input_tokens = Some(usage.cache_read_input_tokens);
+            }
+            if usage.output_coverage.is_present() {
+                event.output_tokens = Some(usage.output_tokens);
+            }
         }
         crate::blocking::run_blocking(move || {
             crate::model_usage::record_model_usage_best_effort(event)
@@ -692,19 +689,27 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::context_compact::round_grouping::{stamp_round, ROUND_KEY};
+    use crate::context_compact::round_grouping::{
+        stamp_round, ROUND_KEY, SUBAGENT_DISPATCH_IDS_KEY,
+    };
     use crate::provider::{ApiType, ProviderConfig};
 
     #[test]
-    fn save_cache_safe_params_strips_round_metadata() {
+    fn save_cache_safe_params_strips_internal_request_metadata() {
         let agent = AssistantAgent::new_openai("token", "account", "gpt-5.4");
         let mut history = vec![
             json!({ "role": "user", "content": "hello" }),
             json!({ "role": "assistant", "content": "hi" }),
         ];
         stamp_round(&mut history[1], "r0");
+        history[0][SUBAGENT_DISPATCH_IDS_KEY] = json!(["dispatch-1"]);
 
-        agent.save_cache_safe_params("SYS".to_string(), Vec::new(), history, "gpt-5.4");
+        agent.save_cache_safe_params(
+            "SYS".to_string(),
+            Vec::new(),
+            history,
+            ProviderFormat::Codex,
+        );
 
         let cached = agent
             .cache_safe_params
@@ -714,6 +719,9 @@ mod tests {
             .expect("cache snapshot");
 
         assert!(cached.conversation_history[1].get(ROUND_KEY).is_none());
+        assert!(cached.conversation_history[0]
+            .get(SUBAGENT_DISPATCH_IDS_KEY)
+            .is_none());
     }
 
     #[test]

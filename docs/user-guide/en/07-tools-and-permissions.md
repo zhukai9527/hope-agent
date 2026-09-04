@@ -45,7 +45,7 @@ The AI calls these tools **automatically** when needed; you usually don't trigge
 | Setting | Default | Effect |
 | --- | --- | --- |
 | Tool timeout | 0 (unlimited) | Timeout in seconds for a single tool execution |
-| Tool-result disk threshold | 50 KB | Beyond this, results are written to disk and only a head/tail preview is kept in context |
+| Tool-result disk threshold | 50 KB | Compatibility setting. Persistent ResultStore bodies are currently fail-closed: ordinary text keeps a bounded projection plus `lost` metadata, with no path or readable handle. Media continues through the managed attachment protocol |
 | Deferred tool loading | Recommended (on by default) | Defers a batch of low-frequency / large-schema tools by default, discovered on demand via tool_search (saves context) |
 | Max images / PDFs / vision pages | 10 / 5 / 10 | Per-call limits |
 
@@ -144,7 +144,7 @@ The sandbox runs `exec` commands inside a Docker container rather than directly 
 
 **Windows + WSL**: Docker Desktop is not required. If a local Docker Engine is installed and running in the default WSL distribution, Hope Agent automatically uses the WSL backend. Installing WSL alone is not enough—the distribution still needs Docker Engine and a responsive daemon; after detecting WSL, Settings prioritizes the matching installation guide. To avoid mounting a local workspace on an unrelated host, automatic fallback does not use `ssh://` or `tcp://` remote Docker contexts.
 
-**Container configuration (Settings → Docker Sandbox)**: image (default `debian:bookworm-slim`), memory (512 MB), CPU (1 core), read-only root filesystem (on), network mode (default `none`, no network), and more. The top of the panel shows whether Docker is available; if it's not installed / not running, it gives platform-specific install guidance.
+**Container configuration (Settings → Docker Sandbox)**: the default Debian Bookworm slim image is pinned by `@sha256`; custom images must also use `name@sha256:<64-digit digest>`, and mutable tags are rejected. Other defaults include 512 MB memory, 1 CPU, a read-only root filesystem, and `none` networking. The top of the panel shows whether Docker is available; if it's not installed / not running, it gives platform-specific install guidance.
 
 ---
 

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -574,20 +574,27 @@ impl SessionDB {
         };
         if let Some(worktree_id) = input.worktree_id.as_deref() {
             let conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
-            let row: Option<(String, String)> = conn
+            let row: Option<(Option<String>, String, String)> = conn
                 .query_row(
-                    "SELECT session_id, state FROM managed_worktrees WHERE id = ?1",
+                    "SELECT owner_session_id, purpose, state
+                       FROM managed_worktrees WHERE id = ?1",
                     params![worktree_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .optional()?;
-            let (worktree_session_id, state) =
+            let (worktree_owner_session_id, purpose, state) =
                 row.ok_or_else(|| anyhow!("managed worktree not found: {worktree_id}"))?;
-            if worktree_session_id != input.session_id {
+            if !matches!(purpose.as_str(), "manual" | "workflow" | "subagent") {
+                return Err(anyhow!(
+                    "managed worktree {} cannot be attached to a workflow through the generic owner API",
+                    worktree_id
+                ));
+            }
+            if worktree_owner_session_id.as_deref() != Some(input.session_id.as_str()) {
                 return Err(anyhow!(
                     "managed worktree {} belongs to session {}; expected {}",
                     worktree_id,
-                    worktree_session_id,
+                    worktree_owner_session_id.as_deref().unwrap_or("<none>"),
                     input.session_id
                 ));
             }
@@ -1373,7 +1380,9 @@ impl SessionDB {
                     let _ = self.evaluate_goal(goal_id);
                 }
             }
-            if let Ok(Some(retro)) = self.ensure_coding_workflow_retro_for_run(&run) {
+            if let Ok(Some(retro)) =
+                crate::improve_hooks::ensure_coding_workflow_retro_for_run(self, &run)
+            {
                 let _ = self.append_workflow_event(
                     &run.id,
                     "coding_retro_recorded",
@@ -1557,6 +1566,22 @@ impl SessionDB {
                     created_at, updated_at, completed_at
              FROM workflow_runs
              WHERE state IN ('draft', 'running', 'recovering')
+               AND NOT EXISTS (
+                    WITH RECURSIVE session_lineage(id, parent_session_id) AS (
+                        SELECT id, parent_session_id
+                          FROM sessions
+                         WHERE id = workflow_runs.session_id
+                        UNION
+                        SELECT parent.id, parent.parent_session_id
+                          FROM sessions parent
+                          JOIN session_lineage child
+                            ON parent.id = child.parent_session_id
+                    )
+                    SELECT 1
+                      FROM session_autonomy_pauses sap
+                      JOIN session_lineage lineage ON lineage.id = sap.session_id
+                     WHERE sap.resumed_at IS NULL
+               )
              ORDER BY updated_at ASC",
         )?;
         let rows = stmt.query_map([], row_to_run)?;
@@ -2256,6 +2281,74 @@ impl SessionDB {
         Ok(false)
     }
 
+    /// Atomically claim one workflow milestone for an attached IM injection
+    /// and append its durable at-most-once fence. Startup recovery already
+    /// treats matching suppression events as settled, so a crash after this
+    /// write cannot replay an ambiguous provider mutation. `false` means
+    /// another process settled or fenced the same source first.
+    pub fn claim_workflow_milestone_injection_no_replay(
+        &self,
+        run_id: &str,
+        source_event_type: &str,
+        source_event_seq: i64,
+        injection_run_id: &str,
+        child_run_id: Option<&str>,
+    ) -> Result<bool> {
+        let payload = json!({
+            "sourceEventType": source_event_type,
+            "sourceEventSeq": source_event_seq,
+            "injectionRunId": injection_run_id,
+            "childRunId": child_run_id,
+            "reason": "im_mirror_at_most_once_armed",
+        });
+        let payload_json = bounded_event_payload(payload)?;
+        let now = now_rfc3339();
+        let mut conn = self.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let already_settled: bool = tx.query_row(
+            "SELECT EXISTS (
+                 SELECT 1
+                   FROM workflow_events
+                  WHERE run_id = ?1
+                    AND type IN (
+                        'workflow_milestone_injection_delivered',
+                        'workflow_milestone_injection_suppressed'
+                    )
+                    AND json_extract(payload_json, '$.sourceEventType') = ?2
+                    AND json_extract(payload_json, '$.sourceEventSeq') = ?3
+             )",
+            params![run_id, source_event_type, source_event_seq],
+            |row| row.get(0),
+        )?;
+        if already_settled {
+            return Ok(false);
+        }
+        let seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM workflow_events WHERE run_id = ?1",
+            params![run_id],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO workflow_events (run_id, seq, type, payload_json, created_at)
+             VALUES (?1, ?2, 'workflow_milestone_injection_suppressed', ?3, ?4)",
+            params![run_id, seq, payload_json, now],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+
+        let event = WorkflowEvent {
+            id,
+            run_id: run_id.to_string(),
+            seq,
+            event_type: "workflow_milestone_injection_suppressed".to_string(),
+            payload: serde_json::from_str(&payload_json)?,
+            created_at: now,
+        };
+        drop(conn);
+        events::emit_event("workflow:event", &event);
+        Ok(true)
+    }
+
     pub fn list_pending_workflow_milestone_injections(
         &self,
         limit: usize,
@@ -2936,4 +3029,55 @@ fn normalize_saved_template_name(value: &str) -> Result<String> {
 fn normalize_saved_template_description(value: Option<&str>) -> Option<String> {
     normalize_optional(value)
         .map(|value| clamp_chars(value, SAVED_WORKFLOW_TEMPLATE_DESCRIPTION_MAX_CHARS))
+}
+
+#[cfg(test)]
+mod recovery_pause_tests {
+    use super::*;
+
+    #[test]
+    fn recoverable_runs_inherit_active_ancestor_pause() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = SessionDB::open_ephemeral_for_test(&dir.path().join("sessions.db"))
+            .expect("open session db");
+        let root = db.create_session("ha-main").expect("create root session");
+        let child = db
+            .create_session_with_parent("ha-main", Some(&root.id))
+            .expect("create hidden child session");
+        let run = db
+            .create_workflow_run(CreateWorkflowRunInput {
+                session_id: child.id,
+                kind: "coding.feature".to_string(),
+                execution_mode: "guarded".to_string(),
+                script_source: "export default async function main(workflow) {}".to_string(),
+                budget: json!({ "max_runtime_secs": 300, "max_ops": 12 }),
+                parent_run_id: None,
+                origin: None,
+                goal_id: None,
+                goal_criterion_id: None,
+                worktree_id: None,
+            })
+            .expect("create child workflow");
+        db.transition_workflow_run(&run.id, WorkflowRunState::Running, Some("test"))
+            .expect("mark workflow running");
+
+        let pause = db
+            .prepare_session_autonomy_pause(&root.id)
+            .expect("publish root Stop receipt");
+        assert!(pause.workflow_run_ids.contains(&run.id));
+        assert!(!db
+            .list_recoverable_workflow_runs()
+            .expect("list paused recoverable runs")
+            .iter()
+            .any(|candidate| candidate.id == run.id));
+
+        assert!(db
+            .finish_session_autonomy_resume(&pause.id)
+            .expect("consume root Stop receipt"));
+        assert!(db
+            .list_recoverable_workflow_runs()
+            .expect("list resumed recoverable runs")
+            .iter()
+            .any(|candidate| candidate.id == run.id));
+    }
 }

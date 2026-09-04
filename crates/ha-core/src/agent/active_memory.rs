@@ -78,7 +78,6 @@ pub struct CachedAgentConfig {
     pub procedure_memory: crate::agent_config::ProcedureMemoryConfig,
     pub graph_memory: crate::agent_config::GraphMemoryConfig,
     pub retrieval_planner: crate::agent_config::RetrievalPlannerConfig,
-    pub prompt_budget: usize,
 }
 
 /// Frontend- and log-safe reference to a memory candidate considered by Active
@@ -368,7 +367,7 @@ Candidate memories (top matches from local store):\n\
 User's latest message:\n\
 {user_msg}\n";
 
-pub(crate) fn scope_label(scope: &MemoryScope) -> String {
+pub fn scope_label(scope: &MemoryScope) -> String {
     match scope {
         MemoryScope::Global => "global".to_string(),
         MemoryScope::Agent { id } => format!("agent:{id}"),
@@ -376,7 +375,7 @@ pub(crate) fn scope_label(scope: &MemoryScope) -> String {
     }
 }
 
-pub(crate) fn preview_line(content: &str) -> String {
+pub fn preview_line(content: &str) -> String {
     crate::truncate_utf8(content.lines().next().unwrap_or(content).trim(), 180).to_string()
 }
 
@@ -764,7 +763,6 @@ mod tests {
                 procedure_memory: crate::agent_config::ProcedureMemoryConfig::default(),
                 graph_memory: crate::agent_config::GraphMemoryConfig::default(),
                 retrieval_planner: crate::agent_config::RetrievalPlannerConfig::default(),
-                prompt_budget: 5_000,
             }
         });
         let second = state.agent_config_or_load(Some(fp1), || {
@@ -777,7 +775,6 @@ mod tests {
                 procedure_memory: crate::agent_config::ProcedureMemoryConfig::default(),
                 graph_memory: crate::agent_config::GraphMemoryConfig::default(),
                 retrieval_planner: crate::agent_config::RetrievalPlannerConfig::default(),
-                prompt_budget: 5_000,
             }
         });
         let third = state.agent_config_or_load(Some(fp2), || {
@@ -790,7 +787,6 @@ mod tests {
                 procedure_memory: crate::agent_config::ProcedureMemoryConfig::default(),
                 graph_memory: crate::agent_config::GraphMemoryConfig::default(),
                 retrieval_planner: crate::agent_config::RetrievalPlannerConfig::default(),
-                prompt_budget: 5_000,
             }
         });
 

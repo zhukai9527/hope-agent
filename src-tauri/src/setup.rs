@@ -12,7 +12,7 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
     // Store global AppHandle for event emission
     let _ = APP_HANDLE.set(app.handle().clone());
 
-    // Bundled skills are embedded in the binary (`ha_core::skills::embedded`)
+    // Bundled skills are embedded in the binary (`ha_skills::skills::embedded`)
     // and extract themselves to the data dir on first use — no Tauri resource
     // or env override involved.
     {
@@ -62,7 +62,7 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
     //
     // For the same reason, before registering the bridge that lets
     // `app_update` route through this plugin, assert the embedded
-    // `ha_core::updater::keys::MINISIGN_PUBKEY_BASE64` still matches the
+    // `ha_updater::keys::MINISIGN_PUBKEY_BASE64` still matches the
     // value the plugin will consume — otherwise headless self-update and
     // desktop self-update would verify against different keys and one of
     // the two would silently break.
@@ -81,7 +81,7 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
                     .map(|s| s.to_string())
             });
         if let Some(pk) = conf_pubkey {
-            if let Err(e) = ha_core::updater::keys::assert_pubkey_matches_tauri_conf(&pk) {
+            if let Err(e) = ha_updater::keys::assert_pubkey_matches_tauri_conf(&pk) {
                 app_error!("self_update", "boot", "{e}");
                 return Err(format!("{e}").into());
             }
@@ -337,6 +337,13 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
         // ordinary config.json. `load_managed_token` also migrates legacy data.
         let store = ha_core::config::cached_config();
         let api_key = ha_core::server_auth::load_managed_token()?;
+        let pet_app = app.handle().clone();
+        let pet_activate: ha_server::PetActivateHandler = Arc::new(move |pet_ref| {
+            let app = pet_app.clone();
+            Box::pin(async move {
+                crate::commands::pet::activate_pet(&app, pet_ref, "http-pet-activate").await
+            })
+        });
         let ctx = Arc::new(ha_server::AppContext {
             session_db,
             project_db,
@@ -345,6 +352,7 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
                 .expect("init_runtime contract")
                 .clone(),
             chat_cancels: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            pet_activate: Some(pet_activate),
         });
         let config = ha_server::ServerConfig {
             bind_addr: store.server.bind_addr.clone(),
@@ -392,8 +400,8 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
     // the stable copy's id. Both are desktop-only, idempotent, and no-ops when
     // there is no extension source / known extension id.
     tauri::async_runtime::spawn_blocking(|| {
-        ha_core::browser::ensure_local_unpacked_extension();
-        ha_core::browser::ensure_native_host_registered();
+        ha_browser::browser::ensure_local_unpacked_extension();
+        ha_browser::browser::ensure_native_host_registered();
     });
 
     // Bridge ha-core EventBus → Tauri frontend (app_handle.emit).
@@ -514,7 +522,8 @@ pub(crate) fn app_setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::
     // Auto-start Docker SearXNG if previously configured
     auto_start_searxng_docker();
 
-    // Background weather refresh moved into ha-core `start_background_tasks`
+    // Background weather refresh runs as a ha-weather EveryProcess startup task
+    // consumed by `start_background_tasks`
     // (shares the ambient runtime; desktop-gated there).
 
     // Register global shortcuts from config (chord-aware: only first parts for chords)

@@ -1,7 +1,7 @@
 //! Core hook data structures: events, inputs, outputs, decisions.
 //!
 //! Field-level aligned with the Claude Code hooks protocol (see
-//! `docs/architecture/hooks.md`). Event names use PascalCase
+//! `docs/architecture/agent/hooks.md`). Event names use PascalCase
 //! (`SessionStart`, `PreToolUse`); the common input fields are flattened into
 //! each event's JSON payload using snake_case; hook stdout (`HookOutput`) uses
 //! camelCase to match the official body schema.
@@ -449,7 +449,8 @@ pub enum HookInput {
         #[serde(flatten)]
         common: CommonHookInput,
         /// Failure category (matcher target): `provider_failed` /
-        /// `compaction_failed` / `shutdown` / `crash` / `no_profile` / `other`.
+        /// `dispatch_unknown` / `compaction_failed` / `shutdown` / `crash` /
+        /// `no_profile` / `other`.
         /// Serialized as the official `error_type` key.
         #[serde(rename = "error_type")]
         reason: String,

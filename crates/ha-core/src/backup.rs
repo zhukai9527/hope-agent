@@ -1,14 +1,8 @@
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use crate::paths;
 
 const MAX_BACKUPS: usize = 5;
-
-/// How many automatic config snapshots to retain. Separate budget from the
-/// manual `backup_*` snapshots so a flurry of settings edits can't evict the
-/// last user-requested full backup.
-const MAX_AUTOSAVES: usize = 50;
 
 /// Create a backup of all config files to ~/.hope-agent/backups/backup_{timestamp}/
 /// Returns the backup directory path on success.
@@ -32,7 +26,7 @@ pub fn create_backup() -> Result<String, String> {
         let src = root.join(file);
         if src.exists() {
             let dst = backup_dir.join(file);
-            if let Err(e) = std::fs::copy(&src, &dst) {
+            if let Err(e) = crate::platform::copy_secure_file_atomic(&src, &dst) {
                 app_warn!("backup", "create", "Failed to copy {}: {}", file, e);
             }
         }
@@ -425,306 +419,128 @@ mod tests {
             "current"
         );
     }
+
+    #[test]
+    fn legacy_token_scrub_accepts_bom_and_preserves_utf8() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let body = r#"{"server":{"apiKey":"legacy-token"},"label":"服务器（测试）"}"#;
+        let bytes = [b"\xef\xbb\xbf".as_slice(), body.as_bytes()].concat();
+        std::fs::write(&path, bytes).unwrap();
+
+        scrub_legacy_server_token_file(&path).unwrap();
+
+        let rewritten = std::fs::read(&path).unwrap();
+        assert!(!rewritten.starts_with(b"\xef\xbb\xbf"));
+        let value: serde_json::Value = serde_json::from_slice(&rewritten).unwrap();
+        assert_eq!(value["label"], "服务器（测试）");
+        assert!(value["server"].get("apiKey").is_none());
+    }
+
+    #[test]
+    fn unparseable_backup_is_quarantined_without_stopping_the_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let autosave = paths::autosave_dir().unwrap();
+            std::fs::create_dir_all(&autosave).unwrap();
+            let malformed_path =
+                autosave.join("2026-08-08T00-00-00-000__config__server__test.json");
+            let malformed = b"{\"server\":{\"apiKey\":\"legacy-token\"},\"label\":\xe4";
+            std::fs::write(&malformed_path, malformed).unwrap();
+
+            let valid_path = autosave.join("2026-08-08T00-00-01-000__config__server__test.json");
+            std::fs::write(
+                &valid_path,
+                br#"{"server":{"apiKey":"second-token"},"theme":"dark"}"#,
+            )
+            .unwrap();
+
+            scrub_legacy_server_tokens().unwrap();
+
+            assert!(!malformed_path.exists());
+            let quarantine = paths::credentials_dir().unwrap().join("quarantine");
+            let quarantined = std::fs::read_dir(&quarantine)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            assert_eq!(quarantined.len(), 1);
+            assert_eq!(std::fs::read(&quarantined[0]).unwrap(), malformed);
+            assert_eq!(
+                quarantined[0].extension().and_then(|ext| ext.to_str()),
+                Some("corrupt")
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let quarantine_mode =
+                    std::fs::metadata(&quarantine).unwrap().permissions().mode() & 0o777;
+                assert_eq!(quarantine_mode, 0o700);
+                let mode = std::fs::metadata(&quarantined[0])
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777;
+                assert_eq!(mode, 0o600);
+            }
+
+            let valid: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&valid_path).unwrap()).unwrap();
+            assert_eq!(valid["theme"], "dark");
+            assert!(valid["server"].get("apiKey").is_none());
+        });
+    }
+
+    #[test]
+    fn quarantine_failure_is_fail_closed_and_preserves_the_backup() {
+        let temp = tempfile::tempdir().unwrap();
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let autosave = paths::autosave_dir().unwrap();
+            std::fs::create_dir_all(&autosave).unwrap();
+            let malformed_path =
+                autosave.join("2026-08-08T00-00-00-000__config__server__test.json");
+            let malformed = b"{\"server\":{\"apiKey\":\"legacy-token\"}";
+            std::fs::write(&malformed_path, malformed).unwrap();
+
+            let credentials = paths::credentials_dir().unwrap();
+            std::fs::create_dir_all(&credentials).unwrap();
+            std::fs::write(credentials.join("quarantine"), b"not a directory").unwrap();
+
+            let error = scrub_legacy_server_tokens().unwrap_err();
+            assert!(error.contains("Cannot quarantine unparseable config backup"));
+            assert_eq!(std::fs::read(&malformed_path).unwrap(), malformed);
+        });
+    }
+
+    #[test]
+    fn quarantine_detects_a_concurrent_replacement_and_restores_it() {
+        let temp = tempfile::tempdir().unwrap();
+        crate::test_support::with_env_vars(&[("HA_DATA_DIR", temp.path())], || {
+            let autosave = paths::autosave_dir().unwrap();
+            std::fs::create_dir_all(&autosave).unwrap();
+            let path = autosave.join("2026-08-08T00-00-00-000__config__server__test.json");
+            let stale_bytes = b"{\"server\":{\"apiKey\":\"stale-token\"}";
+            let replacement = br#"{"theme":"dark"}"#;
+            std::fs::write(&path, replacement).unwrap();
+
+            let error = quarantine_unparseable_legacy_token_backup(&path, stale_bytes)
+                .expect_err("a changed source must not be quarantined as the stale parse result");
+
+            assert!(error.contains("changed while it was being quarantined"));
+            assert_eq!(std::fs::read(&path).unwrap(), replacement);
+            let quarantine = paths::credentials_dir().unwrap().join("quarantine");
+            assert_eq!(std::fs::read_dir(quarantine).unwrap().count(), 0);
+        });
+    }
 }
 
 // ── Auto-Snapshot on every config write ────────────────────────────
 //
-// Every call to `config::save_config` and `user_config::save_user_config_to_disk`
-// first copies the current on-disk file into `backups/autosave/` so that any
-// settings change — whether triggered from the UI, from the `update_settings`
-// tool, or from a CLI path — can be rolled back. Snapshot files are named
-// `{timestamp}__{kind}__{category}__{source}.json` so metadata is embedded in
-// the filename; no sidecar index is needed.
-
-thread_local! {
-    /// Optional reason label set by the caller (e.g. the settings tool) that
-    /// describes why the next `save_config` / `save_user_config_to_disk` call
-    /// is happening. Consumed — and reset — by the very next snapshot.
-    static NEXT_SAVE_REASON: RefCell<Option<SaveReason>> = const { RefCell::new(None) };
-}
-
-#[derive(Debug, Clone)]
-struct SaveReason {
-    /// Settings category being updated (e.g. "theme", "proxy", "user").
-    category: String,
-    /// Who triggered it: "skill", "ui", "cli", ...
-    source: String,
-}
-
-/// RAII guard set by callers to label the next `save_*` snapshot.
-/// Dropping it clears the label even if the save never happens, so a stale
-/// label can't contaminate an unrelated subsequent write.
-pub struct SaveReasonGuard {
-    _private: (),
-}
-
-impl Drop for SaveReasonGuard {
-    fn drop(&mut self) {
-        NEXT_SAVE_REASON.with(|slot| {
-            *slot.borrow_mut() = None;
-        });
-    }
-}
-
-/// Label the next config/user_config save so its autosave snapshot records
-/// *why* the change happened. Returns a guard — hold it until after the save.
-///
-/// Example:
-/// ```ignore
-/// let _g = backup::scope_save_reason("theme", "skill");
-/// config::save_config(&store)?; // snapshot tagged "theme/skill"
-/// ```
-pub fn scope_save_reason(
-    category: impl Into<String>,
-    source: impl Into<String>,
-) -> SaveReasonGuard {
-    NEXT_SAVE_REASON.with(|slot| {
-        *slot.borrow_mut() = Some(SaveReason {
-            category: category.into(),
-            source: source.into(),
-        });
-    });
-    SaveReasonGuard { _private: () }
-}
-
-fn take_save_reason() -> SaveReason {
-    NEXT_SAVE_REASON
-        .with(|slot| slot.borrow_mut().take())
-        .unwrap_or_else(|| SaveReason {
-            category: "unknown".into(),
-            source: "unknown".into(),
-        })
-}
-
-/// Snapshot `src` (if it exists) into `backups/autosave/` before it gets
-/// overwritten. `kind` is "config" or "user". Errors are logged but never
-/// bubbled up — a failed snapshot must not block a legitimate write.
-pub fn snapshot_before_write(src: &Path, kind: &str) {
-    if !src.exists() {
-        // First-ever save — nothing to snapshot.
-        // Still consume the reason so it doesn't leak to an unrelated save.
-        let _ = take_save_reason();
-        return;
-    }
-    let dir = match paths::autosave_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            app_warn!("backup", "autosave", "Cannot resolve autosave dir: {}", e);
-            let _ = take_save_reason();
-            return;
-        }
-    };
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        app_warn!("backup", "autosave", "Cannot create autosave dir: {}", e);
-        let _ = take_save_reason();
-        return;
-    }
-    let reason = take_save_reason();
-    let ts = chrono::Utc::now()
-        .format("%Y-%m-%dT%H-%M-%S-%3f")
-        .to_string();
-    let safe_cat = sanitize_slug(&reason.category);
-    let safe_src = sanitize_slug(&reason.source);
-    let filename = format!("{}__{}__{}__{}.json", ts, kind, safe_cat, safe_src);
-    let dst = dir.join(&filename);
-    if let Err(e) = std::fs::copy(src, &dst) {
-        app_warn!(
-            "backup",
-            "autosave",
-            "Failed to snapshot {:?} → {:?}: {}",
-            src,
-            dst,
-            e
-        );
-        return;
-    }
-    if let Err(e) = rotate_autosaves(&dir, MAX_AUTOSAVES) {
-        app_warn!("backup", "autosave", "Rotation failed: {}", e);
-    }
-}
-
-/// Remove the legacy server Owner Token from every config snapshot created
-/// before the credential-store migration. These files are ordinary rollback
-/// data (and may be copied off-host), so leaving `server.apiKey` in them would
-/// defeat moving the live value to `credentials/server-auth.json`.
-///
-/// Symlinks are rejected rather than followed: the backup tree is data, not an
-/// authority to rewrite arbitrary files outside `~/.hope-agent/backups`.
-pub fn scrub_legacy_server_tokens() -> Result<(), String> {
-    let backups = paths::backups_dir().map_err(|error| error.to_string())?;
-    if !backups.exists() {
-        return Ok(());
-    }
-    let backups_metadata = std::fs::symlink_metadata(&backups)
-        .map_err(|error| format!("Cannot inspect backups dir: {error}"))?;
-    if backups_metadata.file_type().is_symlink() || !backups_metadata.is_dir() {
-        return Err(format!(
-            "Refusing to inspect non-directory or symlink {:?}",
-            backups
-        ));
-    }
-
-    let autosave = backups.join("autosave");
-    if autosave.exists() {
-        let metadata = std::fs::symlink_metadata(&autosave)
-            .map_err(|error| format!("Cannot inspect autosave dir: {error}"))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!(
-                "Refusing to inspect non-directory or symlink {:?}",
-                autosave
-            ));
-        }
-        for entry in std::fs::read_dir(&autosave)
-            .map_err(|error| format!("Cannot read autosave dir: {error}"))?
-        {
-            let entry = entry.map_err(|error| error.to_string())?;
-            let path = entry.path();
-            let name = entry.file_name();
-            if name.to_string_lossy().split("__").nth(1) == Some("config")
-                && path.extension().and_then(|ext| ext.to_str()) == Some("json")
-            {
-                scrub_legacy_server_token_file(&path)?;
-            }
-        }
-    }
-
-    for entry in
-        std::fs::read_dir(&backups).map_err(|error| format!("Cannot read backups dir: {error}"))?
-    {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with("backup_") {
-            let metadata = std::fs::symlink_metadata(entry.path())
-                .map_err(|error| format!("Cannot inspect {:?}: {error}", entry.path()))?;
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(format!(
-                    "Refusing to inspect non-directory or symlink {:?}",
-                    entry.path()
-                ));
-            }
-            let config = entry.path().join("config.json");
-            if config.exists() {
-                scrub_legacy_server_token_file(&config)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn scrub_legacy_server_token_file(path: &Path) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| format!("Cannot inspect {:?}: {error}", path))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(format!(
-            "Refusing to rewrite non-file or symlink {:?}",
-            path
-        ));
-    }
-    let bytes = std::fs::read(path).map_err(|error| format!("Cannot read {:?}: {error}", path))?;
-    let mut value: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("Cannot parse {:?}: {error}", path))?;
-    let Some(server) = value
-        .as_object_mut()
-        .and_then(|root| root.get_mut("server"))
-        .and_then(serde_json::Value::as_object_mut)
-    else {
-        return Ok(());
-    };
-    if server.remove("apiKey").is_none() {
-        return Ok(());
-    }
-    let data = serde_json::to_vec_pretty(&value)
-        .map_err(|error| format!("Cannot serialize {:?}: {error}", path))?;
-    // Config snapshots can contain other sensitive settings even after the
-    // legacy Owner Token is removed. Preserve the credential-grade 0600
-    // posture while replacing the file atomically.
-    crate::platform::write_secure_file(path, &data)
-        .map_err(|error| format!("Cannot rewrite {:?}: {error}", path))
-}
-
-#[cfg(test)]
-mod server_token_scrub_tests {
-    use super::*;
-
-    #[test]
-    fn scrub_removes_only_the_legacy_owner_token() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("config.json");
-        std::fs::write(
-            &path,
-            r#"{
-              "server": {
-                "bindAddr": "127.0.0.1:8420",
-                "apiKey": "owner-secret",
-                "knowledgeAgentReadToken": "read-secret"
-              },
-              "theme": "dark"
-            }"#,
-        )
-        .unwrap();
-
-        scrub_legacy_server_token_file(&path).unwrap();
-
-        let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert!(value["server"].get("apiKey").is_none());
-        assert_eq!(value["server"]["knowledgeAgentReadToken"], "read-secret");
-        assert_eq!(value["theme"], "dark");
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-    }
-}
-
-fn sanitize_slug(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-fn rotate_autosaves(dir: &Path, keep: usize) -> Result<(), String> {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let p = entry.path();
-            if p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("json") {
-                Some(p)
-            } else {
-                None
-            }
-        })
-        .collect();
-    // Names are timestamp-prefixed, so ascending sort = oldest first.
-    entries.sort();
-    if entries.len() > keep {
-        let drop_count = entries.len() - keep;
-        for p in entries.iter().take(drop_count) {
-            if let Err(e) = std::fs::remove_file(p) {
-                app_warn!(
-                    "backup",
-                    "autosave",
-                    "Failed to drop old autosave {:?}: {}",
-                    p,
-                    e
-                );
-            }
-        }
-    }
-    Ok(())
-}
+// autosave 原语已迁 `config::autosave`（persistence **直调**，写前快照必须
+// 无条件执行——不能挂在只有 init_runtime 才注册的钩子上，`server setup` 等
+// 入口在 init_runtime 之前/之外写 config）。此处再导出保持
+// `crate::backup::scope_save_reason` 等既有调用路径不变；本文件只剩
+// 完整备份 / 恢复 / autosave 列表与回滚。
+pub use crate::config::autosave::{scope_save_reason, snapshot_before_write, SaveReasonGuard};
 
 /// A single automatic snapshot entry, parsed from the filename.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -832,4 +648,223 @@ pub fn restore_autosave(id: &str) -> Result<AutosaveEntry, String> {
         _ => {}
     }
     Ok(entry)
+}
+
+/// Remove the legacy server Owner Token from every config snapshot created
+/// before the credential-store migration. These files are ordinary rollback
+/// data (and may be copied off-host), so leaving `server.apiKey` in them would
+/// defeat moving the live value to `credentials/server-auth.json`.
+///
+/// Symlinks are rejected rather than followed: the backup tree is data, not an
+/// authority to rewrite arbitrary files outside `~/.hope-agent/backups`.
+pub fn scrub_legacy_server_tokens() -> Result<(), String> {
+    let backups = paths::backups_dir().map_err(|error| error.to_string())?;
+    if !backups.exists() {
+        return Ok(());
+    }
+    let backups_metadata = std::fs::symlink_metadata(&backups)
+        .map_err(|error| format!("Cannot inspect backups dir: {error}"))?;
+    if backups_metadata.file_type().is_symlink() || !backups_metadata.is_dir() {
+        return Err(format!(
+            "Refusing to inspect non-directory or symlink {:?}",
+            backups
+        ));
+    }
+
+    let autosave = backups.join("autosave");
+    if autosave.exists() {
+        let metadata = std::fs::symlink_metadata(&autosave)
+            .map_err(|error| format!("Cannot inspect autosave dir: {error}"))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(format!(
+                "Refusing to inspect non-directory or symlink {:?}",
+                autosave
+            ));
+        }
+        for entry in std::fs::read_dir(&autosave)
+            .map_err(|error| format!("Cannot read autosave dir: {error}"))?
+        {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let name = entry.file_name();
+            if name.to_string_lossy().split("__").nth(1) == Some("config")
+                && path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            {
+                scrub_legacy_server_token_file(&path)?;
+            }
+        }
+    }
+
+    for entry in
+        std::fs::read_dir(&backups).map_err(|error| format!("Cannot read backups dir: {error}"))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("backup_") {
+            let metadata = std::fs::symlink_metadata(entry.path())
+                .map_err(|error| format!("Cannot inspect {:?}: {error}", entry.path()))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(format!(
+                    "Refusing to inspect non-directory or symlink {:?}",
+                    entry.path()
+                ));
+            }
+            let config = entry.path().join("config.json");
+            if config.exists() {
+                scrub_legacy_server_token_file(&config)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn scrub_legacy_server_token_file(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("Cannot inspect {:?}: {error}", path))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!(
+            "Refusing to rewrite non-file or symlink {:?}",
+            path
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("Cannot read {:?}: {error}", path))?;
+    // Match the live config parser: Windows editors commonly prefix JSON with
+    // EF BB BF, which is valid UTF-8 text but rejected by serde_json itself.
+    let json = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let mut value: serde_json::Value = match serde_json::from_slice(json) {
+        Ok(value) => value,
+        Err(parse_error) => {
+            // The file may still contain a plaintext legacy Owner Token. Move
+            // it out of the portable backup tree into the credential area,
+            // but never let one unusable rollback snapshot brick startup.
+            let quarantined = quarantine_unparseable_legacy_token_backup(path, &bytes).map_err(
+                |quarantine_error| {
+                    format!(
+                        "Cannot quarantine unparseable config backup {:?} (parse: {}; quarantine: {})",
+                        path, parse_error, quarantine_error
+                    )
+                },
+            )?;
+            app_warn!(
+                "backup",
+                "scrub_legacy_server_token",
+                "Quarantined unparseable config backup {} as {}: {}",
+                path.display(),
+                quarantined.display(),
+                parse_error
+            );
+            return Ok(());
+        }
+    };
+    let Some(server) = value
+        .as_object_mut()
+        .and_then(|root| root.get_mut("server"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return Ok(());
+    };
+    if server.remove("apiKey").is_none() {
+        return Ok(());
+    }
+    let data = serde_json::to_vec_pretty(&value)
+        .map_err(|error| format!("Cannot serialize {:?}: {error}", path))?;
+    // Config snapshots can contain other sensitive settings even after the
+    // legacy Owner Token is removed. Preserve the credential-grade 0600
+    // posture while replacing the file atomically.
+    crate::platform::write_secure_file(path, &data)
+        .map_err(|error| format!("Cannot rewrite {:?}: {error}", path))
+}
+
+/// Preserve an unparseable backup under the credential boundary before
+/// removing it from the portable backup tree. The opaque random filename
+/// avoids exposing a credential-derived content fingerprint in logs.
+fn quarantine_unparseable_legacy_token_backup(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let quarantine_dir = paths::credentials_dir()
+        .map_err(|error| error.to_string())?
+        .join("quarantine");
+    std::fs::create_dir_all(&quarantine_dir)
+        .map_err(|error| format!("Cannot create {:?}: {error}", quarantine_dir))?;
+    let quarantine_metadata = std::fs::symlink_metadata(&quarantine_dir)
+        .map_err(|error| format!("Cannot inspect {:?}: {error}", quarantine_dir))?;
+    if quarantine_metadata.file_type().is_symlink() || !quarantine_metadata.is_dir() {
+        return Err(format!(
+            "Refusing credential quarantine directory {:?}",
+            quarantine_dir
+        ));
+    }
+    // A moved file keeps its original mode. Tighten the directory before the
+    // rename so even a crash before the file-level 0600 rewrite cannot expose
+    // a historical 0644 Owner Token to another local user.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&quarantine_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("Cannot secure {:?}: {error}", quarantine_dir))?;
+    }
+
+    let quarantine_id = uuid::Uuid::new_v4().simple();
+    let quarantined =
+        quarantine_dir.join(format!("legacy-config-backup-{quarantine_id}.json.corrupt"));
+    // Claim the exact directory entry in one operation. Copying first and
+    // deleting `path` later could unlink a replacement published by another
+    // Hope Agent process between those two operations.
+    crate::platform::move_file_atomic(path, &quarantined)
+        .map_err(|error| format!("Cannot move {:?} to {:?}: {error}", path, quarantined))?;
+    let claimed_bytes = match std::fs::read(&quarantined) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let rollback = restore_quarantined_backup(&quarantined, path);
+            return Err(format_quarantine_rollback_error(
+                format!("Cannot verify {:?}: {error}", quarantined),
+                rollback,
+                &quarantined,
+                path,
+            ));
+        }
+    };
+    if claimed_bytes != bytes {
+        let rollback = restore_quarantined_backup(&quarantined, path);
+        return Err(format_quarantine_rollback_error(
+            format!("Backup {:?} changed while it was being quarantined", path),
+            rollback,
+            &quarantined,
+            path,
+        ));
+    }
+    if let Err(error) = crate::platform::write_secure_file(&quarantined, &claimed_bytes) {
+        let rollback = restore_quarantined_backup(&quarantined, path);
+        return Err(match rollback {
+            Ok(()) => format!("Cannot secure {:?}: {error}; move rolled back", quarantined),
+            Err(rollback_error) => format!(
+                "Cannot secure {:?}: {error}; cannot roll back to {:?}: {rollback_error}",
+                quarantined, path
+            ),
+        });
+    }
+    Ok(quarantined)
+}
+
+/// Restore a quarantined file without overwriting a concurrently published
+/// replacement. The platform move is no-clobber and durably records removal
+/// from quarantine as well as publication at the original path.
+fn restore_quarantined_backup(quarantined: &Path, original: &Path) -> std::io::Result<()> {
+    crate::platform::move_file_atomic(quarantined, original)
+}
+
+fn format_quarantine_rollback_error(
+    error: String,
+    rollback: std::io::Result<()>,
+    quarantined: &Path,
+    original: &Path,
+) -> String {
+    match rollback {
+        Ok(()) => format!("{error}; move rolled back"),
+        Err(rollback_error) => format!(
+            "{error}; cannot roll back {:?} to {:?}: {rollback_error}",
+            quarantined, original
+        ),
+    }
 }

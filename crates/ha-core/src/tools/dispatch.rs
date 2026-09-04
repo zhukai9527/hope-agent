@@ -19,6 +19,8 @@
 
 use std::sync::LazyLock;
 
+use serde_json::{json, Value};
+
 use crate::agent_config::FilterConfig;
 use crate::agent_loader::is_main_agent;
 use crate::config::AppConfig;
@@ -71,6 +73,82 @@ pub enum ToolFate {
     Hidden,
 }
 
+/// `ToolDefinition::to_api_metadata` 的落点（extension trait）。方法需要
+/// `is_globally_configured`（读 web_search / media_gen / feishu 配置态，
+/// 属分发层），而 `ToolDefinition` 本体在 `crate::tool_defs`（契约层不
+/// 得反向依赖分发层）——同 ha-config-schema 的「需要行为的方法改子系统
+/// 自由函数或 extension trait」模式。
+pub trait ToolDefinitionApiExt {
+    fn to_api_metadata(&self, app_config: &crate::config::AppConfig) -> serde_json::Value;
+}
+
+impl ToolDefinitionApiExt for ToolDefinition {
+    /// Render this tool as a JSON metadata payload for `list_builtin_tools`
+    /// (Tauri command + `GET /api/chat/tools`). Single source of truth so
+    /// both transports return identically-shaped objects to the frontend.
+    ///
+    /// `app_config` is consulted only for Tier 3 (`Configured`) tools to
+    /// probe whether the global provider/feature is provisioned. The
+    /// returned `globally_configured` field is `Some(bool)` for Tier 3 and
+    /// `null` for every other tier — letting the frontend decide whether to
+    /// show the "未配置" hint without re-implementing the probe matrix.
+    fn to_api_metadata(&self, app_config: &crate::config::AppConfig) -> Value {
+        let (
+            tier_label,
+            core_subclass,
+            default_for_main,
+            default_for_others,
+            config_hint,
+            globally_configured,
+        ) = match &self.tier {
+            ToolTier::Core { subclass } => {
+                ("core", Some(subclass.as_str()), None, None, None, None)
+            }
+            ToolTier::Standard {
+                default_for_main,
+                default_for_others,
+                ..
+            } => (
+                "standard",
+                None,
+                Some(*default_for_main),
+                Some(*default_for_others),
+                None,
+                None,
+            ),
+            ToolTier::Configured {
+                default_for_main,
+                default_for_others,
+                config_hint,
+                ..
+            } => (
+                "configured",
+                None,
+                Some(*default_for_main),
+                Some(*default_for_others),
+                Some(*config_hint),
+                Some(is_globally_configured(&self.name, app_config)),
+            ),
+            ToolTier::Memory => ("memory", None, None, None, None, None),
+            ToolTier::Mcp => ("mcp", None, None, None, None, None),
+        };
+        json!({
+            "name": self.name,
+            "description": self.description,
+            "internal": self.internal,
+            "tier": tier_label,
+            "core_subclass": core_subclass,
+            "default_for_main": default_for_main,
+            "default_for_others": default_for_others,
+            "config_hint": config_hint,
+            "defer_capable": self.supports_deferred(),
+            "globally_configured": globally_configured,
+            "background_policy": self.background_policy,
+            "metadata": self.v2_metadata(),
+        })
+    }
+}
+
 /// Probe whether the global side of a Tier 3 tool's provisioning is ready
 /// (search providers configured, canvas/notification enabled flags set,
 /// image provider keys present, etc.). Tier 3 tools without a global gate
@@ -102,7 +180,15 @@ pub fn is_globally_configured(name: &str, app_config: &AppConfig) -> bool {
         // All `feishu_*` tools share the same provisioning gate — at least
         // one Feishu channel account configured. Falls to HintOnly when the
         // user enabled the agent capability but hasn't added an account.
-        n if n.starts_with("feishu_") => crate::tools::feishu::has_any_account_configured(),
+        //
+        // 判定就地做（而不是调 adapter 的 `has_any_account_configured`）：它是
+        // 纯 `AppConfig` 读取，与本函数其余分支同型；adapter 随 ha-channel 上浮
+        // 后，为这 5 行开一个钩子只会凭空增加一个未装配语义要论证的槽。
+        n if n.starts_with("feishu_") => app_config
+            .channels
+            .accounts
+            .iter()
+            .any(|a| a.channel_id == ha_config_schema::channel::ChannelId::Feishu),
         _ => true,
     }
 }
@@ -163,10 +249,24 @@ pub fn has_deferred_builtin_tools(app_config: &AppConfig) -> bool {
 /// capability: discoverable by default, but not eager. Custom/disabled
 /// built-in policy keeps the existing per-server MCP opt-in semantics.
 pub fn should_defer_dynamic_mcp_tool(name: &str, app_config: &AppConfig) -> bool {
+    crate::mcp::catalog::is_mcp_tool_name(name)
+        && (matches!(
+            app_config.deferred_tools.effective_mode(),
+            crate::config::DeferredToolsMode::Recommended
+        ) || crate::mcp::catalog::tool_belongs_to_deferred_server(
+            name,
+            &app_config.mcp_servers,
+        ))
+}
+
+/// Server-level form of [`should_defer_dynamic_mcp_tool`], shared by schema
+/// assembly and the system-prompt discovery hint so both surfaces describe the
+/// same effective loading policy.
+pub fn should_defer_dynamic_mcp_server(server: &str, app_config: &AppConfig) -> bool {
     matches!(
         app_config.deferred_tools.effective_mode(),
         crate::config::DeferredToolsMode::Recommended
-    ) || crate::mcp::catalog::tool_belongs_to_deferred_server(name, &app_config.mcp_servers)
+    ) || crate::mcp::catalog::server_uses_deferred_tools(server, &app_config.mcp_servers)
 }
 
 /// Small deterministic first-round set. Everything else remains eligible but
@@ -177,8 +277,10 @@ fn is_recommended_eager(name: &str) -> bool {
         name,
         TOOL_ASK_USER_QUESTION
             | TOOL_RUNTIME_CANCEL
+            | TOOL_SESSION_CONTINUE
             | TOOL_SKILL
             | TOOL_READ
+            | TOOL_READ_CONTEXT_RESOURCE
             | TOOL_GREP
             | TOOL_EXEC
             | TOOL_APPLY_PATCH
@@ -216,6 +318,7 @@ fn is_deferred(name: &str, tier: &ToolTier, app_config: &AppConfig) -> bool {
                     crate::tools::TOOL_TOOL_SEARCH
                         | crate::tools::TOOL_ASK_USER_QUESTION
                         | crate::tools::TOOL_RUNTIME_CANCEL
+                        | crate::tools::TOOL_SESSION_CONTINUE
                         | crate::tools::TOOL_SKILL
                 )
         }
@@ -242,18 +345,24 @@ pub fn resolve_tool_fate(def: &ToolDefinition, ctx: &DispatchContext) -> ToolFat
             // site — not by this dispatcher. The dispatcher hides them
             // unconditionally; `apply_plan_tools` puts them back in.
             CoreSubclass::PlanMode => ToolFate::Hidden,
-            // Meta tools include framework primitives (skill, runtime_cancel)
-            // plus opt-in feature gates (tool_search, job_status). The latter
-            // two are eligible only when their corresponding global switch is
-            // on; the Agent may promote job_status for a live session job.
+            // Meta tools include framework primitives (skill, runtime_cancel,
+            // session_continue) plus opt-in feature gates (tool_search,
+            // job_status). The latter two are eligible only when their
+            // corresponding global switch is on; the Agent may promote
+            // job_status for a live session job.
             CoreSubclass::Meta => match def.name.as_str() {
                 crate::tools::TOOL_TOOL_SEARCH => {
                     if has_deferred_builtin_tools(app_config)
                         || (ctx.mcp_enabled
                             && app_config.mcp_global.enabled
-                            && crate::mcp::catalog::has_deferred_tool_server(
-                                &app_config.mcp_servers,
-                            ))
+                            && app_config.mcp_servers.iter().any(|server| {
+                                server.enabled
+                                    && !app_config
+                                        .mcp_global
+                                        .denied_servers
+                                        .iter()
+                                        .any(|denied| denied == &server.name)
+                            }))
                     {
                         ToolFate::InjectEager
                     } else {
@@ -379,6 +488,10 @@ pub fn resolve_tool_fate(def: &ToolDefinition, ctx: &DispatchContext) -> ToolFat
 /// today) substitute via `get_image_generate_tool_dynamic` at injection
 /// time. Every other consumer reads tier metadata only and doesn't care.
 static ALL_DISPATCHABLE_TOOLS: LazyLock<Vec<ToolDefinition>> = LazyLock::new(|| {
+    // 目录一旦开始汇编，之后注册的外部 provider 就进不来了——先立标志，让
+    // 迟到的 `register_external_tool_definitions` fail loud 而不是静默丢 schema
+    // （详见该函数文档）。必须在读 provider **之前**。
+    super::registry::mark_catalog_realized();
     use super::definitions::{
         get_acp_spawn_tool, get_artifact_tool, get_audio_generate_tool_dynamic,
         get_available_tools, get_canvas_tool, get_design_tool, get_enter_plan_mode_tool,
@@ -402,7 +515,8 @@ static ALL_DISPATCHABLE_TOOLS: LazyLock<Vec<ToolDefinition>> = LazyLock::new(|| 
         super::job_status::get_job_status_tool(),
         super::schedule_wakeup::get_schedule_wakeup_tool(),
     ]);
-    tools.extend(super::feishu::get_feishu_tools());
+    // 特征 crate（ha-channel 的飞书工具族）在 `wire()` 里注册的 schema。
+    tools.extend(super::registry::external_tool_definitions());
     tools
 });
 
@@ -717,6 +831,34 @@ mod tests {
     }
 
     #[test]
+    fn tool_search_stays_available_to_bootstrap_lazy_mcp_catalogs() {
+        let mut f = Fixture::new();
+        f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Disabled);
+        f.app.mcp_servers = vec![serde_json::from_value(serde_json::json!({
+            "id": "id-example",
+            "name": "example",
+            "enabled": true,
+            "transport": { "kind": "stdio", "command": "true" }
+        }))
+        .expect("valid MCP server fixture")];
+        let tool_search = all_dispatchable_tools()
+            .iter()
+            .find(|definition| definition.name == crate::tools::TOOL_TOOL_SEARCH)
+            .expect("tool_search definition");
+
+        assert_eq!(
+            resolve_tool_fate(tool_search, &f.ctx(DEFAULT_AGENT_ID)),
+            ToolFate::InjectEager
+        );
+
+        f.app.mcp_global.denied_servers = vec!["example".into()];
+        assert_eq!(
+            resolve_tool_fate(tool_search, &f.ctx(DEFAULT_AGENT_ID)),
+            ToolFate::Hidden
+        );
+    }
+
+    #[test]
     fn recommended_mode_defers_non_bootstrap_core_without_hiding_it() {
         let mut f = Fixture::new();
         f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Recommended);
@@ -757,16 +899,58 @@ mod tests {
     fn recommended_mode_defers_dynamic_mcp_without_per_server_opt_in() {
         let mut app = AppConfig::default();
         app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Recommended);
+        assert!(should_defer_dynamic_mcp_server("example", &app));
+        assert!(should_defer_dynamic_mcp_tool(
+            "mcp__example__large_tool",
+            &app
+        ));
+        assert!(!should_defer_dynamic_mcp_tool("example", &app));
+
+        app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Disabled);
+        assert!(!should_defer_dynamic_mcp_server("example", &app));
+        assert!(!should_defer_dynamic_mcp_tool(
+            "mcp__example__large_tool",
+            &app
+        ));
+
+        let mut server: crate::mcp::McpServerConfig = serde_json::from_value(serde_json::json!({
+            "id": "id-example",
+            "name": "example",
+            "enabled": true,
+            "transport": { "kind": "stdio", "command": "true" },
+            "deferredTools": true
+        }))
+        .expect("valid MCP server fixture");
+        app.mcp_servers.push(server.clone());
+        assert!(should_defer_dynamic_mcp_server("example", &app));
         assert!(should_defer_dynamic_mcp_tool(
             "mcp__example__large_tool",
             &app
         ));
 
+        server.enabled = false;
+        app.mcp_servers = vec![server];
+        assert!(!should_defer_dynamic_mcp_server("example", &app));
+    }
+
+    #[test]
+    fn per_server_deferred_mode_uses_the_unambiguous_namespace() {
+        let mut app = AppConfig::default();
         app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Disabled);
-        assert!(!should_defer_dynamic_mcp_tool(
-            "mcp__example__large_tool",
-            &app
-        ));
+        app.mcp_servers.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "id-foo-bar",
+                "name": "foo__bar",
+                "enabled": true,
+                "transport": { "kind": "stdio", "command": "true" },
+                "deferredTools": true
+            }))
+            .expect("valid MCP server fixture"),
+        );
+
+        assert!(should_defer_dynamic_mcp_server("foo__bar", &app));
+        assert!(should_defer_dynamic_mcp_tool("mcp__fooUUbar__read", &app));
+        assert!(!should_defer_dynamic_mcp_tool("mcp__foo__bar__read", &app));
     }
 
     #[test]
@@ -774,7 +958,7 @@ mod tests {
         let mut f = Fixture::new();
         f.app.deferred_tools.mode = Some(crate::config::DeferredToolsMode::Recommended);
         let ctx = f.ctx(DEFAULT_AGENT_ID);
-        let mut schema_bytes = 0usize;
+        let mut eager_tool_schemas = Vec::new();
         for def in all_dispatchable_tools() {
             match resolve_tool_fate(def, &ctx) {
                 ToolFate::InjectEager => {
@@ -782,11 +966,8 @@ mod tests {
                     // the final live gate removes note_* schemas before the
                     // request is built.
                     if !crate::tools::is_kb_scoped_tool(&def.name) {
-                        schema_bytes += serde_json::to_vec(
-                            &def.to_provider_schema(crate::tools::ToolProvider::OpenAI),
-                        )
-                        .unwrap()
-                        .len();
+                        eager_tool_schemas
+                            .push(def.to_provider_schema(crate::tools::ToolProvider::OpenAI));
                     }
                 }
                 ToolFate::InjectDeferred | ToolFate::HintOnly { .. } | ToolFate::Hidden => {}
@@ -803,11 +984,45 @@ mod tests {
                 );
             }
         }
+        let request = crate::token_accounting::TokenCountRequest {
+            provider: crate::token_accounting::ProviderFamily::OpenAiChat,
+            model: "gpt-5.4",
+            request_shape: crate::token_accounting::RequestShape::OpenAiChat,
+            stable_prompt: "",
+            dynamic_prompt: "",
+            history: &[],
+            eager_tool_schemas: &eager_tool_schemas,
+            activated_tool_schemas: &[],
+        };
+        let schema_tokens = crate::token_accounting::service().count_local(&request);
         assert!(
-            schema_bytes / crate::context_compact::CHARS_PER_TOKEN <= 4_000,
-            "recommended eager schemas exceed 4k token heuristic: {} bytes",
-            schema_bytes
+            schema_tokens.estimated <= 4_000,
+            "recommended eager schemas exceed 4k tokenizer estimate: estimated={}, upper={}",
+            schema_tokens.estimated,
+            schema_tokens.upper_bound
         );
+    }
+
+    #[test]
+    fn session_continue_stays_eager_in_every_deferred_mode() {
+        let mut f = Fixture::new();
+        let def = all_dispatchable_tools()
+            .iter()
+            .find(|def| def.name == crate::tools::TOOL_SESSION_CONTINUE)
+            .expect("session_continue definition");
+
+        for mode in [
+            crate::config::DeferredToolsMode::Recommended,
+            crate::config::DeferredToolsMode::Custom,
+        ] {
+            f.app.deferred_tools.mode = Some(mode);
+            f.app.deferred_tools.tool_names = vec![crate::tools::TOOL_SESSION_CONTINUE.to_string()];
+            assert_eq!(
+                resolve_tool_fate(def, &f.ctx(DEFAULT_AGENT_ID)),
+                ToolFate::InjectEager,
+                "mode={mode:?}"
+            );
+        }
     }
 
     #[test]

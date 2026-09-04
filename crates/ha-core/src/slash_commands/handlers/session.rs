@@ -44,6 +44,99 @@ pub fn handle_new(session_db: &Arc<SessionDB>, agent_id: &str) -> Result<Command
     })
 }
 
+/// /fork — Copy the complete settled transcript into a new first-class
+/// session. The slash command itself is deliberately excluded from both
+/// transcripts by `should_persist_slash_history`.
+pub async fn handle_fork(
+    session_db: &Arc<SessionDB>,
+    session_id: Option<&str>,
+    args: &str,
+) -> Result<CommandResult, String> {
+    if !args.trim().is_empty() {
+        return Err("Usage: /fork".into());
+    }
+    let source_session_id = session_id.ok_or("No active session to fork")?.to_string();
+    let source_for_log = source_session_id.clone();
+    let result = session_db
+        .run(move |db| db.fork_session(&source_session_id, None))
+        .await;
+
+    match result {
+        Ok(forked) => {
+            crate::app_info!(
+                "session",
+                "slash_fork",
+                "Slash fork completed: source_session_id={} forked_session_id={}",
+                source_for_log,
+                forked.id
+            );
+            let short_id: String = forked.id.chars().take(8).collect();
+            Ok(CommandResult {
+                content: format!("Continued in new session `{}`.", short_id),
+                action: Some(CommandAction::ForkSession {
+                    session_id: forked.id,
+                }),
+            })
+        }
+        Err(error) => {
+            crate::app_warn!(
+                "session",
+                "slash_fork",
+                "Slash fork failed: source_session_id={} error={}",
+                source_for_log,
+                error
+            );
+            Err(error.to_string())
+        }
+    }
+}
+
+/// /side [question] — Snapshot the settled transcript into a parent-scoped
+/// side conversation. The desktop keeps the main session active and opens the
+/// returned session in its side panel.
+pub async fn handle_side(
+    session_db: &Arc<SessionDB>,
+    session_id: Option<&str>,
+    args: &str,
+) -> Result<CommandResult, String> {
+    let source_session_id = session_id
+        .ok_or("No active session for side chat")?
+        .to_string();
+    let source_for_log = source_session_id.clone();
+    let initial_prompt = (!args.trim().is_empty()).then(|| args.trim().to_string());
+    match session_db
+        .run(move |db| db.create_side_chat(&source_session_id))
+        .await
+    {
+        Ok(side_chat) => {
+            crate::app_info!(
+                "session",
+                "slash_side",
+                "Side chat created: source_session_id={} side_session_id={}",
+                source_for_log,
+                side_chat.id
+            );
+            Ok(CommandResult {
+                content: String::new(),
+                action: Some(CommandAction::OpenSideChat {
+                    session_id: side_chat.id,
+                    initial_prompt,
+                }),
+            })
+        }
+        Err(error) => {
+            crate::app_warn!(
+                "session",
+                "slash_side",
+                "Side chat creation failed: source_session_id={} error={}",
+                source_for_log,
+                error
+            );
+            Err(error.to_string())
+        }
+    }
+}
+
 /// /clear — Delete current session messages.
 pub fn handle_clear(
     session_db: &Arc<SessionDB>,
@@ -54,7 +147,11 @@ pub fn handle_clear(
     // delete so the hook still resolves the session's working dir / transcript
     // path; afterwards the row is gone and cwd would fall back to home.
     crate::hooks::fire_session_end(sid, "clear");
-    session_db.delete_session(sid).map_err(|e| e.to_string())?;
+    match crate::get_cron_db() {
+        Some(cron_db) => cron_db.delete_conversation_and_run_logs(session_db, sid),
+        None => session_db.delete_session(sid),
+    }
+    .map_err(|e| e.to_string())?;
     Ok(CommandResult {
         content: "Session cleared.".into(),
         action: Some(CommandAction::SessionCleared),
@@ -204,7 +301,7 @@ fn render_picker_content(items: &[SessionPickerItem], query: &str, total: usize)
     };
     let mut lines = vec![header];
     for s in items.iter().take(10) {
-        lines.push(format_session_picker_line(s));
+        lines.push(crate::slash_defs::format_session_picker_line(s));
     }
     if total > 10 {
         lines.push(format!("…and {} more", total - 10));
@@ -261,34 +358,6 @@ fn session_matches_query(s: &SessionPickerItem, needle_lower: &str) -> bool {
     haystacks
         .iter()
         .any(|h| !h.is_empty() && h.to_lowercase().contains(needle_lower))
-}
-
-/// Format one session row for the markdown body of `/sessions`. Shared by
-/// the slash handler (GUI markdown) and the channel text-fallback so the
-/// two surfaces stay aligned. When the session was matched via message-body
-/// FTS, a second indented line shows the matched snippet.
-pub(crate) fn format_session_picker_line(s: &SessionPickerItem) -> String {
-    let id_short: String = s.id.chars().take(8).collect();
-    let mut chips: Vec<String> = Vec::with_capacity(3);
-    if !s.agent_label.is_empty() {
-        chips.push(format!("agent: {}", s.agent_label));
-    }
-    if let Some(pl) = s.project_label.as_deref() {
-        chips.push(format!("project: {}", pl));
-    }
-    if let Some(cl) = s.channel_label.as_deref() {
-        chips.push(cl.to_string());
-    }
-    let suffix = if chips.is_empty() {
-        String::new()
-    } else {
-        format!(" · _{}_", chips.join(" · "))
-    };
-    let head = format!("- `{}` · {}{}", id_short, s.title, suffix);
-    match s.snippet.as_deref() {
-        Some(sn) if !sn.is_empty() => format!("{}\n  > {}", head, sn),
-        _ => head,
-    }
 }
 
 /// /session — show / attach / exit. Sub-actions:
@@ -446,4 +515,114 @@ pub fn handle_handover(
             thread_id,
         }),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::NewMessage;
+
+    fn test_db() -> (tempfile::TempDir, Arc<SessionDB>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Arc::new(
+            SessionDB::open_ephemeral_for_test(&dir.path().join("sessions.db"))
+                .expect("open session db"),
+        );
+        db.with_conn_for_test(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS channel_conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    channel_id TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    thread_id TEXT,
+                    session_id TEXT NOT NULL,
+                    sender_id TEXT,
+                    sender_name TEXT,
+                    chat_type TEXT NOT NULL DEFAULT 'dm',
+                    source TEXT NOT NULL DEFAULT 'inbound',
+                    attached_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );",
+            )?;
+            Ok(())
+        })
+        .expect("create channel table");
+        (dir, db)
+    }
+
+    #[tokio::test]
+    async fn fork_command_copies_the_settled_transcript_and_returns_navigation_action() {
+        let (_dir, db) = test_db();
+        let source = db.create_session("ha-main").expect("source session");
+        db.append_message(&source.id, &NewMessage::user("explore another path"))
+            .expect("append source message");
+
+        let result = handle_fork(&db, Some(&source.id), "")
+            .await
+            .expect("fork command");
+        let forked_id = match result.action {
+            Some(CommandAction::ForkSession { session_id }) => session_id,
+            other => panic!("unexpected action: {other:?}"),
+        };
+        let forked = db
+            .get_session(&forked_id)
+            .expect("get fork")
+            .expect("fork exists");
+        assert_eq!(
+            forked.forked_from_session_id.as_deref(),
+            Some(source.id.as_str())
+        );
+        assert_eq!(forked.forked_from_message_id, None);
+        let messages = db
+            .load_session_messages(&forked_id)
+            .expect("load fork messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "explore another path");
+    }
+
+    #[tokio::test]
+    async fn fork_command_requires_an_active_session_and_rejects_arguments() {
+        let (_dir, db) = test_db();
+        assert_eq!(
+            handle_fork(&db, None, "").await.unwrap_err(),
+            "No active session to fork"
+        );
+        assert_eq!(
+            handle_fork(&db, Some("session-1"), "extra")
+                .await
+                .unwrap_err(),
+            "Usage: /fork"
+        );
+    }
+
+    #[tokio::test]
+    async fn side_command_creates_hidden_session_and_carries_optional_prompt() {
+        let (_dir, db) = test_db();
+        let source = db.create_session("ha-main").expect("source session");
+        db.append_message(&source.id, &NewMessage::user("settled context"))
+            .expect("append source message");
+
+        let result = handle_side(&db, Some(&source.id), "  explain this  ")
+            .await
+            .expect("side command");
+        let (side_id, prompt) = match result.action {
+            Some(CommandAction::OpenSideChat {
+                session_id,
+                initial_prompt,
+            }) => (session_id, initial_prompt),
+            other => panic!("unexpected action: {other:?}"),
+        };
+        assert_eq!(prompt.as_deref(), Some("explain this"));
+        let side = db
+            .get_session(&side_id)
+            .expect("get side chat")
+            .expect("side chat exists");
+        assert_eq!(side.kind, crate::session::SessionKind::Side);
+        assert_eq!(
+            side.forked_from_session_id.as_deref(),
+            Some(source.id.as_str())
+        );
+    }
 }

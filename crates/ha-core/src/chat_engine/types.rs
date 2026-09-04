@@ -14,11 +14,13 @@ use crate::session::SessionDB;
 /// Token usage and metrics captured from streaming callbacks.
 /// See `ChatUsage` for the `input_tokens` vs `last_input_tokens` split.
 ///
-/// Public so `src-tauri` callsites that run chat outside of `run_chat_engine`
-/// (e.g. the empty-model-chain fallback in `commands/chat.rs`) can reuse the
-/// same capture shape instead of hand-rolling positional tuples.
+/// Public as part of the kernel/runtime turn contract so transports and
+/// evaluation adapters can consume one stable capture shape instead of
+/// hand-rolling positional tuples.
 #[derive(Default, Clone)]
 pub struct CapturedUsage {
+    pub input_coverage: crate::token_accounting::UsageCoverage,
+    pub output_coverage: crate::token_accounting::UsageCoverage,
     pub input_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
     pub last_input_tokens: Option<i64>,
@@ -37,13 +39,82 @@ pub struct CapturedUsage {
     pub last_cache_creation_input_tokens: Option<i64>,
     /// Cache-read input tokens for the most recent API round.
     pub last_cache_read_input_tokens: Option<i64>,
+    pub token_accounting_observations: Vec<crate::token_accounting::TokenAccountingObservation>,
 }
 
 impl CapturedUsage {
+    pub fn best_effort_total_tokens(&self) -> u64 {
+        let reported_input = self
+            .input_tokens
+            .map(|value| value.max(0) as u64)
+            .unwrap_or(0);
+        let missing_input = self
+            .token_accounting_observations
+            .iter()
+            .filter(|observation| {
+                observation.input_coverage != crate::token_accounting::UsageCoverage::Complete
+            })
+            .fold(0u64, |total, observation| {
+                total.saturating_add(observation.upper_bound)
+            });
+        let input = match self.input_coverage {
+            crate::token_accounting::UsageCoverage::Complete => reported_input,
+            crate::token_accounting::UsageCoverage::Partial => {
+                reported_input.saturating_add(missing_input)
+            }
+            crate::token_accounting::UsageCoverage::Missing
+                if self.token_accounting_observations.is_empty() =>
+            {
+                // Backward compatibility for legacy usage events that carried
+                // numeric fields before coverage was introduced.
+                reported_input
+            }
+            crate::token_accounting::UsageCoverage::Missing => missing_input,
+        };
+
+        let reported_output = self
+            .output_tokens
+            .map(|value| value.max(0) as u64)
+            .unwrap_or(0);
+        let missing_output = self
+            .token_accounting_observations
+            .iter()
+            .filter(|observation| {
+                observation.output_coverage != crate::token_accounting::UsageCoverage::Complete
+            })
+            .fold(0u64, |total, observation| {
+                total.saturating_add(observation.reserved_output_tokens)
+            });
+        let output = match self.output_coverage {
+            crate::token_accounting::UsageCoverage::Complete => reported_output,
+            crate::token_accounting::UsageCoverage::Partial => {
+                reported_output.saturating_add(missing_output)
+            }
+            crate::token_accounting::UsageCoverage::Missing
+                if self.token_accounting_observations.is_empty() =>
+            {
+                reported_output
+            }
+            crate::token_accounting::UsageCoverage::Missing => missing_output,
+        };
+
+        input.saturating_add(output)
+    }
+
     /// Fold a `{"type":"usage", ...}` stream event into this struct. Only
     /// fields actually present in the event overwrite prior values.
     /// Mirror of the dispatch inside `StreamPersister::build_callback`.
     pub fn absorb_event(&mut self, event: &serde_json::Value) {
+        if let Some(value) = event.get("input_coverage") {
+            if let Ok(coverage) = serde_json::from_value(value.clone()) {
+                self.input_coverage = coverage;
+            }
+        }
+        if let Some(value) = event.get("output_coverage") {
+            if let Ok(coverage) = serde_json::from_value(value.clone()) {
+                self.output_coverage = coverage;
+            }
+        }
         if let Some(v) = event.get("input_tokens").and_then(|v| v.as_i64()) {
             self.input_tokens = Some(v);
         }
@@ -101,6 +172,11 @@ impl CapturedUsage {
         {
             self.last_cache_read_input_tokens = Some(v);
         }
+        if let Some(observations) = event.get("token_accounting_observations") {
+            if let Ok(observations) = serde_json::from_value(observations.clone()) {
+                self.token_accounting_observations = observations;
+            }
+        }
     }
 }
 
@@ -111,6 +187,33 @@ impl CapturedUsage {
 /// IM channel worker uses `ChannelStreamSink` (event bus emit).
 pub trait EventSink: Send + Sync + 'static {
     fn send(&self, event: &str);
+}
+
+/// Source-owned linearization hook for a non-cancelled durable terminal.
+///
+/// ACP receives cancellation on a reader thread while its prompt dispatcher
+/// is synchronously awaiting the shared runtime. The runtime invokes this
+/// claim before every non-user-stop terminal commit (immediately before the
+/// atomic success transaction, or on entry to failed-terminal convergence):
+/// if cancellation won first, the runtime must switch to UserStop; if the
+/// claim won first, a later ACP cancel belongs to a future prompt generation
+/// and must not publish Stop.
+#[derive(Clone)]
+pub struct TurnCompletionClaim {
+    claim: Arc<dyn Fn() -> bool + Send + Sync + 'static>,
+}
+
+impl TurnCompletionClaim {
+    pub fn new(claim: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        Self {
+            claim: Arc::new(claim),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn try_claim(&self) -> bool {
+        (self.claim)()
+    }
 }
 
 /// EventSink that drops every event. Used by callers that don't have a
@@ -124,7 +227,7 @@ impl EventSink for NoopEventSink {
 /// One LLM round's outbound payload as observed by the IM channel sink:
 /// the `text_delta`s the model emitted before its first tool call, plus any
 /// media items its `tool_result`s produced. The dispatcher fans these out
-/// per `ImReplyMode` after `run_chat_engine` returns.
+/// per `ImReplyMode` after the admitted turn returns.
 ///
 /// A "round" here corresponds to a single `process_round` cycle — the model
 /// outputs narration + tool_calls, tools execute, and tool_results stream
@@ -496,34 +599,59 @@ impl EventSink for ChannelStreamSink {
 
 // ── ChatEngineParams ────────────────────────────────────────────────
 
-/// All parameters needed by the chat engine. Callers extract these from
-/// `State<AppState>` (UI chat) or disk (channel worker).
+/// Durable stream identity created together with an interactive user message
+/// and visible chat turn. Non-interactive sources continue to let the engine
+/// create their stream row at execution start.
+#[doc(hidden)]
+pub struct PreAdmittedStream {
+    pub stream_id: String,
+    pub registration: crate::session::StreamRunRegistration,
+}
+
+/// Kernel-private compatibility payload consumed by the chat engine.
+/// External producers construct [`crate::turn_kernel::TurnRequest`] and seal
+/// it with a source-specific [`crate::turn_kernel::TurnSubmission`] instead.
+#[doc(hidden)]
 pub struct ChatEngineParams {
     // Basic
     pub session_id: String,
     pub agent_id: String,
-    /// Persisted chat turn id for user-facing desktop / HTTP turns.
+    /// Persisted chat turn id for user-facing desktop / HTTP turns and
+    /// standalone scheduled turns.
     ///
-    /// `None` is intentional for non-interactive sources such as cron,
-    /// subagent, parent injection, and IM channel worker turns: those entry
-    /// points already own their cancellation and delivery lifecycles, so they
-    /// must not be tied to the GUI/HTTP active-turn registry.
+    /// `None` is intentional for sources such as subagent, parent injection,
+    /// and IM channel worker turns that own separate cancellation/delivery
+    /// lifecycles.
     pub turn_id: Option<String>,
+    pub pre_admitted_stream: Option<PreAdmittedStream>,
+    /// Opaque foreground admission lease. It is acquired before preflight and
+    /// remains owned by the admitted engine future until terminal convergence.
+    pub active_turn_guard: Option<crate::chat_engine::active_turn::ActiveTurnGuard>,
+    pub ui_surface: Option<crate::pet::ChatUiSurface>,
     pub message: String,
+    /// Optional typed-composer sidecar bound to the exact canonical message.
+    /// Plain text lookalikes never acquire mention semantics when this wire is
+    /// present; the chat engine validates and freezes it once per turn.
+    pub incoming_turn: Option<crate::prompt_context::IncomingTurnWire>,
     /// Friendly user-facing rendering of the prompt (e.g. `Using skill **X**...`
     /// for slash-invoked skills). When set, the IM-mirror user-quote prefix
     /// uses this string so attached IM chats see what the desktop user saw,
-    /// not the raw `[SYSTEM:...]` prompt sent to the model. The DB-persisted
+    /// not the expanded user instruction sent to the model. The DB-persisted
     /// user message is set separately by the API caller (Tauri / HTTP).
     /// `None` for plain chat input.
     pub display_text: Option<String>,
     pub attachments: Vec<crate::agent::Attachment>,
     pub session_db: Arc<SessionDB>,
 
-    // Model chain (pre-resolved by caller)
+    // Model chain resolved by TurnKernel admission from an immutable config
+    // snapshot (or supplied by the isolated Eval capability).
     pub model_chain: Vec<ActiveModel>,
     /// Provider configs needed to build agents (snapshot, not reference to State)
     pub providers: Vec<ProviderConfig>,
+    /// Opaque fingerprint of the immutable provider/config snapshot admitted
+    /// with this turn. It is never logged because the snapshot may contain
+    /// credentials; the fingerprint only prevents mixed-snapshot execution.
+    pub config_revision: [u8; 32],
     /// Codex OAuth token, if available
     pub codex_token: Option<(String, String)>,
 
@@ -532,9 +660,16 @@ pub struct ChatEngineParams {
     pub compact_config: CompactConfig,
 
     // Optional
-    pub extra_system_context: Option<String>,
+    pub run_context: Option<crate::prompt_context::RunInstructionContext>,
     pub reasoning_effort: Option<String>,
     pub cancel: Arc<AtomicBool>,
+    /// ACP-only handshake that orders its out-of-band `session/cancel`
+    /// against the runtime's durable non-user-stop terminal. Source sealing keeps
+    /// this absent for every other transport.
+    pub completion_claim: Option<TurnCompletionClaim>,
+    /// Stop generation captured at the transport/queue admission boundary.
+    /// Stream durability revalidates it transactionally before model work.
+    pub foreground_stop_admission: Option<crate::session::ForegroundStopAdmission>,
     /// Spawn-supplied Plan-mode override. `Some` means the caller is the
     /// source of truth and the chat engine must NOT consult this session's
     /// backend `plan_mode` (used by `spawn_plan_subagent`: the child
@@ -548,10 +683,10 @@ pub struct ChatEngineParams {
     pub skill_allowed_tools: Vec<String>,
     /// Tools denied by the caller's execution policy.
     pub denied_tools: Vec<String>,
-    /// Optional tool-visibility scope (see [`crate::tools::ToolScope`]). The
+    /// Optional tool-visibility scope (see [`crate::tool_defs::ToolScope`]). The
     /// knowledge-space sidebar chat passes `Some(Knowledge)` to trim the tool
     /// set to the note/recall white-list. `None` for every other caller.
-    pub tool_scope: Option<crate::tools::ToolScope>,
+    pub tool_scope: Option<crate::tool_defs::ToolScope>,
     /// Current sub-agent nesting depth for tool schema filtering and child spawns.
     pub subagent_depth: u32,
     /// Sub-agent run id whose steer mailbox should be drained each tool round.
@@ -567,15 +702,12 @@ pub struct ChatEngineParams {
     /// Whether a caller-triggered cancel should discard the partial response and
     /// return an error to the caller instead of persisting a final assistant row.
     pub abort_on_cancel: bool,
-    /// Whether run_chat_engine should persist its own final error event.
+    /// Whether the shared runtime should persist its own final error event.
     pub persist_final_error_event: bool,
 
     /// Which caller opened this stream. Drives the `activeChatCounts`
     /// breakdown surfaced in `/api/server/status`.
     pub source: ChatSource,
-    /// First-party message-list + composer surface that initiated this turn.
-    /// Product routing metadata only: it is never added to model messages.
-    pub ui_surface: Option<crate::pet::ChatUiSurface>,
     /// Origin of the whole call chain for KB access (design D10). `None` =
     /// top-level (origin == `source`). A subagent sets this to its parent
     /// turn's effective origin so an IM-originated chain can't reacquire KB
@@ -593,6 +725,7 @@ pub struct ChatEngineParams {
 }
 
 /// Result returned by the chat engine.
+#[doc(hidden)]
 pub struct ChatEngineResult {
     pub response: String,
     /// The model that produced the successful response.
@@ -600,8 +733,137 @@ pub struct ChatEngineResult {
     /// Token usage captured from this chat turn. Subsystems that fan out chat
     /// turns, such as workflow-owned subagents, use this for durable budgets.
     pub usage: CapturedUsage,
-    /// The agent instance after chat (for UI chat to update State).
-    pub agent: Option<AssistantAgent>,
+    pub terminal: TurnTerminal,
+}
+
+/// Durable terminal observed by a successfully converged turn execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnTerminal {
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+impl TurnTerminal {
+    #[doc(hidden)]
+    pub fn from_chat_status(status: crate::session::ChatTurnStatus) -> Self {
+        match status {
+            crate::session::ChatTurnStatus::Completed => Self::Completed,
+            crate::session::ChatTurnStatus::Interrupted => Self::Cancelled,
+            crate::session::ChatTurnStatus::Failed => Self::Failed,
+            crate::session::ChatTurnStatus::Running
+            | crate::session::ChatTurnStatus::Cancelling => Self::Failed,
+        }
+    }
+}
+
+/// Stable failure class shared by the turn boundary and source-specific outer
+/// machines such as subagent retry policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnFailureKind {
+    ProviderExhausted,
+    Terminal,
+    Cancelled,
+    Infrastructure,
+    Panicked,
+}
+
+/// Typed terminal failure returned after a turn was admitted.
+#[derive(Debug)]
+pub struct TurnFailure {
+    pub kind: TurnFailureKind,
+    message: String,
+    reason: Option<crate::failover::FailoverReason>,
+    route_all_codex: bool,
+    invalid_request: bool,
+}
+
+impl TurnFailure {
+    #[doc(hidden)]
+    pub fn new(kind: TurnFailureKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            reason: None,
+            route_all_codex: false,
+            invalid_request: false,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn invalid_request(message: impl Into<String>) -> Self {
+        let mut failure = Self::new(TurnFailureKind::Infrastructure, message);
+        failure.invalid_request = true;
+        failure
+    }
+
+    #[doc(hidden)]
+    pub fn with_route_all_codex(mut self, route_all_codex: bool) -> Self {
+        self.route_all_codex = route_all_codex;
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn classified(
+        kind: TurnFailureKind,
+        reason: Option<crate::failover::FailoverReason>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            reason,
+            route_all_codex: false,
+            invalid_request: false,
+        }
+    }
+
+    pub fn reason(&self) -> Option<crate::failover::FailoverReason> {
+        self.reason
+    }
+
+    /// Whether every admitted model attempt uses the Codex OAuth adapter.
+    /// This lets delivery surfaces select actionable auth copy without
+    /// resolving or inspecting the Provider chain themselves.
+    pub fn route_all_codex(&self) -> bool {
+        self.route_all_codex
+    }
+
+    /// Whether admission rejected caller-controlled input rather than an
+    /// unavailable runtime dependency. Transport adapters use this typed bit
+    /// to preserve their 4xx contract without classifying display text.
+    pub fn is_invalid_request(&self) -> bool {
+        self.invalid_request
+    }
+
+    /// Compatibility spelling used by delivery surfaces selecting actionable
+    /// Codex authentication copy. The kernel only exposes the route-wide fact;
+    /// it never leaks Provider credentials or individual profile state.
+    pub fn is_codex_auth(&self) -> bool {
+        self.route_all_codex
+    }
+
+    pub fn cancelled(message: impl Into<String>) -> Self {
+        Self::new(TurnFailureKind::Cancelled, message)
+    }
+}
+
+impl From<String> for TurnFailure {
+    fn from(message: String) -> Self {
+        Self::new(TurnFailureKind::Infrastructure, message)
+    }
+}
+
+impl From<anyhow::Error> for TurnFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self::new(TurnFailureKind::Infrastructure, error.to_string())
+    }
+}
+
+impl std::fmt::Display for TurnFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
 }
 
 /// Parameters for a user-requested compaction outside a chat turn.
@@ -627,6 +889,9 @@ pub struct CompactSessionResult {
 mod tests {
     use super::*;
     use crate::attachments::{MediaItem, MediaKind};
+    use crate::token_accounting::{
+        ProviderFamily, RequestShape, TokenAccountingObservation, TokenCountSource, UsageCoverage,
+    };
     use serde_json::json;
 
     #[test]
@@ -644,6 +909,59 @@ mod tests {
         assert_eq!(usage.cache_read_input_tokens, Some(34));
         assert_eq!(usage.last_cache_creation_input_tokens, Some(5));
         assert_eq!(usage.last_cache_read_input_tokens, Some(8));
+    }
+
+    fn accounting_observation(
+        upper_bound: u64,
+        input_coverage: UsageCoverage,
+        output_coverage: UsageCoverage,
+        reserved_output_tokens: u64,
+    ) -> TokenAccountingObservation {
+        TokenAccountingObservation {
+            operation_key: "test".to_string(),
+            provider: ProviderFamily::Unknown,
+            model: "test".to_string(),
+            request_shape: RequestShape::Json,
+            tokenizer_id: None,
+            tokenizer_registry_version: 1,
+            source: TokenCountSource::Heuristic,
+            raw_estimated: upper_bound,
+            lower_bound: upper_bound,
+            estimated: upper_bound,
+            upper_bound,
+            actual_input_tokens: None,
+            input_coverage,
+            output_coverage,
+            reserved_output_tokens,
+            has_media: false,
+            cache_compaction_decision: None,
+            cache_identity_hash: None,
+            projection_action_count: 0,
+            reclaimed_tokens_upper: 0,
+            invalidated_suffix_tokens_upper: None,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+            break_even_turns: None,
+            prefix_rewrite_count: 0,
+            summary_reason: None,
+        }
+    }
+
+    #[test]
+    fn best_effort_usage_fills_only_missing_partial_rounds() {
+        let usage = CapturedUsage {
+            input_coverage: UsageCoverage::Partial,
+            output_coverage: UsageCoverage::Partial,
+            input_tokens: Some(100),
+            output_tokens: Some(10),
+            token_accounting_observations: vec![
+                accounting_observation(120, UsageCoverage::Complete, UsageCoverage::Complete, 20),
+                accounting_observation(200, UsageCoverage::Missing, UsageCoverage::Missing, 50),
+            ],
+            ..CapturedUsage::default()
+        };
+
+        assert_eq!(usage.best_effort_total_tokens(), 360);
     }
 
     fn mk_media_item() -> MediaItem {

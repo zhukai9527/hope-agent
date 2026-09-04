@@ -2,6 +2,8 @@
 // Depends on ha-core for business logic, uses axum 0.8 for HTTP.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
@@ -26,7 +28,51 @@ pub mod ws;
 
 pub use config::ServerConfig;
 
+/// 特征 crate 装配序列——**所有二进制入口共用的单一来源**：
+/// `hope-agent` server binary、`server_smoke` 集成测试、`src-tauri` 的
+/// `main.rs`/`lib.rs` 与 `crates/ha-eval/src/adapters.rs` 都调这里。
+///
+/// **必须先于任何 `init_runtime` 路径**（server / acp / mcp 各分支）：init
+/// 尾部冻结工具注册表，之后再挂 handler 会 panic 或静默丢失。每个 `wire()`
+/// 自带 `Once`，重复调用安全。
+///
+/// 新增需要全局装配的特征 crate，只在这里加 `wire()` 并给 `ha-server`
+/// 增加 path dependency；其它壳通过本函数复用装配，只有直接调用该 feature
+/// API 时才加自己的 dependency。不要在 shell 里内联 `wire()` 序列（历史上
+/// 4 处各抄一份，新增功能时漏改任一处就是 registry_freeze warn 加静默丢
+/// handler）。
+pub fn wire_features() {
+    // Updater registration is the established first slot in the shared
+    // composition root; append new features after it.
+    ha_updater::wire();
+    ha_agent_runtime::wire();
+    ha_memory::wire();
+    ha_goal::wire();
+    ha_workflow::wire();
+    ha_weather::wire();
+    ha_acp::wire();
+    ha_mac::wire();
+    ha_design::wire();
+    ha_browser::wire();
+    ha_vcs::wire();
+    ha_mcp::wire();
+    ha_pet::wire();
+    ha_media::wire();
+    ha_local_llm::wire();
+    ha_dash::wire();
+    ha_channel::wire();
+    ha_knowledge::wire();
+    ha_skills::wire();
+    ha_improve::wire();
+    ha_cron::wire();
+}
+
 // ── AppContext ───────────────────────────────────────────────────
+
+pub type PetActivateFuture =
+    Pin<Box<dyn Future<Output = anyhow::Result<ha_pet::PetConfig>> + Send + 'static>>;
+pub type PetActivateHandler =
+    Arc<dyn Fn(ha_pet::PetRef) -> PetActivateFuture + Send + Sync + 'static>;
 
 /// Shared application state passed to all handlers via `State<Arc<AppContext>>`.
 pub struct AppContext {
@@ -36,6 +82,9 @@ pub struct AppContext {
     pub terminal_manager: Arc<ha_core::terminal::TerminalManager>,
     /// Per-session cancel flags. Key = session_id.
     pub chat_cancels: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
+    /// Desktop-only bridge to the Tauri-owned native PetWindow lifecycle.
+    /// Headless servers leave this unset and the activation route fails closed.
+    pub pet_activate: Option<PetActivateHandler>,
 }
 
 /// Browser provenance required by the product-UI chat endpoint. Product
@@ -235,11 +284,24 @@ fn build_router_with_cors(
         .route(
             "/api/design/share/{token}",
             get(routes::design::serve_share),
+        )
+        .route(
+            "/api/design/review-space",
+            get(routes::design::external_review_snapshot),
+        )
+        .route(
+            "/api/design/review-space/comments",
+            post(routes::design::external_review_comment).layer(DefaultBodyLimit::max(16 * 1024)),
         );
 
     // Protected API routes
     let api = Router::new()
         .route("/server/status", get(routes::server_status::server_status))
+        .route("/app-update/status", get(routes::app_update::status))
+        .route("/app-update/check", post(routes::app_update::check))
+        .route("/app-update/prepare", post(routes::app_update::prepare))
+        .route("/app-update/confirm", post(routes::app_update::confirm))
+        .route("/app-update/jobs/{job_id}", get(routes::app_update::job))
         .route(
             "/auth/token/rotate",
             post(routes::auth::rotate_server_owner_token),
@@ -261,6 +323,10 @@ fn build_router_with_cors(
             get(routes::sessions::list_archived_sessions),
         )
         .route("/sessions/{id}/fork", post(routes::sessions::fork_session))
+        .route(
+            "/sessions/{id}/side-chats",
+            get(routes::sessions::list_side_chats).post(routes::sessions::create_side_chat),
+        )
         .route("/sessions/{id}", get(routes::sessions::get_session))
         .route("/sessions/{id}", delete(routes::sessions::delete_session))
         .route("/sessions/{id}", patch(routes::sessions::rename_session))
@@ -526,7 +592,8 @@ fn build_router_with_cors(
             get(routes::knowledge::kb_source_list)
                 .post(routes::knowledge::kb_source_import)
                 .layer(DefaultBodyLimit::max(
-                    (ha_core::knowledge::MAX_MAX_BINARY_SOURCE_MB as usize * 1024 * 1024 * 4 / 3)
+                    (ha_knowledge::knowledge::MAX_MAX_BINARY_SOURCE_MB as usize * 1024 * 1024 * 4
+                        / 3)
                         + 2 * 1024 * 1024,
                 )),
         )
@@ -541,7 +608,8 @@ fn build_router_with_cors(
         .route(
             "/knowledge/{kb_id}/sources/batch",
             post(routes::knowledge::kb_source_import_batch).layer(DefaultBodyLimit::max(
-                (ha_core::knowledge::MAX_MAX_BINARY_SOURCE_MB as usize * 1024 * 1024 * 4 / 3 * 3)
+                (ha_knowledge::knowledge::MAX_MAX_BINARY_SOURCE_MB as usize * 1024 * 1024 * 4 / 3
+                    * 3)
                     + 4 * 1024 * 1024,
             )),
         )
@@ -926,6 +994,7 @@ fn build_router_with_cors(
             post(routes::chat::cancel_queued_turn_user_message),
         )
         .route("/chat/stop", post(routes::chat::stop_chat))
+        .route("/chat/continue", post(routes::chat::continue_chat))
         .route(
             "/chat/recovery/control",
             post(routes::chat::control_model_recovery),
@@ -999,6 +1068,7 @@ fn build_router_with_cors(
             get(routes::pet::get_config).put(routes::pet::save_config),
         )
         .route("/pets/enabled", post(routes::pet::set_enabled))
+        .route("/pets/activate", post(routes::pet::activate))
         .route("/pets/asset", get(routes::pet::asset_descriptor))
         .route("/pets/sprite", get(routes::pet::sprite))
         .route("/pets/codex-candidates", get(routes::pet::codex_candidates))
@@ -1016,6 +1086,7 @@ fn build_router_with_cors(
             get(routes::pet::preview_thumbnail),
         )
         .route("/pets/create/preview", post(routes::pet::create_preview))
+        .route("/pets/upgrade-v2", post(routes::pet::upgrade_v2))
         .route("/pets/import/commit", post(routes::pet::import_commit))
         .route("/pets/delete", post(routes::pet::delete))
         .route("/pets/restore", post(routes::pet::restore))
@@ -1061,6 +1132,10 @@ fn build_router_with_cors(
         .route("/chat/system-prompt", get(routes::chat::get_system_prompt))
         .route("/system-prompt", post(routes::chat::get_system_prompt_post))
         .route("/chat/tools", get(routes::chat::list_tools))
+        .route(
+            "/chat/capability-mentions",
+            get(routes::chat::list_capability_mentions),
+        )
         // Providers
         .route("/providers", get(routes::providers::list_providers))
         .route("/providers", post(routes::providers::add_provider))
@@ -1575,6 +1650,10 @@ fn build_router_with_cors(
             post(routes::config::run_external_memory_provider_sync),
         )
         .route(
+            "/config/external-memory-providers/{provider_id}/test",
+            post(routes::config::test_external_memory_provider_connection),
+        )
+        .route(
             "/config/external-memory-providers/{provider_id}/credentials",
             get(routes::config::get_external_memory_provider_credential_status)
                 .put(routes::config::save_external_memory_provider_credentials)
@@ -1975,11 +2054,20 @@ fn build_router_with_cors(
         // Cron
         .route("/cron/jobs", get(routes::cron::list_jobs))
         .route("/cron/jobs", post(routes::cron::create_job))
+        .route("/cron/preflight", post(routes::cron::preflight))
         .route("/cron/jobs/{id}", get(routes::cron::get_job))
+        .route(
+            "/cron/jobs/{id}/snapshot",
+            get(routes::cron::get_job_snapshot),
+        )
         .route("/cron/jobs/{id}", put(routes::cron::update_job))
         .route("/cron/jobs/{id}", delete(routes::cron::delete_job))
         .route("/cron/jobs/{id}/toggle", post(routes::cron::toggle_job))
         .route("/cron/jobs/{id}/run", post(routes::cron::run_now))
+        .route(
+            "/cron/runs/{run_log_id}/cancel",
+            post(routes::cron::cancel_run),
+        )
         .route("/cron/jobs/{id}/logs", get(routes::cron::get_run_logs))
         .route(
             "/cron/jobs-referencing-account/{account_id}",
@@ -1989,6 +2077,27 @@ fn build_router_with_cors(
         .route("/cron/timeline", get(routes::cron::run_timeline))
         .route("/cron/unread", get(routes::cron::unread_total))
         .route("/cron/read-all", post(routes::cron::mark_all_read))
+        .route("/cron/workspaces", get(routes::cron::workspace_resources))
+        .route(
+            "/cron/runs/{run_log_id}/workspace",
+            get(routes::cron::workspace_resource_for_run),
+        )
+        .route(
+            "/cron/jobs/{id}/workspace/takeover",
+            post(routes::cron::workspace_takeover),
+        )
+        .route(
+            "/cron/jobs/{id}/workspace/return",
+            post(routes::cron::workspace_return),
+        )
+        .route(
+            "/cron/runs/{run_log_id}/workspace/discard",
+            post(routes::cron::workspace_discard_run),
+        )
+        .route(
+            "/cron/jobs/{id}/workspace/discard",
+            post(routes::cron::workspace_discard_task),
+        )
         // Dreaming (offline memory consolidation, Phase B3)
         .route("/dreaming/run", post(routes::dreaming::run_now))
         .route("/dreaming/resolver", post(routes::dreaming::run_resolver))
@@ -3299,6 +3408,74 @@ fn build_router_with_cors(
                 .delete(routes::design::revoke_share),
         )
         .route(
+            "/design/artifacts/{id}/visual-regression",
+            post(routes::design::run_visual_regression),
+        )
+        .route(
+            "/design/artifacts/{id}/visual-baseline",
+            post(routes::design::accept_visual_baseline),
+        )
+        .route(
+            "/design/visual-baseline",
+            post(routes::design::accept_visual_baseline_unscoped),
+        )
+        .route(
+            "/design/artifacts/{id}/scenarios",
+            get(routes::design::get_scenarios).put(routes::design::save_scenarios),
+        )
+        .route(
+            "/design/projects/{id}/components",
+            get(routes::design::get_components_manifest),
+        )
+        .route(
+            "/design/projects/{id}/components/draft",
+            axum::routing::put(routes::design::save_components_draft),
+        )
+        .route(
+            "/design/projects/{id}/components/publish",
+            post(routes::design::publish_components_manifest),
+        )
+        .route(
+            "/design/components/publish",
+            post(routes::design::publish_components_manifest_unscoped),
+        )
+        .route(
+            "/design/projects/{id}/components/scan",
+            post(routes::design::scan_components),
+        )
+        .route(
+            "/design/artifacts/{id}/figma-roundtrip",
+            get(routes::design::list_figma_links).post(routes::design::preview_figma_roundtrip),
+        )
+        .route(
+            "/design/artifacts/{id}/figma-roundtrip/reconciliations",
+            get(routes::design::list_figma_reconciliations),
+        )
+        .route(
+            "/design/figma-roundtrip/commit",
+            post(routes::design::commit_figma_roundtrip),
+        )
+        .route(
+            "/design/figma-roundtrip/reconcile",
+            post(routes::design::resolve_figma_reconciliation),
+        )
+        .route(
+            "/design/figma-roundtrip/preview",
+            post(routes::design::preview_figma_roundtrip_unscoped),
+        )
+        .route(
+            "/design/artifacts/{id}/review-spaces",
+            get(routes::design::list_review_spaces).post(routes::design::create_review_space),
+        )
+        .route(
+            "/design/review-spaces",
+            post(routes::design::create_review_space_unscoped),
+        )
+        .route(
+            "/design/artifacts/{id}/review-spaces/{grant_id}",
+            axum::routing::delete(routes::design::revoke_review_space),
+        )
+        .route(
             "/design/deploy/config",
             get(routes::design::get_deploy_config).put(routes::design::save_deploy_config),
         )
@@ -3664,6 +3841,10 @@ fn build_router_with_cors(
         // System (desktop-only stubs)
         .route("/system/restart", post(routes::system::request_app_restart))
         .route("/system/timezone", get(routes::system::get_system_timezone))
+        .route(
+            "/system/toolchain-doctor",
+            get(routes::system::get_toolchain_doctor_report),
+        )
         // Desktop (desktop-only stubs)
         .route("/desktop/open-url", post(routes::desktop::open_url))
         .route(

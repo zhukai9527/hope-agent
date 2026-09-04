@@ -32,7 +32,7 @@ The left side of the Settings page is a navigation column. The table below tells
 | **MCP Servers** | [MCP connections](11-connect-and-extend.md#111-mcp-connecting-external-tools) |
 | **Memory** | [Memory extraction / recall / budget, embedding, Dreaming](04-memory.md) |
 | **Knowledge** | [Knowledge bases, retrieval, passive recall, autonomous maintenance, Sprite](05-knowledge-space.md) |
-| **Design Space** | [Design Space toggles, auto-preview, export parameters](06-design-space.md#610-settings) |
+| **Design Space** | [Design Space toggles, auto-preview, export parameters](06-design-space.md#611-settings) |
 | **Chat & Context** | Basic chat behavior, behavior awareness, context compaction |
 | **Archived conversations** | Search, filter by type / project, restore conversations, or permanently delete after confirmation |
 | **Scheduled Tasks** | [Concurrency limit, timeout, catch-up window](09-multi-agent-and-scheduling.md#94-scheduled-tasks-cron) |
@@ -120,6 +120,7 @@ Hope Agent uses multiple layers of redundancy to keep itself running reliably ov
 - **System-service keep-alive**: after `hope-agent server install`, the operating system (launchd / systemd) brings it up.
 - **Subsystem self-healing**: MCP reconnects automatically on disconnect, each IM account reconnects independently, and scheduled tasks recover idempotently.
 - **Crash self-diagnosis**: after a certain number of consecutive crashes, it automatically runs a diagnosis once—first a full backup, then an analysis of the cause using the cheapest available model, followed by a safe in-place fix. **The auto-fix only touches configuration and clearly corrupted databases; it never touches your sessions, memory, skills, or Provider list.**
+- **Server updates over remote / browser connections**: when you access a Hope Agent service through a browser, or switch the desktop app to Remote connection mode (Settings → Server, see [1.4 Access from your phone or another computer](01-getting-started.md#14-access-from-your-phone-or-another-computer)) and connect to a service, a new version pops up a floating card in the bottom-right corner (with release notes, a "Check for updates" button to recheck manually, an "Update" button to confirm installation, and download/restart progress during the install); Settings → About also keeps a persistent card with the same content and its own manual-check entry point. Whether it **auto-notifies** and whether checking is **allowed at all** is decided by that **server's own** Settings → About → Auto-update policy, not by the connecting client locally—this is a completely separate mechanism from the update flow for the local embedded desktop mode itself (see [1.6 Updating to a new version](01-getting-started.md#16-updating-to-a-new-version)), so the same process is never prompted twice. Some deployments (such as Docker) can't hot-swap the binary in place and only show instructions (such as pulling the new image and recreating the container) instead of installing automatically.
 
 **Entry point**: Settings → System Health, where you can view crash records, diagnosis conclusions, applied fixes, and restore from full backups.
 

@@ -52,7 +52,7 @@ pub async fn reset_settings_section(
     })
     .await?;
     if scope == ha_core::settings_reset::SettingsResetScope::Browser {
-        ha_core::browser::reset_backend().await;
+        ha_browser::browser::reset_backend().await;
     }
     Ok(Json(result))
 }
@@ -341,8 +341,7 @@ pub async fn save_cron_config(
 /// `GET /api/config/deferred-tools` -- get deferred tool loading config.
 pub async fn get_deferred_tools_config(
 ) -> Result<Json<ha_core::config::DeferredToolsConfig>, AppError> {
-    let store = load_config()?;
-    Ok(Json(store.deferred_tools))
+    Ok(Json(ha_core::config::deferred_tools_config_for_read()))
 }
 
 /// `PUT /api/config/deferred-tools` -- save deferred tool loading config.
@@ -455,6 +454,16 @@ pub async fn run_external_memory_provider_sync(
 ) -> Result<Json<ha_core::memory::ExternalMemoryProviderSyncReport>, AppError> {
     Ok(Json(
         ha_core::memory::run_external_memory_provider_sync().await,
+    ))
+}
+
+/// Explicit owner action that performs bounded health/version IO. Ordinary
+/// config reads and preflight remain network-free.
+pub async fn test_external_memory_provider_connection(
+    Path(provider_id): Path<String>,
+) -> Result<Json<ha_core::memory::ExternalMemoryProviderCompatibilityReport>, AppError> {
+    Ok(Json(
+        ha_core::memory::test_external_memory_provider_connection(provider_id).await?,
     ))
 }
 
@@ -612,15 +621,14 @@ pub async fn save_notification_config(
 // ── Auto-update Config ──────────────────────────────────────────
 
 /// `GET /api/config/auto-update` -- get auto-update config.
-pub async fn get_auto_update_config() -> Result<Json<ha_core::updater::AutoUpdateConfig>, AppError>
-{
+pub async fn get_auto_update_config() -> Result<Json<ha_updater::AutoUpdateConfig>, AppError> {
     let store = ha_core::config::cached_config();
     Ok(Json(store.auto_update.clone()))
 }
 
 /// `PUT /api/config/auto-update` -- save auto-update config (interval clamped).
 pub async fn set_auto_update_config(
-    Json(body): Json<ConfigBody<ha_core::updater::AutoUpdateConfig>>,
+    Json(body): Json<ConfigBody<ha_updater::AutoUpdateConfig>>,
 ) -> Result<Json<Value>, AppError> {
     ha_core::config::mutate_config_async(("auto_update", "http"), move |store| {
         store.auto_update = body.config;
@@ -1220,6 +1228,7 @@ pub async fn get_web_fetch_config(
 pub async fn save_web_fetch_config(
     Json(body): Json<ConfigBody<ha_core::tools::web_fetch::WebFetchConfig>>,
 ) -> Result<Json<Value>, AppError> {
+    ha_core::tools::web_fetch::validate_config(&body.config)?;
     ha_core::config::mutate_config_async(("web_fetch", "http"), move |store| {
         store.web_fetch = body.config;
         Ok(())
@@ -1409,8 +1418,8 @@ pub async fn update_media_gen_defaults(
 
 /// `GET /api/config/media-gen/templates` -- built-in vendor templates (GUI-only catalog).
 pub async fn get_media_provider_templates(
-) -> Result<Json<Vec<ha_core::media_gen::MediaProviderTemplate>>, AppError> {
-    Ok(Json(ha_core::media_gen::media_provider_templates()))
+) -> Result<Json<Vec<ha_media::media_gen::MediaProviderTemplate>>, AppError> {
+    Ok(Json(ha_media::media_gen::media_provider_templates()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1424,9 +1433,9 @@ pub struct MediaVoicesQuery {
 /// `GET /api/config/media-gen/voices?providerId=..&limit=..` -- voice catalog.
 pub async fn list_media_voices(
     axum::extract::Query(q): axum::extract::Query<MediaVoicesQuery>,
-) -> Result<Json<Vec<ha_core::media_gen::voices::VoiceOption>>, AppError> {
+) -> Result<Json<Vec<ha_media::media_gen::voices::VoiceOption>>, AppError> {
     let voices =
-        ha_core::media_gen::voices::list_media_voices(&q.provider_id, q.limit.unwrap_or(100))
+        ha_media::media_gen::voices::list_media_voices(&q.provider_id, q.limit.unwrap_or(100))
             .await
             .map_err(|e| AppError::internal(e.to_string()))?;
     Ok(Json(voices))
@@ -1435,9 +1444,9 @@ pub async fn list_media_voices(
 /// `POST /api/config/media-gen/test` -- connectivity probe (saved provider
 /// by id, or a pre-save draft by kind + apiKey + baseUrl).
 pub async fn test_media_provider(
-    Json(body): Json<ha_core::media_gen::probe::TestMediaProviderInput>,
+    Json(body): Json<ha_media::media_gen::probe::TestMediaProviderInput>,
 ) -> Result<Json<Value>, AppError> {
-    let payload = ha_core::media_gen::probe::test_media_provider(body)
+    let payload = ha_media::media_gen::probe::test_media_provider(body)
         .await
         .unwrap_or_else(|e| e);
     let v: Value = serde_json::from_str(&payload).unwrap_or(Value::String(payload));
@@ -1445,10 +1454,12 @@ pub async fn test_media_provider(
 }
 
 /// `GET /api/config/media-gen/overview` -- sanitized availability/caps view.
-pub async fn get_media_gen_overview() -> Result<Json<ha_core::media_gen::MediaGenOverview>, AppError>
-{
+pub async fn get_media_gen_overview(
+) -> Result<Json<ha_media::media_gen::MediaGenOverview>, AppError> {
     let cfg = ha_core::config::cached_config();
-    Ok(Json(ha_core::media_gen::media_gen_overview(&cfg.media_gen)))
+    Ok(Json(ha_media::media_gen::media_gen_overview(
+        &cfg.media_gen,
+    )))
 }
 
 #[derive(serde::Deserialize)]
@@ -1457,14 +1468,14 @@ pub struct VoicesQuery {
 }
 
 /// `GET /api/config/canvas` -- get canvas tool config.
-pub async fn get_canvas_config() -> Result<Json<ha_core::tools::canvas::CanvasConfig>, AppError> {
+pub async fn get_canvas_config() -> Result<Json<ha_design::tool_canvas::CanvasConfig>, AppError> {
     let store = load_config()?;
     Ok(Json(store.canvas))
 }
 
 /// `PUT /api/config/canvas` -- save canvas tool config.
 pub async fn save_canvas_config(
-    Json(body): Json<ConfigBody<ha_core::tools::canvas::CanvasConfig>>,
+    Json(body): Json<ConfigBody<ha_design::tool_canvas::CanvasConfig>>,
 ) -> Result<Json<Value>, AppError> {
     ha_core::config::mutate_config_async(("canvas", "http"), move |store| {
         store.canvas = body.config;
@@ -1475,19 +1486,20 @@ pub async fn save_canvas_config(
 }
 
 /// `GET /api/config/design` -- get Design Space config.
-pub async fn get_design_config() -> Result<Json<ha_core::design::DesignConfig>, AppError> {
+pub async fn get_design_config() -> Result<Json<ha_design::design::DesignConfig>, AppError> {
     let store = load_config()?;
     Ok(Json(store.design))
 }
 
 /// `PUT /api/config/design` -- save Design Space config.
 pub async fn save_design_config(
-    Json(body): Json<ConfigBody<ha_core::design::DesignConfig>>,
+    Json(body): Json<ConfigBody<ha_design::design::DesignConfig>>,
 ) -> Result<Json<Value>, AppError> {
-    ha_core::config::mutate_config(("design", "http"), |store| {
+    ha_core::config::mutate_config_async(("design", "http"), move |store| {
         store.design = body.config;
         Ok(())
-    })?;
+    })
+    .await?;
     Ok(Json(json!({ "saved": true })))
 }
 
@@ -1772,13 +1784,18 @@ pub async fn save_awareness_config(
 
 // ── Hooks ───────────────────────────────────────────────────────
 
-/// `GET /api/config/hooks` -- read the hooks settings (disable switch +
-/// user-scope hooks map). Project / local / managed scopes are file-based.
+/// `GET /api/config/hooks` -- read the hooks settings (disable switch,
+/// user-scope hooks map, and trusted canonical workspace paths). Stored file
+/// hashes remain server-side.
 pub async fn get_hooks_config() -> Result<Json<ha_core::hooks::config::HooksSettings>, AppError> {
     let store = load_config()?;
     Ok(Json(ha_core::hooks::config::HooksSettings {
         disable_all_hooks: store.disable_all_hooks,
-        allow_project_scope: store.hooks_allow_project_scope,
+        trusted_project_scopes: store
+            .hook_workspace_trusts
+            .iter()
+            .map(|trust| trust.canonical_path.clone())
+            .collect(),
         hooks: store.hooks,
     }))
 }
@@ -1788,9 +1805,22 @@ pub async fn get_hooks_config() -> Result<Json<ha_core::hooks::config::HooksSett
 pub async fn save_hooks_config(
     Json(body): Json<ConfigBody<ha_core::hooks::config::HooksSettings>>,
 ) -> Result<Json<Value>, AppError> {
+    let existing_trusts = ha_core::config::cached_config()
+        .hook_workspace_trusts
+        .clone();
+    let trusted_paths = body.config.trusted_project_scopes;
+    let reconcile_from = existing_trusts.clone();
+    let trusted_workspaces = ha_core::blocking::run_blocking(move || {
+        ha_core::hooks::scopes::reconcile_workspace_trusts(trusted_paths, &reconcile_from)
+    })
+    .await?;
     ha_core::config::mutate_config_async(("hooks", "http"), move |store| {
+        if store.hook_workspace_trusts != existing_trusts {
+            anyhow::bail!("Hook workspace trust changed; reload settings before saving");
+        }
         store.disable_all_hooks = body.config.disable_all_hooks;
-        store.hooks_allow_project_scope = body.config.allow_project_scope;
+        store.hooks_allow_project_scope = false;
+        store.hook_workspace_trusts = trusted_workspaces;
         store.hooks = body.config.hooks;
         Ok(())
     })

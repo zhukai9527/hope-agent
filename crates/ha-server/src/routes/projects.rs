@@ -17,7 +17,7 @@ use ha_core::project::{
     ProjectInstructionsFile, ProjectMeta, ProjectOverviewSummary, ProjectWorkflowDiscovery,
     ProjectWorkflowPreview, StaleProjectInstructionsError, UpdateProjectInput,
 };
-use ha_core::session::{ParentSessionFilter, ProjectFilter, SessionMeta};
+use ha_core::session::{ParentSessionFilter, PinnedSessionFilter, ProjectFilter, SessionMeta};
 
 use crate::error::AppError;
 use crate::routes::sessions::PaginatedSessions;
@@ -113,6 +113,9 @@ pub struct ListProjectSessionsQuery {
     /// Currently-open session id; allowed in results even if incognito.
     #[serde(default)]
     pub active_session_id: Option<String>,
+    /// `true` selects pinned sessions; `false` selects unpinned sessions.
+    #[serde(default)]
+    pub pinned: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -415,6 +418,11 @@ pub async fn list_project_sessions(
         let limit = q.limit;
         let offset = q.offset;
         let active_session_id = q.active_session_id.clone();
+        let pinned_filter = match q.pinned {
+            Some(true) => PinnedSessionFilter::Pinned,
+            Some(false) => PinnedSessionFilter::Unpinned,
+            None => PinnedSessionFilter::All,
+        };
         ctx.session_db
             .run(move |db| {
                 db.list_sessions_paged_for_sidebar(
@@ -424,6 +432,7 @@ pub async fn list_project_sessions(
                     limit,
                     offset,
                     active_session_id.as_deref(),
+                    pinned_filter,
                 )
             })
             .await?

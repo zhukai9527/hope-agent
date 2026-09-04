@@ -3,9 +3,12 @@ import MarkdownRenderer from "@/components/common/MarkdownRenderer"
 import PlainTextRenderer from "@/components/common/PlainTextRenderer"
 import ToolCallBlock from "./ToolCallBlock"
 import ToolCallGroup from "./ToolCallGroup"
+import SessionMessageToolResult from "./SessionMessageToolResult"
+import RuntimeControlActivityGroup from "./RuntimeControlActivityGroup"
 import ThinkingBlock from "./ThinkingBlock"
 import TaskBlock from "./TaskBlock"
 import ProcessedBlockGroup from "./ProcessedBlockGroup"
+import ScheduleEntityCard from "./ScheduleEntityCard"
 import InterruptedMark from "./InterruptedMark"
 import { AnimatedCollapse, AnimatedPresenceBox } from "@/components/ui/animated-presence"
 import {
@@ -28,6 +31,10 @@ import {
   getToolsWallClockMs,
   toolHasMedia,
 } from "./executionStatus"
+import {
+  getRuntimeControlActivityGroupKey,
+  parseRuntimeControlActivity,
+} from "./runtimeControlActivity"
 import type {
   ChatDisplayMode,
   ChatTurnStatus,
@@ -53,6 +60,9 @@ const NO_GROUP_TOOLS = new Set([
   // canvas has a dedicated reopen-card UI in ToolCallBlock; GroupItem
   // doesn't render it, so keep canvas out of the group path.
   "canvas",
+  // Cross-session delivery receipts must stay visible and navigable.
+  "sessions_send",
+  "sessions_create",
 ])
 
 interface MessageContentProps {
@@ -97,6 +107,19 @@ interface RenderUnit {
 
 function processUnitToolsComplete(tools: ToolCall[]): boolean {
   return tools.every((tool) => getToolExecutionState(tool) !== "running")
+}
+
+/** Keep durable schedule cards outside collapsible tool/process groups. */
+function pushScheduleCardUnits(units: RenderUnit[], tools: ToolCall[]): void {
+  for (const tool of tools) {
+    const metadata = tool.metadata
+    if (metadata?.kind !== "schedule_entity") continue
+    units.push({
+      key: `schedule-${tool.callId}`,
+      markerAlign: "control",
+      node: <ScheduleEntityCard key={tool.callId} metadata={metadata} />,
+    })
+  }
 }
 
 function hasTextFrom(blocks: ContentBlock[], start: number): boolean {
@@ -400,6 +423,15 @@ export function AssistantContentBlocks({
       })
       i++
     } else if (block.type === "tool_call") {
+      if (block.tool.name === "sessions_send" || block.tool.name === "sessions_create") {
+        units.push({
+          key: block.tool.callId,
+          markerAlign: "control",
+          node: <SessionMessageToolResult key={block.tool.callId} tool={block.tool} />,
+        })
+        i++
+        continue
+      }
       // ask_user_question — passive indicator on the timeline. The actual
       // dialog is dispatched via a separate event channel, so the card here
       // is just for the user to see "model asked a question" while the answer
@@ -412,6 +444,7 @@ export function AssistantContentBlocks({
             <AskUserQuestionResult
               key={block.tool.callId}
               result={block.tool.result}
+              toolArguments={block.tool.arguments}
               pending={!block.tool.result}
             />
           ),
@@ -508,10 +541,53 @@ export function AssistantContentBlocks({
           i = j
           continue
         }
-        // Non-spawn-like subagent action (check / list / kill / steer / etc)
-        // or a spawn that failed without a run → render individually.
-        // NO_GROUP_TOOLS prevents it from falling into the generic tool-call
-        // group below.
+      }
+
+      // Runtime-control activities keep their own semantics and state model.
+      // Only consecutive actions of the same kind are merged; any text,
+      // ordinary tool, or different control action preserves the original
+      // ordering boundary. True subagent spawns were consumed above, so a
+      // spawn chip is never duplicated as an activity row.
+      const firstRuntimeActivity = parseRuntimeControlActivity(block.tool)
+      if (firstRuntimeActivity) {
+        const runtimeTools = [block.tool]
+        const activityGroupKey = getRuntimeControlActivityGroupKey(firstRuntimeActivity)
+        let j = i + 1
+        while (j < blocks.length) {
+          const nextBlock = blocks[j]
+          if (nextBlock.type !== "tool_call") break
+          const nextActivity = parseRuntimeControlActivity(nextBlock.tool)
+          if (
+            !nextActivity ||
+            getRuntimeControlActivityGroupKey(nextActivity) !== activityGroupKey
+          ) {
+            break
+          }
+          runtimeTools.push(nextBlock.tool)
+          j++
+        }
+        const isLastRuntimeGroup = loading && isLast && j === blocks.length
+        units.push({
+          key: `runtime-${runtimeTools[0].callId}`,
+          markerAlign: "control",
+          processTools: runtimeTools,
+          elapsedMs: getToolsWallClockMs(runtimeTools),
+          node: (
+            <RuntimeControlActivityGroup
+              key={`runtime-${runtimeTools[0].callId}`}
+              tools={runtimeTools}
+              shimmer={isLastRuntimeGroup}
+              onOpenDiff={onOpenDiff}
+            />
+          ),
+        })
+        i = j
+        continue
+      }
+
+      if (block.tool.name === "subagent") {
+        // A malformed/failed spawn or an unsupported subagent action remains
+        // fully inspectable through the generic single-tool renderer.
         units.push({
           key: block.tool.callId,
           markerAlign: "control",
@@ -533,8 +609,9 @@ export function AssistantContentBlocks({
       const group: ContentBlock[] = [block]
       let j = i + 1
       while (j < blocks.length && blocks[j].type === "tool_call") {
-        const tb = blocks[j] as { type: "tool_call"; tool: { name: string } }
+        const tb = blocks[j] as { type: "tool_call"; tool: ToolCall }
         if (NO_GROUP_TOOLS.has(tb.tool.name)) break
+        if (parseRuntimeControlActivity(tb.tool)) break
         group.push(blocks[j])
         j++
       }
@@ -559,6 +636,7 @@ export function AssistantContentBlocks({
             />
           ),
         })
+        pushScheduleCardUnits(units, tools)
       } else {
         // Single tool — render individually
         units.push({
@@ -576,6 +654,7 @@ export function AssistantContentBlocks({
             />
           ),
         })
+        pushScheduleCardUnits(units, [block.tool])
       }
       i = j
     } else {

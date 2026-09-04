@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use rusqlite::OptionalExtension;
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::automation::{self, ModelTaskSpec};
@@ -14,45 +14,13 @@ pub const TITLE_SOURCE_MANUAL: &str = "manual";
 const GOAL_TRIGGER_META_KEY: &str = "goal_trigger";
 const LOOP_TRIGGER_META_KEY: &str = "loop_trigger";
 
-static TITLE_GENERATION_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static TITLE_GENERATION_IN_FLIGHT: LazyLock<
+    Mutex<HashMap<String, (u64, tokio::sync::watch::Sender<bool>)>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static TITLE_GENERATION_ID: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionTitleConfig {
-    #[serde(default = "default_session_title_enabled")]
-    pub enabled: bool,
-    /// Deprecated — superseded by `modelOverride`. Kept for backward
-    /// compatibility: still read when `modelOverride` is unset, but the GUI
-    /// no longer writes these two fields.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_id: Option<String>,
-    /// Model chain override for title generation. `None` = fall through to
-    /// the deprecated `provider_id`/`model_id` pair (if both set) →
-    /// `function_models.automation` (title generation is exactly the kind
-    /// of cheap, low-stakes background call that default is meant for) →
-    /// the current chat's own model (a guaranteed final fallback, so title
-    /// generation never fails outright even with zero config).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_override: Option<ModelChain>,
-}
-
-fn default_session_title_enabled() -> bool {
-    true
-}
-
-impl Default for SessionTitleConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_session_title_enabled(),
-            provider_id: None,
-            model_id: None,
-            model_override: None,
-        }
-    }
-}
+// 类型已下沉 ha-config-schema，原地再导出保持路径不变。
+pub use ha_config_schema::session_title::SessionTitleConfig;
 
 pub fn maybe_schedule_after_success(
     db: Arc<SessionDB>,
@@ -171,10 +139,13 @@ fn maybe_schedule(
         .unwrap_or_default();
     chain.push(chat_model);
 
-    if !claim_title_generation(&session_id) {
+    let Some((generation_id, cancel_rx)) = claim_title_generation(&session_id) else {
         return;
-    }
-    let lease = TitleGenerationLease(session_id.clone());
+    };
+    let lease = TitleGenerationLease {
+        session_id: session_id.clone(),
+        generation_id,
+    };
     let eval_model_guard = match crate::eval_context::retain_model_automation(&session_id) {
         Ok(guard) => guard,
         Err(error) => {
@@ -213,6 +184,7 @@ fn maybe_schedule(
             agent_id,
             chain,
             require_assistant,
+            cancel_rx,
         )) {
             app_warn!(
                 "session",
@@ -224,21 +196,47 @@ fn maybe_schedule(
     });
 }
 
-fn claim_title_generation(session_id: &str) -> bool {
+fn claim_title_generation(session_id: &str) -> Option<(u64, tokio::sync::watch::Receiver<bool>)> {
+    let mut in_flight = TITLE_GENERATION_IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if in_flight.contains_key(session_id) {
+        return None;
+    }
+    let generation_id = TITLE_GENERATION_ID.fetch_add(1, Ordering::Relaxed);
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    in_flight.insert(session_id.to_string(), (generation_id, cancel_tx));
+    Some((generation_id, cancel_rx))
+}
+
+/// Cancel the background title request for one Session. The generation stays
+/// registered until its worker has actually unwound, so a replacement cannot
+/// race the cancelled request and write a stale title.
+pub fn cancel_generation(session_id: &str) -> bool {
     TITLE_GENERATION_IN_FLIGHT
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(session_id.to_string())
+        .get(session_id)
+        .map(|(_, cancel_tx)| cancel_tx.send(true).is_ok())
+        .unwrap_or(false)
 }
 
-struct TitleGenerationLease(String);
+struct TitleGenerationLease {
+    session_id: String,
+    generation_id: u64,
+}
 
 impl Drop for TitleGenerationLease {
     fn drop(&mut self) {
-        TITLE_GENERATION_IN_FLIGHT
+        let mut in_flight = TITLE_GENERATION_IN_FLIGHT
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.0);
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if in_flight
+            .get(&self.session_id)
+            .is_some_and(|(generation_id, _)| *generation_id == self.generation_id)
+        {
+            in_flight.remove(&self.session_id);
+        }
     }
 }
 
@@ -246,7 +244,7 @@ fn is_autonomous_title_session(db: &SessionDB, session_id: &str) -> Result<bool>
     let conn = db.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
     let workflow_mode = conn
         .query_row(
-            "SELECT workflow_mode FROM sessions WHERE id = ?1",
+            "SELECT workflow_mode FROM sessions WHERE id = ?1 AND kind != 'side'",
             rusqlite::params![session_id],
             |row| row.get::<_, String>(0),
         )
@@ -261,7 +259,7 @@ fn is_autonomous_title_session(db: &SessionDB, session_id: &str) -> Result<bool>
     let mut stmt = conn.prepare(
         "SELECT role, attachments_meta
            FROM messages
-          WHERE session_id = ?1 AND attachments_meta IS NOT NULL
+          WHERE session_id = ?1 AND attachments_meta IS NOT NULL AND is_side_snapshot = 0
           ORDER BY id ASC
           LIMIT 32",
     )?;
@@ -299,7 +297,8 @@ fn repair_misclassified_goal_fallback(
     let (content, attachments_meta, user_count) = {
         let conn = db.conn.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
         let user_count = conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND role = 'user'",
+            "SELECT COUNT(*) FROM messages
+             WHERE session_id = ?1 AND role = 'user' AND is_side_snapshot = 0",
             rusqlite::params![meta.id],
             |row| row.get::<_, i64>(0),
         )?;
@@ -307,7 +306,7 @@ fn repair_misclassified_goal_fallback(
             .query_row(
                 "SELECT content, attachments_meta
                    FROM messages
-                  WHERE session_id = ?1 AND role = 'user'
+                  WHERE session_id = ?1 AND role = 'user' AND is_side_snapshot = 0
                   ORDER BY id ASC
                   LIMIT 1",
                 rusqlite::params![meta.id],
@@ -378,6 +377,7 @@ async fn generate_and_update_title(
     _agent_id: String,
     chain: Vec<ActiveModel>,
     require_assistant: bool,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let messages = collect_title_messages(&db, &session_id)?;
     let user_count = messages
@@ -390,14 +390,22 @@ async fn generate_and_update_title(
     }
 
     let prompt = build_title_prompt(&messages);
-    let response = automation::run(ModelTaskSpec {
-        purpose: "session_title",
-        chain,
-        session_key: &session_id,
-        instruction: &prompt,
-        max_tokens: 64,
-    })
-    .await
+    if *cancel_rx.borrow() {
+        return Err(anyhow!("session title generation cancelled"));
+    }
+    let response = tokio::select! {
+        changed = cancel_rx.changed() => {
+            let _ = changed;
+            return Err(anyhow!("session title generation cancelled"));
+        }
+        response = automation::run(ModelTaskSpec {
+            purpose: "session_title",
+            chain,
+            session_key: &session_id,
+            instruction: &prompt,
+            max_tokens: 64,
+        }) => response,
+    }
     .map_err(|e| {
         anyhow!(
             "session title generation failed (session={}): {}",
@@ -443,6 +451,7 @@ fn collect_title_messages(db: &SessionDB, session_id: &str) -> Result<Vec<String
         "SELECT role, content, attachments_meta
              FROM messages
              WHERE session_id = ?1 AND role IN ('user', 'assistant', 'event')
+               AND is_side_snapshot = 0
              ORDER BY id ASC
              LIMIT 32",
     )?;
@@ -690,6 +699,52 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    }
+
+    #[test]
+    fn collect_title_messages_excludes_side_snapshots_before_the_limit() {
+        let dir = tempfile::tempdir().expect("temporary database directory");
+        let db = Arc::new(
+            SessionDB::open_ephemeral_for_test(&dir.path().join("sessions.db"))
+                .expect("open database"),
+        );
+        crate::channel::ChannelDB::new(db.clone())
+            .migrate()
+            .expect("channel table");
+        let source = db.create_session("ha-main").expect("source session");
+        for index in 0..20 {
+            let mut question =
+                crate::session::NewMessage::user(&format!("parent question {index}"));
+            if index == 0 {
+                question.attachments_meta =
+                    Some(serde_json::json!({ "goal_trigger": true }).to_string());
+            }
+            db.append_message(&source.id, &question).unwrap();
+            db.append_message(
+                &source.id,
+                &crate::session::NewMessage::assistant("parent answer"),
+            )
+            .unwrap();
+        }
+        let side = db.create_side_chat(&source.id).expect("create side chat");
+        assert!(collect_title_messages(&db, &side.id).unwrap().is_empty());
+        assert!(!is_autonomous_title_session(&db, &side.id).unwrap());
+        assert!(is_autonomous_title_session(&db, &source.id).unwrap());
+        db.append_message(&side.id, &crate::session::NewMessage::user("side question"))
+            .unwrap();
+        db.append_message(
+            &side.id,
+            &crate::session::NewMessage::assistant("side answer"),
+        )
+        .unwrap();
+        assert_eq!(
+            collect_title_messages(&db, &side.id).unwrap(),
+            vec!["User: side question", "Assistant: side answer"]
+        );
+        assert_eq!(
+            collect_title_messages(&db, &source.id).unwrap(),
+            vec!["User: parent question 0", "Assistant: parent answer"]
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react"
 import { X } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { PANEL_SCROLL_FADE } from "../chat/right-panel/panelFade"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -11,65 +12,90 @@ import { TeamToolbar } from "./TeamToolbar"
 import { TeamDashboard } from "./TeamDashboard"
 import { TeamTaskBoard } from "./TeamTaskBoard"
 import { TeamMessageFeed } from "./TeamMessageFeed"
+import type { ResumeTeamResult } from "./teamTypes"
 
 interface TeamPanelProps {
   teamId: string
-  panelWidth?: number
-  onPanelWidthChange?: (w: number) => void
-  reservedMainWidth?: number
   collapsed?: boolean
-  overlay?: boolean
   animateOnMount?: boolean
   onClose: () => void
   onViewSession?: (sessionId: string) => void
+  integrated?: boolean
 }
-
-const MIN_WIDTH = 320
-const MAX_WIDTH = 800
-const DEFAULT_WIDTH = 420
 
 export function TeamPanel({
   teamId,
-  panelWidth,
-  onPanelWidthChange,
-  reservedMainWidth,
   collapsed = false,
-  overlay = false,
   animateOnMount = false,
   onClose,
   onViewSession,
+  integrated = false,
 }: TeamPanelProps) {
   const { t } = useTranslation()
   const { team, members, messages, tasks, sendMessage, hasMore, loadingMore, loadMoreMessages } =
     useTeam(teamId)
   const [tab, setTab] = useState("dashboard")
-
-  const width = panelWidth ?? DEFAULT_WIDTH
+  const [resumeState, setResumeState] = useState<{
+    teamId: string
+    result: ResumeTeamResult | null
+  }>({ teamId, result: null })
+  const resumeResult = resumeState.teamId === teamId ? resumeState.result : null
+  const resumeNotNeeded =
+    team?.status === "paused" &&
+    members.length > 0 &&
+    members.every((member) => member.status === "completed")
 
   // ── Actions ─────────────────────────────────────────────
   const handlePause = useCallback(async () => {
-    await getTransport()
-      .call("pause_team", { teamId })
-      .catch(() => {})
+    try {
+      await getTransport().call("pause_team", { teamId })
+      setResumeState({ teamId, result: null })
+    } catch {
+      // Error handled by transport
+    }
   }, [teamId])
 
   const handleResume = useCallback(async () => {
-    await getTransport()
-      .call("resume_team", { teamId })
-      .catch(() => {})
-  }, [teamId])
+    try {
+      const result = await getTransport().call<ResumeTeamResult>("resume_team", { teamId })
+      setResumeState({ teamId, result })
+      const counts = t("team.resumeFeedback.counts", {
+        resumed: result.resumedMemberCount,
+        failed: result.failedMemberCount,
+        defaultValue: "{{resumed}} resumed · {{failed}} failed",
+      })
+      if (result.disposition === "resumed") {
+        toast.success(t("team.resumeFeedback.resumedTitle", "Team resumed"), {
+          description: counts,
+        })
+      } else if (result.disposition === "partial") {
+        toast.warning(t("team.resumeFeedback.partialTitle", "Team partially resumed"), {
+          description: counts,
+        })
+      } else if (result.disposition === "refused") {
+        toast.error(t("team.resumeFeedback.refusedTitle", "Team resume refused"), {
+          description: counts,
+        })
+      } else {
+        toast.info(t("team.resumeFeedback.noOpTitle", "No resume needed"), {
+          description: t(
+            "team.resumeFeedback.noOpDescription",
+            "All team members have already completed; no new attempts were started.",
+          ),
+        })
+      }
+    } catch (error) {
+      setResumeState({ teamId, result: null })
+      toast.error(`${t("team.resume", "Resume")} · ${t("common.statusValues.failed", "Failed")}`, {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }, [t, teamId])
 
   if (!team) {
     return (
       <RightPanelShell
-        width={width}
-        onWidthChange={onPanelWidthChange}
-        resizeLabel={t("team.resizePanel", "Resize team panel")}
-        minWidth={MIN_WIDTH}
-        maxWidth={MAX_WIDTH}
-        reservedMainWidth={reservedMainWidth}
         collapsed={collapsed}
-        overlay={overlay}
         animateOnMount={animateOnMount}
         contentKey="team-loading"
       >
@@ -82,27 +108,22 @@ export function TeamPanel({
 
   return (
     <RightPanelShell
-      width={width}
-      onWidthChange={onPanelWidthChange}
-      resizeLabel={t("team.resizePanel", "Resize team panel")}
-      minWidth={MIN_WIDTH}
-      maxWidth={MAX_WIDTH}
-      reservedMainWidth={reservedMainWidth}
       collapsed={collapsed}
-      overlay={overlay}
       animateOnMount={animateOnMount}
       contentKey="team"
     >
       <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden">
-        {/* Close button */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="absolute right-3 top-2.5 z-10 h-6 w-6 p-0"
-          onClick={onClose}
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
+        {!integrated && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="absolute right-3 top-2.5 z-10 h-6 w-6 p-0"
+            onClick={onClose}
+            aria-label={t("common.close", "Close")}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        )}
 
         {/* Toolbar */}
         <TeamToolbar
@@ -110,6 +131,8 @@ export function TeamPanel({
           onPause={handlePause}
           onResume={handleResume}
           onDissolve={onClose}
+          resumeResult={resumeResult}
+          resumeNotNeeded={resumeNotNeeded}
         />
 
         {/* Tabs */}

@@ -278,9 +278,15 @@ pub async fn list_project_sessions_cmd(
     limit: Option<u32>,
     offset: Option<u32>,
     active_session_id: Option<String>,
+    pinned: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<(Vec<SessionMeta>, u32), CmdError> {
-    use ha_core::session::{ParentSessionFilter, ProjectFilter};
+    use ha_core::session::{ParentSessionFilter, PinnedSessionFilter, ProjectFilter};
+    let pinned_filter = match pinned {
+        Some(true) => PinnedSessionFilter::Pinned,
+        Some(false) => PinnedSessionFilter::Unpinned,
+        None => PinnedSessionFilter::All,
+    };
     let (mut sessions, total) = state
         .session_db
         .run(move |db| {
@@ -291,6 +297,7 @@ pub async fn list_project_sessions_cmd(
                 limit,
                 offset,
                 active_session_id.as_deref(),
+                pinned_filter,
             )
         })
         .await?;

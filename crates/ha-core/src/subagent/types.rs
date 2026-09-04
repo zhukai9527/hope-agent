@@ -160,6 +160,14 @@ impl SubagentDeliveryKind {
 pub enum SubagentTerminalReason {
     Success,
     ProviderExhausted,
+    /// The active tool-result group cannot fit even in its protocol-minimal
+    /// envelope after bounded old-history recovery. This is not a provider
+    /// outage and must never enter automatic provider-recovery continuation.
+    CurrentToolGroupOverflow,
+    /// A Provider request crossed its dispatch claim, but receipt/processing
+    /// could not be proven. Automatic continuation could duplicate work or
+    /// billing, so only an explicit manual continuation is appropriate.
+    DispatchUnknown,
     ModelError,
     ToolError,
     DeadlineExceeded,
@@ -170,6 +178,9 @@ pub enum SubagentTerminalReason {
     UserKilled,
     ParentCancelled,
     WorkflowCancelled,
+    /// A session-level Stop interrupted this immutable attempt without closing
+    /// its child thread. Explicit Continue may create a fresh continuation.
+    SessionPaused,
     QueuePayloadUnavailable,
     Unknown,
 }
@@ -179,6 +190,8 @@ impl SubagentTerminalReason {
         match self {
             Self::Success => "success",
             Self::ProviderExhausted => "provider_exhausted",
+            Self::CurrentToolGroupOverflow => "current_tool_group_overflow",
+            Self::DispatchUnknown => "dispatch_unknown",
             Self::ModelError => "model_error",
             Self::ToolError => "tool_error",
             Self::DeadlineExceeded => "deadline_exceeded",
@@ -189,6 +202,7 @@ impl SubagentTerminalReason {
             Self::UserKilled => "user_killed",
             Self::ParentCancelled => "parent_cancelled",
             Self::WorkflowCancelled => "workflow_cancelled",
+            Self::SessionPaused => "session_paused",
             Self::QueuePayloadUnavailable => "queue_payload_unavailable",
             Self::Unknown => "unknown",
         }
@@ -198,6 +212,8 @@ impl SubagentTerminalReason {
         match value {
             "success" => Self::Success,
             "provider_exhausted" => Self::ProviderExhausted,
+            "current_tool_group_overflow" => Self::CurrentToolGroupOverflow,
+            "dispatch_unknown" => Self::DispatchUnknown,
             "model_error" => Self::ModelError,
             "tool_error" => Self::ToolError,
             "deadline_exceeded" => Self::DeadlineExceeded,
@@ -208,6 +224,7 @@ impl SubagentTerminalReason {
             "user_killed" => Self::UserKilled,
             "parent_cancelled" => Self::ParentCancelled,
             "workflow_cancelled" => Self::WorkflowCancelled,
+            "session_paused" => Self::SessionPaused,
             "queue_payload_unavailable" => Self::QueuePayloadUnavailable,
             _ => Self::Unknown,
         }
@@ -218,7 +235,10 @@ impl SubagentTerminalReason {
     pub fn resume_recommended(self) -> bool {
         matches!(
             self,
-            Self::ProviderExhausted | Self::DeadlineExceeded | Self::ProcessInterrupted
+            Self::ProviderExhausted
+                | Self::DeadlineExceeded
+                | Self::ProcessInterrupted
+                | Self::SessionPaused
         )
     }
 
@@ -296,6 +316,17 @@ pub struct SubagentRun {
     pub owner_id: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SubagentProviderRecovery {
+    pub run_id: String,
+    pub thread_id: String,
+    pub owner_kind: SubagentOwnerKind,
+    pub owner_id: String,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub next_attempt_at: String,
+}
+
 impl Default for SubagentRun {
     fn default() -> Self {
         Self {
@@ -363,8 +394,13 @@ pub struct SpawnParams {
     pub lock_plan_agent_mode: bool,
     /// If true, skip automatic result injection into parent conversation
     pub skip_parent_injection: bool,
-    /// Extra system context to inject into the sub-agent (e.g., PLAN_MODE_SYSTEM_PROMPT)
-    pub extra_system_context: Option<String>,
+    /// Additional platform-maintained run instruction for the child. The child
+    /// task itself remains the user message and must not be copied here.
+    pub run_instruction_context: Option<String>,
+    /// User/model-authored metadata associated with the child run (for example
+    /// a Team roster or shared context). Adapters always keep this in the
+    /// untrusted run-data lane, never in system/developer authority.
+    pub run_data_context: Option<String>,
     /// Skill-level tool restriction inherited from parent skill activation.
     /// When non-empty, the sub-agent only has access to these tools.
     pub skill_allowed_tools: Vec<String>,
@@ -419,7 +455,7 @@ pub struct ParentAgentStreamEvent {
 
 #[cfg(test)]
 mod status_tests {
-    use super::SubagentStatus;
+    use super::{SubagentStatus, SubagentTerminalReason};
 
     #[test]
     fn queued_round_trips_and_is_non_terminal() {
@@ -432,6 +468,30 @@ mod status_tests {
         assert!(!SubagentStatus::Queued.is_terminal());
         // Unknown still falls back to Error (unchanged).
         assert_eq!(SubagentStatus::from_str("bogus"), SubagentStatus::Error);
+    }
+
+    #[test]
+    fn current_tool_group_overflow_is_durable_and_not_auto_recommended() {
+        let reason = SubagentTerminalReason::CurrentToolGroupOverflow;
+        assert_eq!(reason.as_str(), "current_tool_group_overflow");
+        assert_eq!(SubagentTerminalReason::from_str(reason.as_str()), reason);
+        assert!(!reason.resume_recommended());
+        assert!(
+            reason.resume_allowed(),
+            "an explicit continuation may compact the now-historical group"
+        );
+    }
+
+    #[test]
+    fn dispatch_unknown_is_durable_and_not_auto_recommended() {
+        let reason = SubagentTerminalReason::DispatchUnknown;
+        assert_eq!(reason.as_str(), "dispatch_unknown");
+        assert_eq!(SubagentTerminalReason::from_str(reason.as_str()), reason);
+        assert!(!reason.resume_recommended());
+        assert!(
+            reason.resume_allowed(),
+            "a user may explicitly continue after checking Provider activity"
+        );
     }
 }
 

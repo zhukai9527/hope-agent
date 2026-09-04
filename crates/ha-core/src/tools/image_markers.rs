@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::browser::IMAGE_BASE64_PREFIX;
+use super::IMAGE_BASE64_PREFIX;
 
-pub(crate) const IMAGE_FILE_PREFIX: &str = "__IMAGE_FILE__";
+#[doc(hidden)]
+pub const IMAGE_FILE_PREFIX: &str = "__IMAGE_FILE__";
 const MAX_IMAGE_FILE_BYTES: u64 = 20 * 1024 * 1024;
 const MANAGED_IMAGE_SUBDIRS: &[&str] = &["attachments", "tool_results", "mac-control/snapshots"];
 
@@ -17,20 +18,23 @@ enum MarkerKind {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ImageMarkerPayload {
+#[doc(hidden)]
+pub enum ImageMarkerPayload {
     Base64(String),
     FilePath(String),
 }
 
 #[derive(Debug)]
-pub(crate) struct ImageMarker {
+#[doc(hidden)]
+pub struct ImageMarker {
     pub mime: String,
     pub payload: ImageMarkerPayload,
     pub text: String,
 }
 
 #[derive(Debug)]
-pub(crate) struct ParsedImageMarkers {
+#[doc(hidden)]
+pub struct ParsedImageMarkers {
     pub leading_text: String,
     pub markers: Vec<ImageMarker>,
 }
@@ -50,7 +54,8 @@ struct ImageFileSpec {
 ///
 /// Returns `None` for absent or malformed markers so callers can safely fall
 /// back to plain text instead of sending invalid image payloads to providers.
-pub(crate) fn parse_image_markers(result: &str) -> Option<ParsedImageMarkers> {
+#[doc(hidden)]
+pub fn parse_image_markers(result: &str) -> Option<ParsedImageMarkers> {
     let (mut marker_start, mut kind) = find_next_marker(result, 0)?;
     let leading_text = result[..marker_start].trim().to_string();
     let mut markers = Vec::new();
@@ -128,14 +133,15 @@ pub(crate) fn parse_image_markers(result: &str) -> Option<ParsedImageMarkers> {
     })
 }
 
-pub(crate) fn encode_marker_image(marker: &ImageMarker) -> anyhow::Result<String> {
+#[doc(hidden)]
+pub fn encode_marker_image(marker: &ImageMarker) -> anyhow::Result<String> {
     match &marker.payload {
         ImageMarkerPayload::Base64(b64) => Ok(b64.clone()),
         ImageMarkerPayload::FilePath(path) => encode_managed_image_file(path, &marker.mime),
     }
 }
 
-pub(crate) fn build_image_file_marker(mime: &str, path: &str, text: &str) -> String {
+pub fn build_image_file_marker(mime: &str, path: &str, text: &str) -> String {
     let spec = serde_json::json!({
         "mime": mime,
         "path": path,
@@ -143,7 +149,7 @@ pub(crate) fn build_image_file_marker(mime: &str, path: &str, text: &str) -> Str
     format!("{IMAGE_FILE_PREFIX}{spec}\n{text}")
 }
 
-pub(crate) fn build_image_base64_marker(mime: &str, b64: &str, text: &str) -> String {
+pub fn build_image_base64_marker(mime: &str, b64: &str, text: &str) -> String {
     format!("{IMAGE_BASE64_PREFIX}{mime}__{b64}__\n{text}")
 }
 
@@ -221,7 +227,8 @@ pub(crate) fn contains_image_marker(result: &str) -> bool {
     result.contains(IMAGE_BASE64_PREFIX) || result.contains(IMAGE_FILE_PREFIX)
 }
 
-pub(crate) fn has_valid_image_markers(result: &str) -> bool {
+#[doc(hidden)]
+pub fn has_valid_image_markers(result: &str) -> bool {
     parse_image_markers(result).is_some()
 }
 
@@ -385,7 +392,7 @@ mod tests {
         build_image_base64_marker, build_image_file_marker, is_under_managed_media_root_for_root,
         materialize_base64_image_markers, parse_image_markers, IMAGE_FILE_PREFIX,
     };
-    use crate::tools::browser::IMAGE_BASE64_PREFIX;
+    use crate::tools::IMAGE_BASE64_PREFIX;
     use base64::Engine as _;
     use std::path::Path;
 

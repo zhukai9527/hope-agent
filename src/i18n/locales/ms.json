@@ -190,14 +190,6 @@
     "labelPlaceholder": "Label (cth. Kunci Org A)",
     "title": "Profil Putaran API Key"
   },
-  "askUser": {
-    "pendingBar": {
-      "title": "Jawapan diperlukan",
-      "detail": "{{count}} soalan sedang menunggu dalam perbualan",
-      "detail_one": "Satu soalan sedang menunggu dalam perbualan",
-      "openAction": "Jawab sekarang"
-    }
-  },
   "canvas": {
     "close": "Tutup",
     "export": "Eksport",
@@ -318,6 +310,16 @@
     "removeConfig": "Buang",
     "running": "Berjalan",
     "selectChannel": "Pilih saluran",
+    "nativeReply": "Balasan penstriman asli",
+    "nativeReplyHint": "Gunakan strim balasan asli platform. Apabila dimatikan, ia terus kembali kepada mesej biasa.",
+    "imsgProtocolV1": "Protokol imsg yang boleh dipercayai",
+    "imsgProtocolV1Hint": "Runding protokol v1, pulihkan limpahan watch dan pantau mula semula subproses. Matikan untuk menggunakan RPC lama.",
+    "googleChatStandardMarkdown": "Markdown standard",
+    "googleChatStandardMarkdownHint": "Gunakan Markdown standard Google Chat untuk mesej teks baharu. Matikan untuk menggunakan sintaks Chat lama.",
+    "discordChannelObfuscation": "Uji pengaburan saluran peribadi",
+    "discordChannelObfuscationHint": "Sertakan akaun ini dalam tingkah laku Gateway sementara Discord. Saluran tersembunyi tidak akan dipilih atau diproses.",
+    "discordFileRequests": "Permintaan fail asli Discord",
+    "discordFileRequestsHint": "Benarkan soalan berstruktur membuka muat naik satu fail. Pelayan tetap mengesahkan semula jenis, saiz dan ikatan perbualan.",
     "showThinking": "Tunjukkan pemikiran dalam mesej IM",
     "showThinkingHint": "Apabila dihidupkan, taakulan model dipaparkan sebagai blok petikan sebelum balasan setiap pusingan. Lalai dimatikan.",
     "signalAccount": "Nombor telefon",
@@ -372,6 +374,12 @@
     "feishuDomainLark": "Lark (Antarabangsa)"
   },
   "chat": {
+    "crossSession": {
+      "sentTo": "Mesej dihantar ke “{{title}}”",
+      "receivedFrom": "Dihantar daripada perbualan “{{title}}”",
+      "untitled": "Perbualan tanpa tajuk",
+      "details": "Lihat butiran mesej"
+    },
     "addWorkingDirectory": "Tambah direktori kerja",
     "askAnything": "Beritahu idea anda, @ cari fail/nota/kemahiran, # input pantas, / arahan pantas...",
     "goalCompletion": {
@@ -383,8 +391,18 @@
       "continueInNewSession": "Teruskan dalam sesi baharu",
       "continuedFrom": "Disambung daripada",
       "created": "Diteruskan dalam sesi baharu",
+      "createdButNotOpened": "Cabang `{{id}}` telah dicipta tetapi tidak dapat dibuka. Pilihnya daripada senarai sesi untuk meneruskan.",
       "failed": "Tidak dapat meneruskan dalam sesi baharu",
       "sourceFallback": "sesi asal"
+    },
+    "sideChat": {
+      "label": "Sembang sisi",
+      "untitled": "Sembang sisi {{index}}",
+      "new": "Sembang sisi baharu",
+      "close": "Tutup panel sembang sisi",
+      "nonBlocking": "Tanya secara berasingan tanpa mengganggu sembang utama",
+      "askSelection": "Tanya dalam sembang sisi",
+      "createFailed": "Tidak dapat mencipta sembang sisi"
     },
     "browserPanel": {
       "backendBadgeTooltip": "Backend pelayar: {{backend}}",
@@ -506,6 +524,7 @@
     "contextCompactingTitle": "Memampatkan konteks terdahulu",
     "contextCompactedMsgs": "{{count}} mesej lama",
     "contextCompactionFailedTitle": "Pemampatan konteks dijeda",
+    "contextCompactionRetry": "Cuba mampatan semula",
     "contextCompaction": {
       "preparing": "Memampatkan konteks terdahulu",
       "summarizing": "Menjana ringkasan sesi",
@@ -553,6 +572,7 @@
       "noMatches": "Tiada input pantas yang sepadan"
     },
     "cronTaskStarted": "Satu tugasan berjadual telah dicetuskan",
+    "scheduledOrigin": "Tugasan berjadual: {{name}}",
     "cronTrigger": "Tugasan berjadual",
     "loopTriggered": "Satu langkah gelung dicetuskan",
     "loopTrigger": "Gelung",
@@ -651,6 +671,7 @@
     "markAllRead": "Tanda semua sebagai dibaca",
     "markAsRead": "Tandakan sebagai dibaca",
     "pinSession": "Semat",
+    "pinnedSessions": "Disemat",
     "unpinSession": "Nyahsemat",
     "minutesAgo": "{{count}} minit lalu",
     "modelsCount": "{{count}} model",
@@ -816,8 +837,8 @@
       },
       "menuLabel": "Persekitaran terasing",
       "off": {
-        "desc": "Pilih hos, WSL atau persekitaran terasing secara automatik.",
-        "label": "Automatik"
+        "desc": "Jalankan pada tuan rumah; tingkah laku kelulusan tidak berubah.",
+        "label": "Persekitaran terasing dimatikan"
       },
       "setupTitle": "Sediakan Docker untuk mendayakan persekitaran terasing",
       "standard": {
@@ -844,6 +865,7 @@
     "reasonAuth": "Pengesahan gagal",
     "reasonBilling": "Bil / kuota melebihi",
     "reasonContextOverflow": "Konteks melebihi had",
+    "reasonDispatchUnknown": "Hasil penghantaran tidak diketahui — tiada cubaan semula automatik",
     "reasonModelNotFound": "Model tidak ditemui",
     "reasonOverloaded": "Perkhidmatan terlebih beban",
     "reasonRateLimit": "Had kadar permintaan melebihi",
@@ -899,6 +921,7 @@
     "statusThinking": "Pemikiran",
     "statusUpdated": "Dikemas kini",
     "stopReply": "Hentikan balasan",
+    "continuePausedWork": "Teruskan kerja yang dijeda",
     "stopGenerationDone": "Penjanaan dihentikan",
     "subagentFrom": "Diberikan kuasa oleh {{agent}}",
     "subagentResultCompleted": "Siap",
@@ -923,6 +946,7 @@
     "thinking": "Sedang berfikir...",
     "thinkingAutoDisabled": "{{provider}} / {{model}} tidak menyokong mod pemikiran semasa. Thinking telah dilumpuhkan secara automatik dan permintaan telah dicuba semula.",
     "visionAutoDisabled": "{{provider}} / {{model}} tidak menyokong input imej. Imej diabaikan dan jawapan diteruskan.",
+    "visionBridgeConfigureAction": "Konfigurasikan jambatan penglihatan",
     "toolCalling": "Memanggil alat...",
     "totalTokens": "Jumlah",
     "unknownProvider": "Pembekal tidak diketahui",
@@ -983,6 +1007,9 @@
       "failed": "Gagal mengeksport perbualan.",
       "untitled": "Tiada tajuk"
     },
+    "capabilityMention": {
+      "heading": "Pemalam dan penyambung"
+    },
     "skillMention": {
       "heading": "Kemahiran",
       "labels": {
@@ -1009,7 +1036,7 @@
       "title": "Sambungan Chrome diperlukan"
     },
     "conversationEmpty": "Tiada mesej dalam perbualan ini",
-    "pendingCancelForceInsert": "Batalkan sisipan pusingan ini",
+    "pendingCancelForceInsert": "Tukar kepada hantar selepas balasan",
     "pendingSaving": "Menyimpan",
     "pendingSavingTip": "Menyimpan mesej dan lampiran ke baris gilir yang boleh dipulihkan.",
     "pendingInserting": "Menyisip",
@@ -1019,28 +1046,33 @@
     "pendingSendNow": "Hantar sekarang",
     "pendingFallbackAfterReply": "Hantar selepas balasan",
     "pendingFallbackAfterReplyTip": "Titik penyelesaian alat belum ditemui dan akan dihantar selepas balasan semasa tamat.",
-    "pendingForceInsertTip": "Ia akan menunggu sehingga alat yang sedang dilaksanakan selesai dan kemudian memasukkannya ke dalam model tanpa mengganggu alat semasa.",
+    "pendingForceInsertTip": "Masukkan kepada model selepas semua alat yang sedang berjalan dalam kelompok ini selesai, tanpa mengganggu alat tersebut; jika pusingan ini tidak mencapai sempadan alat seterusnya, mesej akan dihantar selepas balasan.",
+    "pendingInsert": "Sisip",
     "pendingInserted": "dimasukkan",
     "pendingInsertedTip": "Ia telah dimasukkan ke dalam model selepas pusingan alatan ini selesai.",
-    "pendingQueuedShort": "Beratur",
+    "pendingHeldAfterStop": "Penghantaran dijeda",
+    "pendingHeldAfterStopTip": "Balasan semasa telah dihentikan, jadi mesej ini tidak akan dihantar secara automatik.",
+    "pendingMoreActions": "Lagi tindakan mesej",
+    "pendingQueuedShort": "Hantar selepas balasan",
     "pendingQueuedTip": "Ia telah ditambahkan pada baris gilir menunggu dan akan dihantar selepas balasan semasa tamat.",
     "pendingQueueTitle": "Untuk dihantar",
-    "pendingWaitingToolBoundary": "Tunggu titik penyiapan alat",
-    "pendingWaitingToolBoundaryTip": "Tunggu panggilan alat terkini selesai; jika alat itu tidak lagi dipanggil pusingan ini, ia akan dihantar selepas balasan selesai.",
+    "pendingWaitingToolBoundary": "Menunggu untuk disisip",
+    "pendingWaitingToolBoundaryTip": "Menunggu semua alat yang sedang berjalan dalam kelompok ini selesai sebelum disisip; jika pusingan ini tidak mencapai sempadan alat seterusnya, mesej akan dihantar selepas balasan.",
     "processNotification": "proses tamat",
     "rightPanel": {
       "collapse": "Runtuhkan panel kanan",
       "expand": "Kembangkan panel kanan",
       "switch": "Tukar panel kanan",
       "dock": "Dok panel kanan",
-      "openPanel": "Buka {{panel}}",
-      "switchToPanel": "Tukar kepada {{panel}}",
-      "collapsePanel": "Runtuhkan {{panel}}",
-      "expandPanel": "Kembangkan {{panel}}",
+      "resize": "Laraskan lebar bengkel kerja",
       "workflowActiveCount": "{{count}} aliran kerja aktif",
       "workflowAttentionCount": "{{count}} aliran kerja memerlukan perhatian",
       "backgroundRunningCount": "{{count}} tugasan latar belakang sedang berjalan",
-      "subagentRunningCount": "{{count}} subejen sedang berjalan"
+      "subagentRunningCount": "{{count}} subejen sedang berjalan",
+      "openPanel": "Buka {{panel}}",
+      "switchToPanel": "Tukar kepada {{panel}}",
+      "collapsePanel": "Runtuhkan {{panel}}",
+      "expandPanel": "Kembangkan {{panel}}"
     },
     "visionBridgeEngaged": "Model utama tidak dapat melihat imej, jadi {{model}} menerangkannya bagi pihaknya.",
     "visionBridgeUnavailable": "Model penglihatan tidak dapat menerangkan imej itu, jadi ia diabaikan.",
@@ -1449,11 +1481,29 @@
     "addDeliveryTarget": "Tambah sasaran",
     "agent": "Agent",
     "archivedProject": "(diarkibkan)",
+    "workspaceModePersistent": "Pokok kerja khusus",
+    "workspaceCleanup": "Selepas setiap larian",
+    "workspaceCleanupOption": {
+      "retain": "Simpan",
+      "discardIfClean": "Buang jika tiada perubahan",
+      "always": "Sentiasa buang"
+    },
+    "workspaceCleanupHint": {
+      "retain": "Setiap larian mengekalkan Worktree-nya sehingga anda arkibkan atau buang.",
+      "discardIfClean": "Worktree dibuang hanya apabila larian tidak meninggalkan sebarang perubahan dan tiada commit baharu — tiada apa yang mungkin anda perlukan akan hilang.",
+      "always": "Worktree dibuang selepas setiap larian, termasuk perubahan yang belum di-commit. Guna hanya apabila hasil sebenar dihantar melalui saluran lain."
+    },
+    "workspaceModeHint": "Projek menggunakan direktorinya; Baharu mencipta satu pokok bagi setiap larian; Khusus menggunakan semula satu pokok bagi setiap tugasan. Cabang asas digunakan pada pokok kerja.",
+    "workspaceActionBlocked": "Tidak tersedia: {{reason}}",
+    "workspaceActionReturn": "Kembalikan",
+    "workspaceActionResume": "Kembalikan dan sambung",
+    "workspaceActionDone": "{{action}} selesai",
     "atGrace": "Tempoh (s)",
     "atGraceHint": "Tetingkap larian lewat: tugas sekali sahaja yang tiba masanya semasa apl ditutup masih dijalankan jika lewat tidak melebihi saat ini; selepas itu ditanda terlepas (0 = ketat, tiada larian lewat).",
     "atMinute": "Pada minit",
     "atTime": "Pada",
     "autoAgent": "Auto (projek/lalai)",
+    "cancelRunFailed": "Gagal menghentikan pelaksanaan ini",
     "completed": "Selesai",
     "conversationEmpty": "Tiada mesej dalam perbualan ini",
     "conversationsSelectHint": "Pilih satu larian untuk dilihat",
@@ -1463,7 +1513,7 @@
     "cronHelp": "Format: saat min jam hari bulan harimingguan (cth. 0 0 9 * * 1-5 = hari kerja 9 pagi)",
     "dateTime": "Tarikh & masa",
     "daySuffix": "",
-    "deleteConfirmDesc": "Ini akan memadamkan tugasan berjadual dan sejarah jalannya secara kekal.",
+    "deleteConfirmDesc": "Pemadaman hanya menghentikan jadual masa hadapan. Sejarah pelaksanaan, perbualan dan pepohon kerja akan dikekalkan.",
     "deleteConfirmTitle": "Padam \"{{name}}\"?",
     "deleteFailed": "Gagal memadam \"{{name}}\"",
     "deleteSuccess": "\"{{name}}\" dipadam",
@@ -1487,6 +1537,17 @@
     "everyMonthOn": "Setiap bulan pada hari",
     "failures": "Kegagalan",
     "filterAll": "Semua",
+    "filterAttention": "Perlu tindakan",
+    "schedulerPrimary": "Penjadual: proses utama",
+    "schedulerSecondary": "Penjadual: proses sekunder (tidak boleh menjalankan tugasan)",
+    "schedulerRunning": "Sedang berjalan {{running}} / {{max}}",
+    "attention": {
+      "autoDisabled": "Dilumpuhkan automatik selepas {{failures}}/{{max}} kegagalan berturut-turut",
+      "runFailed": "Larian terakhir gagal",
+      "missed": "Terlepas larian berjadual",
+      "deliveryStale": "Sasaran penghantaran tidak lagi sah",
+      "failing": "{{failures}}/{{max}} kegagalan berturut-turut"
+    },
     "freq_custom": "Tersuai",
     "freq_daily": "Setiap hari",
     "freq_hourly": "Setiap jam",
@@ -1521,6 +1582,19 @@
     "name": "Nama tugasan",
     "namePlaceholder": "cth. Ringkasan harian",
     "newJob": "Tugasan baharu",
+    "conversationTarget": "Jalankan dalam",
+    "conversationTargetNew": "Sembang baharu setiap kali",
+    "conversationTargetExisting": "Sembang sedia ada",
+    "sessionTargetPlaceholder": "Pilih sembang",
+    "sessionTargetSearchPlaceholder": "Cari sembang",
+    "sessionTargetEmpty": "Tiada sembang yang sepadan",
+    "errorSessionTargetRequired": "Pilih sembang tempat tugasan ini akan dijalankan",
+    "copyAsNewTask": "Salin sebagai tugasan baharu",
+    "deletedTaskHint": "Tugasan ini telah dipadam: sejarah dikekalkan dan tiada larian akan dijadualkan lagi.",
+    "runAgain": "Jalankan semula",
+    "createWithModel": "Cipta dengan model",
+    "manualSetup": "Tetapkan secara manual",
+    "createWithModelPrompt": "Bantu saya cipta tugasan berjadual. Saya mahu ia ... secara automatik apabila ...",
     "nextRun": "Larian seterusnya",
     "noConversations": "Tiada sejarah larian lagi",
     "noConversationsYet": "Akaun ini belum ada perbualan direkodkan (minta bot terima mesej dahulu)",
@@ -1536,8 +1610,13 @@
     "paused": "Dijeda",
     "prefixDeliveryWithName": "Tambah nama tugas di hadapan",
     "prefixDeliveryWithNameDesc": "Awalan penghantaran yang berjaya dengan [tugas berjadual] {name} supaya berbilang tugasan yang dihantar ke sembang yang sama kekal dapat dibezakan",
+    "preflightTitle": "Semakan awal",
+    "preflightDescription": "Semak jadual dan persekitaran pelaksanaan sebenar sebelum meneruskan.",
+    "preflightIssue": "Semakan diperlukan: {{code}}",
     "project": "Projek",
+    "reloadLatest": "Muat versi terkini",
     "removeTarget": "Buang sasaran",
+    "revisionConflict": "Tugasan ini telah berubah di tempat lain. Draf anda dikekalkan; muat versi terkini hanya apabila anda bersedia menggantikannya.",
     "resume": "Sambung",
     "runHistory": "Sejarah larian",
     "runNow": "Jalankan sekarang",
@@ -1546,6 +1625,9 @@
     "runStatusRunning": "Sedang berjalan",
     "runStatusSuccess": "Berjaya",
     "schedule": "Jadual",
+    "scheduleSession": "Jadualkan sembang ini",
+    "sessionTurnTarget": "Sembang sasaran",
+    "sessionTurnLiveHint": "Agent, projek, ruang pengetahuan, direktori kerja, mod kebenaran dan kotak pasir dibaca secara langsung daripada sembang ini pada setiap larian.",
     "scheduleAt": "Sekali",
     "scheduleCron": "Berjadual",
     "scheduleEvery": "Berulang",
@@ -1775,7 +1857,31 @@
       "baselines": "Baselines",
       "baselinesEmpty": "No approved baseline yet. Import protected evidence, then register it from History.",
       "budget": "Set hard budgets",
+      "budgetDescriptions": {
+        "campaignAgents": "Maximum number of child Agents that the full experiment may create.",
+        "campaignConcurrency": "Evaluation tasks that may run at once; this is not per-scenario concurrency.",
+        "campaignCost": "Maximum billable cost accumulated by every model and scenario in the experiment.",
+        "campaignInputTokens": "Maximum input Tokens sent across all model requests.",
+        "campaignModelCalls": "Maximum model requests across all scenarios.",
+        "campaignOutputTokens": "Maximum output Tokens generated across all model responses.",
+        "campaignToolCalls": "Maximum tool calls executed across all scenarios.",
+        "campaignWall": "Maximum time for the experiment to start, run, and finalize its evidence.",
+        "scenarioAgents": "Maximum child Agents one run of this scenario may create.",
+        "scenarioConcurrency": "Maximum concurrent model, Agent, or tool work inside this scenario.",
+        "scenarioCost": "Aggregate model-cost allocation for this scenario across all selected models, arms, and repetitions.",
+        "scenarioInputTokens": "Maximum input Tokens sent during one run of this scenario.",
+        "scenarioModelCalls": "Maximum model requests allowed during one run of this scenario.",
+        "scenarioOutputTokens": "Maximum output Tokens generated during one run of this scenario.",
+        "scenarioToolCalls": "Maximum tool calls allowed during one run of this scenario.",
+        "scenarioWall": "Maximum time from execution start through cleanup for one scenario run."
+      },
+      "campaignBudgetDescription": "Combined usage across every selected model, scenario, and repetition must stay within these limits.",
+      "campaignBudgetTitle": "Experiment-wide budget",
+      "scenarioBudgetDescription": "Resource limits apply to each scenario run; cost is an aggregate allocation across all selected models, arms, and repetitions, and all scenario allocations must fit the experiment-wide cost limit.",
+      "scenarioBudgetTitle": "Per-scenario budget allocation",
       "budgetWarning": "Evaluation budget is near its limit",
+      "unlimitedMode": "Jalankan tanpa had",
+      "unlimitedModeWarning": "Melumpuhkan had penilaian untuk kos, masa, token, panggilan, Agent dan serentak. Proses mungkin berjalan tanpa henti dan mengenakan caj Provider yang tidak terkawal; perlindungan kebenaran, keselamatan, pengasingan, pembatalan dan pembersihan kekal aktif.",
       "calculateCompare": "Compare",
       "candidate": "Candidate",
       "causalTrace": "causal trace",
@@ -1836,6 +1942,7 @@
       "removeAnchor": "Remove anchor",
       "retryAsNew": "Retry as new experiment",
       "retryCreated": "A separate retry experiment was created; the original result and usage are unchanged",
+      "retryPreparing": "Preparing new experiment…",
       "run": "Run",
       "setBaseline": "Set as baseline",
       "sidecarReady": "Sidecar ready",
@@ -1974,6 +2081,7 @@
       "statuses": {
         "queued": "Queued",
         "planning": "Planning",
+        "deterministic_safety": "Running offline safety checks",
         "running": "Running",
         "cancelling": "Cancelling",
         "completed": "Completed",
@@ -2000,6 +2108,10 @@
       },
       "campaignStatus": "Campaign status",
       "trialStatus": "Live trial status",
+      "deterministicTrack": "Offline safety checks",
+      "deterministicTrackDescription": "Validates Tier 0–4 protocol and safety invariants without a model or cost. Paid scenarios do not start if this track fails.",
+      "liveModelTrack": "Live-model scenarios",
+      "liveModelTrackDescription": "After all safety checks pass, validates Tier 3 semantic summarization and continuous UTF-8 file paging.",
       "waitingForTrials": "Preparing trials…",
       "scenario": "Scenario",
       "statusLabel": "Status",
@@ -2676,10 +2788,15 @@
   },
   "filePreview": {
     "panelTitle": "Pratonton",
-    "resizePanel": "Ubah saiz panel pratonton"
+    "resizePanel": "Ubah saiz panel pratonton",
+    "pathBreadcrumb": "Laluan fail",
+    "revealFolder": "Tunjuk folder dalam panel Fail",
+    "copyPath": "Salin laluan penuh"
   },
   "fileBrowser": {
     "panelTitle": "Fail",
+    "primaryFolder": "Utama",
+    "defaultProjectFolder": "Folder projek lalai",
     "jumpToFile": "Tunjuk dalam pelayar fail",
     "copied": "Disalin",
     "copyFailed": "Gagal menyalin",
@@ -2733,7 +2850,10 @@
     "zoomOut": "Zum keluar",
     "zoomIn": "Zum masuk",
     "fitWidth": "Muat lebar",
-    "officeNoContent": "Tiada kandungan boleh diekstrak daripada fail ini."
+    "officeNoContent": "Tiada kandungan boleh diekstrak daripada fail ini.",
+    "openInNewTab": "Buka dalam tab baharu",
+    "collapseTree": "Sembunyikan senarai fail",
+    "expandTree": "Tunjukkan senarai fail"
   },
   "diffPanel": {
     "fileTooLarge": "Fail terlalu besar, hanya 256KB pertama yang dipaparkan",
@@ -2778,6 +2898,7 @@
   "effort": {
     "high": "Tinggi",
     "low": "Rendah",
+    "max": "Maksimum",
     "medium": "Sederhana",
     "minimal": "Minimum",
     "none": "Mati",
@@ -2798,6 +2919,83 @@
     },
     "processed": {
       "completed": "Diproses"
+    },
+    "runtimeControl": {
+      "action": {
+        "agent": {
+          "close_one": "tutup {{count}} Agent",
+          "close_other": "tutup {{count}} Agent",
+          "closeAll": "tutup semua Agent",
+          "message_one": "hantar mesej kepada {{count}} Agent",
+          "message_other": "hantar mesej kepada {{count}} Agent",
+          "observe_one": "semak {{count}} Agent",
+          "observe_other": "semak {{count}} Agent",
+          "resume_one": "sambung semula {{count}} Agent",
+          "resume_other": "sambung semula {{count}} Agent"
+        },
+        "cron": {
+          "pause_one": "jeda {{count}} jadual",
+          "pause_other": "jeda {{count}} jadual",
+          "resume_one": "sambung semula {{count}} jadual",
+          "resume_other": "sambung semula {{count}} jadual"
+        },
+        "job": {
+          "cancel_one": "batalkan {{count}} tugas",
+          "cancel_other": "batalkan {{count}} tugas"
+        },
+        "process": {
+          "close_one": "tutup {{count}} proses",
+          "close_other": "tutup {{count}} proses"
+        },
+        "team": {
+          "pause_one": "jeda {{count}} pasukan",
+          "pause_other": "jeda {{count}} pasukan",
+          "resume_one": "sambung semula {{count}} pasukan",
+          "resume_other": "sambung semula {{count}} pasukan"
+        },
+        "workflow": {
+          "cancel_one": "batalkan {{count}} aliran kerja",
+          "cancel_other": "batalkan {{count}} aliran kerja",
+          "pause_one": "jeda {{count}} aliran kerja",
+          "pause_other": "jeda {{count}} aliran kerja",
+          "resume_one": "sambung semula {{count}} aliran kerja",
+          "resume_other": "sambung semula {{count}} aliran kerja"
+        }
+      },
+      "aggregate": {
+        "failed_one": "{{count}} gagal",
+        "failed_other": "{{count}} gagal",
+        "pending_one": "{{count}} belum selesai",
+        "pending_other": "{{count}} belum selesai",
+        "refused_one": "{{count}} ditolak",
+        "refused_other": "{{count}} ditolak",
+        "requested_one": "{{count}} diminta",
+        "requested_other": "{{count}} diminta",
+        "resumed_one": "{{count}} disambung semula",
+        "resumed_other": "{{count}} disambung semula",
+        "terminal_one": "{{count}} tamat",
+        "terminal_other": "{{count}} tamat"
+      },
+      "allTargets": "Semua Agent",
+      "badge": {
+        "alreadyTerminal_one": "{{count}} sudah tamat",
+        "alreadyTerminal_other": "{{count}} sudah tamat",
+        "refused_one": "{{count}} ditolak",
+        "refused_other": "{{count}} ditolak"
+      },
+      "failureDetails": "Kegagalan sambung semula",
+      "state": {
+        "accepted": "Diminta · {{action}}",
+        "alreadyTerminal_one": "{{count}} sasaran telah tamat sebelum ini",
+        "alreadyTerminal_other": "{{count}} sasaran telah tamat sebelum ini",
+        "completed": "Selesai · {{action}}",
+        "failed": "Gagal · {{action}}",
+        "noAgentsToClose": "Tiada Agent yang perlu ditutup",
+        "noResumeNeeded": "Pasukan sudah selesai · tidak perlu sambung semula",
+        "partial": "Separa selesai · {{action}}",
+        "refused": "Ditolak · {{action}}",
+        "running": "Sedang berjalan · {{action}}"
+      }
     },
     "skill": {
       "completed": "Kemahiran dimuatkan: {{name}}",
@@ -3006,6 +3204,11 @@
           "completed": "Selesai {{name}}",
           "failed": "{{name}} gagal",
           "running": "Berjalan {{name}}"
+        },
+        "sessions_create": {
+          "completed": "{{name}} dicipta",
+          "failed": "Gagal mencipta {{name}}",
+          "running": "Mencipta {{name}}"
         },
         "sessions_list": {
           "completed": "Selesai {{name}}",
@@ -3587,13 +3790,16 @@
     "popOutActive": "Dibuka dalam tetingkap berasingan",
     "question": {
       "answered": "Dijawab",
+      "customAnswer": "Input tambahan",
       "customPlaceholder": "Masukkan jawapan tersuai...",
       "customRequired": "Masukkan jawapan tersuai atau pilih pilihan lain.",
       "default": "lalai",
       "multiSelect": "berbilang",
+      "options": "Pilihan asal",
       "pending": "Menunggu jawapan anda…",
       "preview": "Pratonton",
       "recommended": "Disyorkan",
+      "response": "Jawapan anda",
       "retry": "Cuba lagi",
       "submit": "Hantar jawapan",
       "timedOut": "tamat masa",
@@ -3742,6 +3948,19 @@
     "unarchiveProject": "Batal arkib",
     "unassigned": "Tidak ditugaskan",
     "uploadLogo": "Muat naik logo",
+    "linkedDirs": {
+      "add": "Tambah folder",
+      "defaultPrimary": "Folder projek lalai (dicipta secara automatik)",
+      "empty": "Tiada folder tambahan dipautkan",
+      "folderActions": "Tindakan folder",
+      "hint": "Lampirkan folder yang diperlukan projek. Sembang baharu, laluan relatif, Git dan arahan projek menggunakan folder utama.",
+      "invalid": "Folder pautan tidak sah",
+      "label": "Folder sumber",
+      "makePrimary": "Jadikan utama",
+      "primary": "Utama",
+      "remove": "Alih keluar {{path}}",
+      "removeFolder": "Alih keluar folder"
+    },
     "workingDir": {
       "clear": "Kosongkan",
       "hint": "Sesi dalam projek ini menggunakan direktori ini secara lalai; tetapan peringkat sesi akan menimpanya.",
@@ -4126,6 +4345,13 @@
     "acpBackendId": "ID",
     "acpBackends": "Backend ACP",
     "acpBinary": "Binari",
+    "acpDistribution": "Deskriptor pengedaran",
+    "acpDistributionPackage": "Pakej atau produk",
+    "acpDistributionRequired": "Backend legasi ini disekat sehingga pengedaran pelancarannya ditakrifkan dengan jelas.",
+    "acpDistributionVersion": "Versi dipinkan",
+    "acpLaunchArgs": "Argumen pelancaran",
+    "acpProtocol": "Protokol",
+    "acpTrustDistribution": "Takrifkan pengedaran",
     "acpControl": "Satah kawalan ACP",
     "acpControlDesc": "Urus agents ACP luaran (Claude Code, Codex CLI, Gemini CLI, dll.)",
     "acpEnabled": "Dayakan satah kawalan ACP",
@@ -4194,6 +4420,7 @@
         "send_attachment": "Hantar lampiran fail ke saluran IM",
         "session_status": "Tanya keadaan semasa sesi",
         "sessions_history": "Baca sejarah mesej daripada sesi lain",
+        "sessions_create": "Cipta sesi sembang biasa yang baharu",
         "sessions_list": "Senaraikan metadata semua sesi",
         "sessions_send": "Hantar mesej ke sesi lain untuk mencetuskan kerja",
         "update_settings": "Ubah tetapan AppConfig",
@@ -4213,6 +4440,7 @@
         "send_attachment": "Hantar Lampiran",
         "session_status": "Status Sesi",
         "sessions_history": "Sejarah Sesi",
+        "sessions_create": "Cipta Sesi",
         "sessions_list": "Senarai Sesi",
         "sessions_send": "Hantar Merentas Sesi",
         "update_settings": "Kemas Kini Tetapan",
@@ -4663,6 +4891,8 @@
     "channelsDesc": "Urus integrasi saluran Telegram, WeChat, Feishu, Discord, Slack dan saluran IM lain",
     "charLimitExceeded": "Melebihi had, kandungan lebihan akan dipotong",
     "chat": "Sembang",
+    "chatEnterToSend": "Tekan Enter untuk hantar",
+    "chatEnterToSendDesc": "Apabila dihidupkan, Enter menghantar dan Shift+Enter menambah baris. Apabila dimatikan, Enter menambah baris dan Ctrl+Enter menghantar.",
     "chatAutoExpandThinking": "Auto-kembangkan proses pemikiran",
     "chatAutoExpandThinkingDesc": "Kembangkan blok pemikiran secara automatik dalam gelembung sembang. Apabila dimatikan, klik untuk kembangkan secara manual.",
     "chatAutoCollapseCompletedTurns": "Runtuhkan giliran selesai",
@@ -4997,7 +5227,7 @@
     "contextCompactMaxToolResultShareDesc": "Bahagian maksimum tetingkap konteks yang boleh diduduki oleh hasil alat tunggal (10%–60%). Tingkatkan untuk memelihara bacaan fail yang lebih besar dan web fetches",
     "contextCompactMicrocompact": "Mikropemampatan",
     "contextCompactMicrocompactEnabled": "Dayakan mikropemampatan",
-    "contextCompactMicrocompactEnabledDesc": "Pengosongan tanpa kos hasil alat sementara lama (ls/grep/find dsb.), berjalan sebelum lapisan pemampatan lain",
+    "contextCompactMicrocompactEnabledDesc": "Kosongkan hasil alat sementara lama (ls/grep/find dsb.) tanpa panggilan model tambahan; berjalan sebelum lapisan pemampatan lain",
     "contextCompactMicrocompactTools": "Senarai alat mikropemampatan",
     "contextCompactMicrocompactToolsDesc": "Hasil lama daripada alat yang dipilih akan dikosongkan secara automatik",
     "contextCompactMinPrunableChars": "Jumlah minimum boleh dipangkas",
@@ -5009,7 +5239,7 @@
     "contextCompactPreserveRoundsDesc": "Lindungi N pusingan mesej terakhir dan kembangkan ke permulaan giliran pengguna pemilik",
     "contextCompactPruning": "Pemangkasan hasil alat",
     "contextCompactReactiveMicrocompact": "Microcompact reaktif",
-    "contextCompactReactiveMicrocompactDesc": "Antara pusingan gelung alat, apabila penggunaan melepasi ambang, bersihkan tool_results sementara (ls/grep/find/…). Tier 0 — tanpa kos dan tidak membatalkan cache gesaan.",
+    "contextCompactReactiveMicrocompactDesc": "Antara pusingan gelung alat, bersihkan tool_results sementara (ls/grep/find/…) apabila penggunaan melepasi ambang. Tier 0 tidak membuat panggilan model tambahan, tetapi perubahan pada sejarah permintaan boleh membatalkan cache gesaan selepas titik yang diubah.",
     "contextCompactReactiveTriggerRatio": "Nisbah pencetus",
     "contextCompactReactiveTriggerRatioDesc": "Nisbah penggunaan yang mencetuskan microcompact reaktif (lalai 75%).",
     "contextCompactSaved": "Tetapan disimpan",
@@ -5060,9 +5290,12 @@
     "defaultAgentTitle": "Agent lalai",
     "defaultModel": "Model Lalai",
     "defaultModelDesc": "Model utama yang digunakan",
-    "deferredToolsEnabled": "Pemuatan alat tertangguh",
-    "deferredToolsEnabledDesc": "Dayakan pemuatan berasaskan tool_search. Alat kekal disuntik sehingga anda menangguhkannya di bawah. Berkuat kuasa pada perbualan seterusnya.",
-    "deferredToolsPerToolDesc": "Hidupkan hanya alat yang skemanya harus ditemui melalui tool_search dan bukannya dihantar di hadapan.",
+    "deferredToolsEnabled": "Dasar pemuatan skema alat",
+    "deferredToolsEnabledDesc": "Disyorkan menangguhkan alat terbina dalam yang tidak penting dan semua alat MCP dinamik kepada tool_search. Terbina dalam terus masih menghormati tetapan tangguh setiap pelayan MCP.",
+    "deferredToolsModeCustom": "Tersuai",
+    "deferredToolsModeDisabled": "Terbina dalam terus",
+    "deferredToolsModeRecommended": "Disyorkan",
+    "deferredToolsPerToolDesc": "Alat terbina dalam ini dimuatkan melalui tool_search. Menukar suis akan memilih mod Tersuai.",
     "deferredToolsPerToolTitle": "Alat terbina dalam tertunda",
     "devClearAll": "Kosongkan semua",
     "devClearAllDesc": "Kosongkan semua data dan tetapkan semula kepada lalai",
@@ -5253,8 +5486,12 @@
       "intro": "Jalankan arahan tersuai / HTTP / gesaan / sub-ejen pada peristiwa kitaran hayat. Serasi peringkat medan dengan hooks Claude Code.",
       "disableAll": "Lumpuhkan semua hooks",
       "disableAllDesc": "Suis utama — mematikan setiap hook merentas semua scope.",
-      "allowProjectScope": "Benarkan hook projek & tempatan",
-      "allowProjectScopeDesc": "Membolehkan .hope-agent/hooks.json dan hooks.local.json dalam direktori kerja menambah hook — sesuai untuk dikongsi dengan pasukan anda. Dimatikan secara lalai kerana ia boleh menjalankan perintah sendiri, jadi hidupkan hanya untuk projek yang anda percayai.",
+      "trustedProjectScopes": "Ruang kerja Hook dipercayai",
+      "trustedProjectScopesDesc": "Luluskan fail Hook projek dan tempatan satu ruang kerja pada satu masa. Masukkan laluan mutlak yang tepat; alias dan pautan simbolik ditolak.",
+      "workspacePath": "Laluan mutlak ruang kerja",
+      "trustWorkspace": "Percayai kandungan",
+      "noTrustedWorkspaces": "Tiada fail Hook ruang kerja yang dipercayai.",
+      "trustContentBound": "Kepercayaan diikat pada kandungan Hook ketika ruang kerja ditambah. Perubahan, pemindahan atau alias laluan menyahaktifkannya. Untuk meluluskan semula, alih keluar dan simpan ruang kerja, kemudian tambah dan simpan semula.",
       "scopeNote": "Panel ini menyunting hooks scope user. Scope project (.hope-agent/hooks.json, dikongsi repo), local (hooks.local.json) dan managed (/etc/hope-agent/hooks.json) berasaskan fail dan digabungkan di atas.",
       "pickEvent": "Pilih peristiwa…",
       "addHook": "Tambah hook",
@@ -5267,7 +5504,9 @@
       "slowHandlerWarning": "Pengendali ini menjalankan LLM / sub-ejen secara inline dan akan melambatkan setiap kali peristiwa menyekat ini dipicu. Utamakan command / http di sini, atau alihkan ke peristiwa pemerhatian (cth. PostToolUse).",
       "invalidJson": "JSON tidak sah",
       "modelInheritDefault": "Ikut lalai automasi",
-      "defaultShell": "Lalai"
+      "defaultShell": "Lalai",
+      "allowProjectScope": "Benarkan hook projek & tempatan",
+      "allowProjectScopeDesc": "Membolehkan .hope-agent/hooks.json dan hooks.local.json dalam direktori kerja menambah hook — sesuai untuk dikongsi dengan pasukan anda. Dimatikan secara lalai kerana ia boleh menjalankan perintah sendiri, jadi hidupkan hanya untuk projek yang anda percayai."
     },
     "hours": "jam",
     "inheritGlobal": "Warisi Tetapan Global",
@@ -5718,15 +5957,18 @@
       "confirmDelete": "Padam pelayan \"{{name}}\"? Ini tidak boleh dibuat asal.",
       "confirmDeleteTitle": "Padamkan \"{{name}}\"?",
       "connectTimeout": "Sambungkan tamat masa",
+      "connectionSettings": "Strategi sambungan",
       "cwdLabel": "Direktori kerja (pilihan)",
       "cwdPlaceholder": "mewarisi apl cwd",
       "deferredToolsLabel": "Tangguhkan skema alat",
+      "directToolsLabel": "Muatkan skema alat secara terus",
       "deleted": "Pelayan \"{{name}}\" dipadamkan",
       "deniedTools": "Senarai penafian alat",
       "descriptionLabel": "Penerangan (pilihan)",
       "descriptionPlaceholder": "Apa yang pelayan ini lakukan",
       "disabled": "Dilumpuhkan",
       "eagerLabel": "Sambung semasa permulaan",
+      "effectiveDeferredByGlobal": "Dasar global Disyorkan telah menangguhkan alat pelayan ini.",
       "edit": "Sunting",
       "editTitle": "Edit Pelayan MCP — {{name}}",
       "emptyDesc": "Tambah pelayan MCP atau import daripada konfigurasi Claude Desktop. Pelayan stdio tersedia sekarang; pengangkutan jauh HTTP/SSE/WebSocket akan disokong dalam fasa akan datang.",
@@ -5749,11 +5991,13 @@
       "importJson": "Import fail JSON",
       "invalidName": "Nama mesti sepadan dengan ^[a-z0-9_-]{1,32}$ (huruf kecil, digit, garis bawah, sempang)",
       "loadFailed": "Gagal memuatkan pelayan",
+      "lazyLabel": "Sambung apabila diperlukan",
       "nameImmutable": "Nama tidak boleh ditukar selepas penciptaan. Padam dan tambah semula untuk menamakan semula.",
       "nameLabel": "Nama",
       "reconnect": "Sambung semula",
       "remoteTransportPhase4": "Pengangkutan HTTP / SSE / WebSocket akan mendarat di Fasa 4.",
       "saved": "Disimpan",
+      "securitySettings": "Keselamatan dan kelulusan",
       "signOut": "Log keluar",
       "signOutSuccess": "Kelayakan \"{{name}}\" telah dipadam",
       "state": {
@@ -6376,11 +6620,6 @@
     "sandboxDesc": "Jalankan alat baris perintah dalam persekitaran Docker terasing untuk mengehadkan akses sistem.",
     "sandboxDockerAvailable": "Docker tersedia",
     "sandboxDockerChecking": "Memeriksa...",
-    "sandboxDockerBackend": "Docker Backend",
-    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
-    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
-    "sandboxDockerBackendWindows": "Windows Docker only",
-    "sandboxDockerBackendWsl": "WSL Docker only",
     "sandboxDockerInstall": "Dapatkan Docker Desktop",
     "sandboxDockerNotInstalled": "Docker tidak dikesan, sila pasang Docker Desktop dahulu",
     "sandboxDockerNotRunning": "Docker dipasang tetapi tidak berjalan, sila mulakan Docker Desktop",
@@ -6388,6 +6627,7 @@
     "sandboxDockerUnavailable": "Docker tidak tersedia",
     "sandboxImage": "Imej",
     "sandboxImageDesc": "Imej Docker yang digunakan oleh persekitaran terasing.",
+    "sandboxImageDigestRequired": "Sematkan imej sebagai name@sha256:<cernaan 64 digit>; tag boleh ubah akan ditolak.",
     "sandboxMemoryLimit": "Had memori",
     "sandboxNetworkBridge": "Jambatan",
     "sandboxNetworkHost": "hos",
@@ -6402,9 +6642,6 @@
     "sandboxSectionContainer": "Bekas",
     "sandboxSectionResources": "Had sumber",
     "sandboxSectionSecurity": "Pengukuhan keselamatan",
-    "sandboxWslDistro": "WSL Distribution",
-    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
-    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "seconds": "saat",
     "security": "Dasar Keselamatan",
     "selectDefaultModel": "Pilih model lalai",
@@ -6799,6 +7036,10 @@
     "subagentMaxConcurrentDesc": "Maksimum Agents anak daripada sesi induk ini yang boleh berjalan pada masa yang sama. Selebihnya menunggu dalam baris gilir.",
     "subagentMaxDepth": "Kedalaman bersarang maksimum",
     "subagentMaxDepthDesc": "Bilangan tahap delegasi sub-agent yang dibenarkan di bawah Agent ini. Nilai lebih tinggi membenarkan anak mencipta anak mereka sendiri.",
+    "subagentProviderRetryAttempts": "Cubaan pemulihan get laluan",
+    "subagentProviderRetryAttemptsDesc": "Cubaan tambahan selepas semua pembekal dan model sandaran gagal. 0 mematikan pemulihan luar.",
+    "subagentProviderRetryBackoff": "Jeda asas cubaan semula",
+    "subagentProviderRetryBackoffDesc": "Jeda awal sebelum mencuba semula get laluan; cubaan seterusnya meningkat secara eksponen.",
     "subagentTimeout": "Tamat masa lalai",
     "subagentTimeoutDesc": "Masa jalan maksimum untuk Agent anak. 0 bermaksud tiada tamat masa. Digunakan apabila panggilan tidak menetapkan timeout_secs sendiri.",
     "subagentTimeoutUnit": "saat",
@@ -6862,6 +7103,7 @@
     "toolApplyPatchName": "Gunakan tampalan",
     "toolAskUserQuestionDesc": "Hantar soalan berstruktur pelbagai pilihan atau bebas kepada pengguna",
     "toolAskUserQuestionName": "Tanya Pengguna",
+    "toolAudioGenerateDesc": "Jana pertuturan, muzik atau kesan bunyi daripada teks",
     "toolBrowserDesc": "Kawal pelayar untuk melaksanakan tindakan",
     "toolBrowserName": "Pelayar",
     "toolCallNarration": "Kemas kini kemajuan",
@@ -6956,6 +7198,7 @@
     "toolProcessName": "Pengurusan proses",
     "toolProjectReadFileDesc": "Baca fail yang dimuat naik ke projek sesi semasa",
     "toolProjectReadFileName": "Baca Fail Projek",
+    "toolReadContextResourceDesc": "Baca syot kilat @file atau @plan kekal yang terikat pada pusingan semasa",
     "toolReadDesc": "Baca kandungan fail dengan halaman dan pengesanan imej",
     "toolReadName": "Baca fail",
     "toolRecallMemoryDesc": "Cari dan ambil ingatan yang disimpan",
@@ -6970,12 +7213,14 @@
     "toolSendAttachmentName": "Hantar Lampiran",
     "toolSendNotificationDesc": "Hantar mesej pemberitahuan desktop",
     "toolSendNotificationName": "Hantar pemberitahuan",
+    "toolSessionContinueDesc": "Sambung semula perbualan dijeda hanya selepas permintaan jelas pengguna",
     "toolSessionStatusDesc": "Tanya agen, model, kiraan mesej dan setem masa bagi sesuatu sesi",
     "toolSessionStatusName": "Status Sesi",
     "toolSessionToNoteDesc": "Saring perbualan menjadi nota berstruktur.",
     "toolSessionToNoteName": "Sesi ke Nota",
     "toolSessionsHistoryDesc": "Paginate sejarah mesej sesuatu sesi",
     "toolSessionsHistoryName": "Sejarah Sesi",
+    "toolSessionsCreateDesc": "Cipta sesi sembang biasa baharu, pautkan kepada Projek secara pilihan, dan mulakan Agent dengan mesej atau lampiran pertama",
     "toolSessionsListDesc": "Senaraikan sesi lain (tajuk, agen, model, kiraan mesej)",
     "toolSessionsListName": "Senarai Sesi",
     "toolSessionsSearchDesc": "Cari mesej chat tersimpan dan pulangkan tetingkap konteks yang sepadan",
@@ -6984,6 +7229,8 @@
     "toolSessionsSendName": "Hantar ke Sesi",
     "toolSubagentDesc": "Wakilkan tugasan kepada sub-agent untuk pelaksanaan",
     "toolSubagentName": "Sub-Agent",
+    "toolToolResultMetaDesc": "Inspect bounded metadata for a tool result linked to the current session.",
+    "toolToolResultReadDesc": "Read a bounded UTF-8 page from an authorized stored tool result.",
     "toolTaskCreateDesc": "Cipta tugasan boleh dijejaki untuk sesi semasa",
     "toolTaskCreateName": "Cipta tugasan",
     "toolTaskListDesc": "Senaraikan semua tugasan dalam sesi semasa",
@@ -7066,6 +7313,18 @@
     "weatherUpdated": "Dikemas kini",
     "weatherWind": "Angin",
     "webFetch": "Ambil Web",
+    "webFetchMaxTokensCap": "Bajet token maksimum",
+    "webFetchMaxTokensCapDesc": "Had keras max_tokens yang diminta oleh panggilan alat",
+    "webFetchMaxConcurrentPerHost": "Permintaan serentak setiap hos",
+    "webFetchMinHostDelay": "Jeda minimum setiap hos (ms)",
+    "webFetchSectionRendering": "Pemaparan dinamik",
+    "webFetchRenderMode": "Mod pemaparan lalai",
+    "webFetchRenderNever": "Jangan (langsung sahaja)",
+    "webFetchRenderAuto": "Auto (apabila perlu)",
+    "webFetchRenderAlways": "Sentiasa",
+    "webFetchRenderModeDesc": "Menggunakan pelayar terpencil baharu tanpa kuki atau keadaan akaun",
+    "webFetchRenderTimeout": "Tamat masa pemaparan (saat)",
+    "webFetchCacheEntries": "Snapshot cache",
     "webFetchCacheTtl": "TTL cache (minit)",
     "webFetchCacheTtlDesc": "Berapa lama untuk cache halaman yang diambil. Tetapkan 0 untuk lumpuhkan cache.",
     "webFetchDesc": "Konfigurasikan cara alat web_fetch mengekstrak kandungan dari URL, termasuk cache, keselamatan dan had kandungan.",
@@ -7362,6 +7621,8 @@
     "memoryExternalProviderBlockEndpointMissing": "Titik akhir tiada",
     "memoryExternalProviderBlockPolicyUnsupported": "Dasar tidak disokong",
     "memoryExternalProviderBlockAdapterUnavailable": "Penyesuai tidak tersedia",
+    "memoryExternalProviderBlockCompatibilityUnverified": "Keserasian belum disahkan",
+    "memoryExternalProviderBlockCompatibilityBlocked": "Versi pembekal tidak selamat",
     "memoryExternalProviderBlockLastError": "Ralat terakhir",
     "memoryExternalProviderErrors": {
       "load": "Gagal memuatkan pembekal memori luaran",
@@ -7371,6 +7632,7 @@
       "loadCredentials": "Gagal memuatkan sambungan pembekal memori luaran",
       "saveCredentials": "Gagal menyimpan sambungan pembekal memori luaran",
       "clearCredentials": "Gagal mengosongkan sambungan pembekal memori luaran",
+      "testConnection": "Gagal menguji sambungan pembekal memori luaran",
       "copyPreflightDiagnostics": "Gagal menyalin pra-penerbangan pembekal memori luaran",
       "copySyncDiagnostics": "Gagal menyalin laporan penyegerakan pembekal memori luaran",
       "detail": "Butiran: {{error}}"
@@ -7400,6 +7662,11 @@
     "memoryExternalProviderConnectionEmpty": "Bukti kelayakan disimpan secara berasingan dengan kebenaran fail terhad.",
     "memoryExternalProviderConnectionSaved": "Sambungan disimpan",
     "memoryExternalProviderConnectionCleared": "Sambungan dikosongkan",
+    "memoryExternalProviderConnectionTest": "Uji sambungan",
+    "memoryExternalProviderCompatibilityPassed": "Semakan sambungan dan keserasian berjaya",
+    "memoryExternalProviderCompatibilityUnverified": "Sambungan dicapai, tetapi versi pembekal tidak dapat disahkan",
+    "memoryExternalProviderCompatibilityBlocked": "Versi pembekal berada di bawah minimum selamat",
+    "memoryExternalProviderCompatibilitySummary": "Status: {{status}} · dikesan {{detected}} · minimum {{minimum}}",
     "memoryExternalProviderEndpoint": "Titik akhir",
     "memoryExternalProviderEndpointKeep": "Disimpan: {{origin}} · biarkan kosong untuk disimpan",
     "memoryExternalProviderSubjectId": "ID skop jauh",
@@ -8504,6 +8771,14 @@
       "defaultDuration": "Tempoh lalai",
       "durationOption": "{{seconds}} saat"
     },
+    "sandboxDockerBackend": "Docker Backend",
+    "sandboxDockerBackendAuto": "Auto: Windows first, fallback to WSL",
+    "sandboxDockerBackendDesc": "On Windows, choose native Docker, WSL Docker, or automatic fallback; mount scope is not expanded.",
+    "sandboxDockerBackendWindows": "Windows Docker only",
+    "sandboxDockerBackendWsl": "WSL Docker only",
+    "sandboxWslDistro": "WSL Distribution",
+    "sandboxWslDistroDesc": "Optional. Leave empty to use the default WSL distribution; only affects the WSL Docker backend.",
+    "sandboxWslDistroPlaceholder": "Default WSL distribution",
     "skillsManager": {
       "total": "All skills",
       "enabled": "Enabled",
@@ -9050,6 +9325,9 @@
     "forget": {
       "description": "Padam ingatan"
     },
+    "fork": {
+      "description": "Teruskan dalam sesi baharu"
+    },
     "handover": {
       "description": "Serahkan sesi ke sembang IM"
     },
@@ -9071,6 +9349,9 @@
     },
     "new": {
       "description": "Mulakan sembang baharu"
+    },
+    "side": {
+      "description": "Mulakan sembang sisi tanpa mengganggu sembang utama"
     },
     "noResults": "Tiada arahan yang sepadan",
     "permission": {
@@ -9213,6 +9494,15 @@
     "paused": "Dijeda",
     "progress": "Kemajuan",
     "resume": "Sambung",
+    "resumeFeedback": {
+      "counts": "{{resumed}} disambung semula · {{failed}} gagal",
+      "noOpDescription": "Semua ahli pasukan sudah selesai; tiada percubaan baharu dimulakan.",
+      "noOpTitle": "Tidak perlu sambung semula",
+      "partialTitle": "Pasukan disambung semula sebahagian",
+      "refusedTitle": "Sambung semula pasukan ditolak",
+      "resumedTitle": "Pasukan disambung semula",
+      "resuming": "Menyambung semula…"
+    },
     "review": "Semakan",
     "reviewer": "Penyemak",
     "send": "Hantar",
@@ -9282,6 +9572,7 @@
       "timed_out": "Tamat masa — nilai lalai digunakan"
     },
     "ask_user_question": "Tanya pengguna",
+    "audio_generate": "Jana Audio",
     "browser": "Pelayar",
     "canvas": "Kanvas",
     "delete_memory": "Padam ingatan",
@@ -9313,13 +9604,16 @@
     "process": "Pengurus proses",
     "rawCall": "Lihat panggilan mentah",
     "read": "Baca fail",
+    "read_context_resource": "Baca Sumber Konteks",
     "recall_memory": "Panggil semula ingatan",
     "restore_settings_backup": "Pulihkan sandaran tetapan",
     "save_memory": "Simpan ingatan",
     "send_attachment": "Hantar lampiran",
     "send_notification": "Hantar pemberitahuan",
+    "session_continue": "Sambung Sesi",
     "session_status": "Status sesi",
     "sessions_history": "Sejarah sesi",
+    "sessions_create": "Cipta Sesi",
     "sessions_list": "Senarai sesi",
     "sessions_send": "Hantar ke sesi",
     "skill": "Muatkan kemahiran",
@@ -9329,6 +9623,8 @@
     "task_list": "Senarai tugasan",
     "task_update": "Kemas kini tugasan",
     "team": "Pasukan Agent",
+    "tool_result_meta": "Tool Result Metadata",
+    "tool_result_read": "Read Tool Result",
     "tool_search": "Cari alat",
     "update_core_memory": "Kemas kini ingatan teras",
     "update_memory": "Kemas kini ingatan",
@@ -9589,6 +9885,9 @@
     "openPanel": "Buka ruang kerja",
     "resizePanel": "Ubah saiz panel ruang kerja",
     "sourceFromSearch": "Carian",
+    "sourceFetchDirect": "Ambil",
+    "sourceFetchRendered": "Render",
+    "sourceFetchCache": "Cache",
     "sourceFromUser": "Pengguna",
     "sourceFromAttachment": "Lampiran",
     "advancedDiagnostics": {
@@ -11976,10 +12275,6 @@
     "guardStatus": "Pengawal",
     "defaultName": "Artifak"
   },
-  "taskDelivery": {
-    "panelTitle": "Task Delivery",
-    "resizePanel": "Resize task delivery panel"
-  },
   "backgroundJobs": {
     "panelTitle": "Tugas Latar Belakang",
     "openPanel": "Tugas latar belakang",
@@ -12453,7 +12748,15 @@
       "fixWithAgent": "Baiki dengan AI",
       "fixStarted": "AI sedang membaikinya",
       "fixBusy": "Perbualan sedang berjalan, cuba lagi sebentar",
-      "fixPrompt": "Sila baiki isu yang ditemui oleh semakan kendiri reka bentuk: {{detail}}. Gunakan token sistem reka bentuk (var(--ds-*)) untuk menyatukan warna dan menggantikan gaya berkod keras. Buat perubahan minimum yang perlu sahaja dan kekalkan reka bentuk yang lain."
+      "fixPrompt": "Sila baiki isu yang ditemui oleh semakan kendiri reka bentuk: {{detail}}. Gunakan token sistem reka bentuk (var(--ds-*)) untuk menyatukan warna dan menggantikan gaya berkod keras. Buat perubahan minimum yang perlu sahaja dan kekalkan reka bentuk yang lain.",
+      "visualUnavailable": "Visual regression is unavailable; check the browser rendering backend",
+      "baselineAccepted": "Current visuals accepted as the baseline",
+      "baselineFailed": "Failed to accept the visual baseline",
+      "visualTitle": "Deterministic visual regression",
+      "visualPassed": "Fixed viewports and static checks passed",
+      "visualNeedsBaseline": "Differences found or no baseline exists",
+      "acceptBaseline": "Accept as baseline",
+      "noBaseline": "No baseline"
     },
     "kit": {
       "title": "Kit sistem reka bentuk",
@@ -12533,7 +12836,15 @@
       "copyLink": "Salin pautan",
       "copied2": "Disalin",
       "loadErr": "Gagal memuatkan status kongsi",
-      "shareTo": "Kongsi ke"
+      "shareTo": "Kongsi ke",
+      "fixedReview": "Fixed-version review",
+      "fixedReviewHint": "Create a 7-day viewer or commenter credential pinned to the current version. The credential is shown only once.",
+      "commenter": "Can comment",
+      "viewer": "View only",
+      "createReview": "Create v{{version}}",
+      "tokenOnce": "Review Bearer credential (shown once)",
+      "reviewCreateFailed": "Failed to create review space",
+      "reviewRevokeFailed": "Failed to revoke review space"
     },
     "deploy": {
       "menu": "Deploy ke Cloudflare Pages",
@@ -12776,6 +13087,54 @@
       "checkCleanAll": "Semua artifak sepadan dengan kodnya",
       "checkStale": "{{n}} artifak mempunyai kemas kini kod",
       "chatPrompt": "Kod yang dilaksanakan telah menyimpang daripada reka bentuk ini. Kemas kini reka bentuk semasa untuk mencerminkan perubahan kod yang dirujuk, sambil mengekalkan niat reka bentuk dan segala yang lain tidak berubah."
+    },
+    "figmaRoundtrip": {
+      "title": "Figma safe roundtrip",
+      "desc": "Read or write through the authenticated Figma MCP. Hope never stores OAuth credentials. Every external write requires a preview and one-time confirmation.",
+      "direction": "Direction",
+      "toFigma": "Hope → Figma",
+      "toHope": "Figma → new Hope version",
+      "server": "MCP server name",
+      "fileKey": "Figma file key",
+      "nodeId": "node id (optional)",
+      "arguments": "MCP arguments (JSON)",
+      "invalidArgs": "MCP arguments must be a JSON object",
+      "previewFailed": "Failed to preview the Figma roundtrip",
+      "done": "Figma roundtrip completed and linked",
+      "commitFailed": "Failed to commit the Figma roundtrip",
+      "confirmTitle": "Confirm this external operation",
+      "open": "Open Figma",
+      "confirm": "Confirm and submit once",
+      "preview": "Generate operation preview",
+      "reconciliationLoadFailed": "Failed to load unresolved Figma receipts",
+      "reconciliationDone": "Remote verification recorded; roundtrips are unblocked",
+      "reconciliationFailed": "Failed to reconcile the Figma receipt; operations remain blocked",
+      "reconciliationTitle": "The previous Figma operation has an uncertain result",
+      "reconciliationDesc": "Verify in Figma whether the operation occurred, then select the exact result. Hope will not replay it until this receipt is resolved.",
+      "confirmedApplied": "Verified: operation occurred",
+      "confirmedNotApplied": "Verified: operation did not occur"
+    },
+    "scenarios": {
+      "label": "Preview scenario",
+      "title": "Preview scenarios",
+      "desc": "Up to 12 scenarios and 4 viewports; only one preview stays live and the others load on demand. route must be a local artifact path.",
+      "invalid": "The scenarios manifest is not valid JSON",
+      "saved": "Scenarios saved",
+      "saveFailed": "Failed to save scenarios"
+    },
+    "components": {
+      "title": "Component manifest",
+      "desc": "Read-only scan the bound repository for candidates; save an unpublished draft, then publish with the current published hash. Local code remains the source of truth.",
+      "loadFailed": "Failed to load the component manifest",
+      "invalid": "The component manifest is not valid JSON",
+      "scanFailed": "Read-only scan failed; link a code repository first",
+      "draftSaved": "Component manifest draft saved",
+      "saveFailed": "Failed to save the component manifest draft",
+      "published": "Component manifest published",
+      "publishFailed": "Publish failed; another window may have updated the manifest",
+      "scan": "Read-only repository scan",
+      "saveDraft": "Save draft",
+      "publish": "Confirm publish"
     }
   },
   "pet": {
@@ -12838,9 +13197,20 @@
       "name": "Nama",
       "shortDescription": "Penerangan ringkas (pilihan)",
       "prompt": "Apakah rupa haiwan peliharaan anda?",
+      "version": "Versi helaian sprite",
+      "versionV2": "v2 · Disyorkan",
+      "versionV1": "v1 · Legasi",
+      "versionV2Description": "Termasuk 16 arah pandangan mengikut arah jam yang digunakan oleh Codex v2.",
+      "versionV1Description": "Mencipta atlas sembilan baris asal untuk klien lama.",
       "generate": "Jana pratonton",
       "generating": "Mencipta pratonton…",
       "failed": "Tidak dapat mencipta haiwan ini"
+    },
+    "upgrade": {
+      "action": "Naik taraf ke v2",
+      "upgraded": "Salinan v2 telah dicipta. Haiwan v1 asal masih tersedia.",
+      "alreadyExists": "Naik taraf v2 ini sudah ada dalam pustaka anda.",
+      "failed": "Tidak dapat menaik taraf haiwan ini ke v2"
     },
     "export": {
       "action": "Eksport untuk Codex",
@@ -12848,7 +13218,7 @@
       "failed": "Tidak dapat mengeksport haiwan ini"
     },
     "window": {
-      "interact": "Berinteraksi dengan haiwan peliharaan Hope",
+      "interact": "Berinteraksi dengan {{name}}",
       "tuckAway": "Simpan haiwan"
     },
     "bubble": {
@@ -12929,6 +13299,36 @@
       "config": "Konfigurasi",
       "user": "Tetapan pengguna"
     }
+  },
+  "toolchainDoctor": {
+    "title": "Diagnostik rantaian alat",
+    "description": "Semakan baca sahaja untuk persekitaran sistem dan alat pembangunan pilihan. Hope Agent tidak akan memasang, menaik taraf, memulakan atau mengkonfigurasi semula apa-apa.",
+    "refresh": "Semak semula",
+    "loading": "Memeriksa rantaian alat setempat…",
+    "loadFailed": "Semakan rantaian alat gagal",
+    "readOnlyNotice": "Versi, ketersediaan, capaian Docker, kelas konteks, kelas pemilik soket dan pembalut sementara dilaporkan tanpa mendedahkan laluan atau kelayakan hos.",
+    "detectedVersion": "Dikesan {{version}}",
+    "notDetected": "Tidak dikesan",
+    "minimumVersion": "Minimum {{version}}",
+    "diagnosticFacts": "Kod diagnostik",
+    "status": {
+      "detected": "Dikesan",
+      "supported": "Disokong",
+      "degraded": "Terhad",
+      "blocked": "Disekat"
+    }
+  },
+  "askUser": {
+    "pendingBar": {
+      "title": "Jawapan diperlukan",
+      "detail": "{{count}} soalan sedang menunggu dalam perbualan",
+      "detail_one": "Satu soalan sedang menunggu dalam perbualan",
+      "openAction": "Jawab sekarang"
+    }
+  },
+  "taskDelivery": {
+    "panelTitle": "Task Delivery",
+    "resizePanel": "Resize task delivery panel"
   },
   "workflow": {
     "pendingBar": {

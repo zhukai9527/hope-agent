@@ -5,7 +5,7 @@
 //! auto-disabled) onto IM as
 //! short standalone markdown messages. Format: emoji prefix +
 //! single-line italic body. Routed through
-//! [`crate::channel::worker::pipeline::StreamPipeline::system_notice_tx`]
+//! `ha_channel::channel::worker::pipeline::StreamPipeline::system_notice_tx`
 //! so notices land as their own IM message and don't tangle with the
 //! per-round LLM text accumulator.
 //!
@@ -152,7 +152,7 @@ fn format_thinking_auto_disabled() -> String {
 }
 
 fn format_vision_auto_disabled() -> String {
-    "🖼️ _This model can't read images — continuing with the image(s) ignored._".to_string()
+    "🖼️ _This model can't read images — continuing with the image(s) ignored. Configure a Vision Bridge in Settings → Models to preserve image context._".to_string()
 }
 
 /// Vision bridge (issue #434): the main model can't see images, so a separate
@@ -184,6 +184,8 @@ fn friendly_reason(reason: &str) -> &str {
         "billing" => "quota",
         "model_not_found" => "model unavailable",
         "context_overflow" => "context overflow",
+        "current_tool_group_overflow" => "current tool-result group too large",
+        "dispatch_unknown" => "dispatch outcome unknown",
         "unknown" => "error",
         other => other,
     }
@@ -296,6 +298,13 @@ mod tests {
         let unavailable = json!({"type":"vision_bridge","status":"unavailable"});
         let out = format_im_system_event(&unavailable).expect("should render");
         assert!(out.contains("Couldn't read"));
+    }
+
+    #[test]
+    fn ignored_images_include_vision_bridge_guidance() {
+        let event = json!({"type":"vision_auto_disabled"});
+        let out = format_im_system_event(&event).expect("should render");
+        assert!(out.contains("Settings → Models"));
     }
 
     #[test]

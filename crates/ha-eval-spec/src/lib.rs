@@ -28,17 +28,21 @@ pub const WAIVER_SCHEMA_VERSION: &str = "eval-waiver.v1";
 pub enum EvalAdapter {
     CodingFixturePatch,
     CodingGoldFixturePatch,
+    ContextCompactionContract,
     DomainTraceFixture,
     DreamingGolden,
+    KnowledgeRetrievalEvidence,
     MemoryRetrievalScale,
 }
 
 impl EvalAdapter {
-    pub const DETERMINISTIC_V1: [Self; 5] = [
+    pub const DETERMINISTIC_V1: [Self; 7] = [
         Self::CodingFixturePatch,
         Self::CodingGoldFixturePatch,
+        Self::ContextCompactionContract,
         Self::DomainTraceFixture,
         Self::DreamingGolden,
+        Self::KnowledgeRetrievalEvidence,
         Self::MemoryRetrievalScale,
     ];
 }
