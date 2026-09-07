@@ -27,9 +27,9 @@ use super::super::events::{
 };
 use super::super::streaming_adapter::{
     observe_before_send, observe_response_started, ExecutedTool, PreparedProviderRequest,
-    PreparedRequestVariant, ProviderAccountingInput, ProviderDispatchObserver,
-    ProviderDispatchUnknown, ProviderEndpointKind, ProviderRequestShape, RoundOutcome,
-    RoundRequest, StreamingChatAdapter,
+    PreparedRequestVariant, ProviderAccountingInput, ProviderDefinitelyNotSent,
+    ProviderDispatchObserver, ProviderDispatchUnknown, ProviderEndpointKind, ProviderRequestShape,
+    RoundOutcome, RoundRequest, StreamingChatAdapter,
 };
 use super::super::types::{AssistantAgent, ChatUsage, ProviderFormat};
 use crate::tool_defs::ToolProvider;
@@ -1218,7 +1218,16 @@ impl<'a> StreamingChatAdapter for OpenAIResponsesStreamingAdapter<'a> {
                     )
                     .into())
                 }
-                Err(e) => return Err(ProviderDispatchUnknown(e.to_string()).into()),
+                Err(e) => {
+                    return Err(match super::cancel::classify_send_error(e) {
+                        super::cancel::SendErrorPhase::DefinitelyNotSent(error) => {
+                            ProviderDefinitelyNotSent(error.to_string()).into()
+                        }
+                        super::cancel::SendErrorPhase::MayHaveBeenSent(error) => {
+                            ProviderDispatchUnknown(error.to_string()).into()
+                        }
+                    })
+                }
             };
         observe_response_started(observer, prepared, 1, &resp).await?;
 

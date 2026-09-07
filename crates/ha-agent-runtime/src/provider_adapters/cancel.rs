@@ -72,6 +72,19 @@ pub(super) async fn send_with_cancel(
     }
 }
 
+pub(super) enum SendErrorPhase {
+    DefinitelyNotSent(reqwest::Error),
+    MayHaveBeenSent(reqwest::Error),
+}
+
+pub(super) fn classify_send_error(error: reqwest::Error) -> SendErrorPhase {
+    if error.is_connect() {
+        SendErrorPhase::DefinitelyNotSent(error)
+    } else {
+        SendErrorPhase::MayHaveBeenSent(error)
+    }
+}
+
 pub(super) async fn read_text_with_cancel(
     response: reqwest::Response,
     cancel: &Arc<AtomicBool>,

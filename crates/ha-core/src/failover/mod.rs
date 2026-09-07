@@ -467,6 +467,12 @@ pub fn classify_error_with_evidence(
         return (FailoverReason::DispatchUnknown, None);
     }
     if error
+        .downcast_ref::<crate::agent::ProviderDefinitelyNotSent>()
+        .is_some()
+    {
+        return (FailoverReason::Timeout, None);
+    }
+    if error
         .downcast_ref::<crate::context_compact::group_admission::CurrentToolGroupEnvelopeOverflowError>()
         .is_some()
     {
@@ -1000,6 +1006,18 @@ mod tests {
                 Some(ContextOverflowEvidence::TextHint { .. })
             ));
         }
+    }
+
+    #[test]
+    fn definitely_not_sent_is_retryable_timeout() {
+        let error = anyhow::Error::new(crate::agent::ProviderDefinitelyNotSent(
+            "connection establishment failed".to_string(),
+        ));
+        let (reason, evidence) = classify_error_with_evidence(&error);
+        assert_eq!(reason, FailoverReason::Timeout);
+        assert!(evidence.is_none());
+        assert!(reason.is_retryable());
+        assert!(!reason.is_terminal());
     }
 
     #[test]

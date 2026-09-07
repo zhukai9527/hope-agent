@@ -34,7 +34,7 @@ mod side_query;
 mod side_query_stream;
 #[doc(hidden)]
 pub mod streaming_adapter;
-pub use streaming_adapter::ProviderDispatchUnknown;
+pub use streaming_adapter::{ProviderDefinitelyNotSent, ProviderDispatchUnknown};
 #[doc(hidden)]
 pub mod token_manifest;
 #[doc(hidden)]

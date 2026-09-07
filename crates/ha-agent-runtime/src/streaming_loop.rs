@@ -3706,11 +3706,20 @@ impl RuntimeAgentExt for AssistantAgent {
                                     .map_err(|error| {
                                         dispatch_wal_failure("recording send-unknown", &error)
                                     })?;
-                                completed =
-                                    Some(Err(super::streaming_adapter::ProviderDispatchUnknown(
-                                        "provider dispatch ended before response proof".to_string(),
-                                    )
-                                    .into()));
+                                if error
+                                    .downcast_ref::<super::streaming_adapter::ProviderDefinitelyNotSent>()
+                                    .is_some()
+                                {
+                                    completed = Some(Err(error));
+                                } else {
+                                    completed = Some(Err(
+                                        super::streaming_adapter::ProviderDispatchUnknown(
+                                            "provider dispatch ended before response proof"
+                                                .to_string(),
+                                        )
+                                        .into(),
+                                    ));
+                                }
                             } else {
                                 observer
                                     .sink

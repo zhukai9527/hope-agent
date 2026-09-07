@@ -21,9 +21,10 @@ use super::super::events::{
 };
 use super::super::streaming_adapter::{
     observe_before_send, observe_response_started, ExecutedTool, PreparedProviderRequest,
-    PreparedRequestVariant, ProviderAccountingInput, ProviderDispatchObserver,
-    ProviderDispatchUnknown, ProviderEndpointKind, ProviderReprepareReason, ProviderRequestShape,
-    ReprepareRequired, RoundOutcome, RoundRequest, StreamingChatAdapter, VisionInputRejected,
+    PreparedRequestVariant, ProviderAccountingInput, ProviderDefinitelyNotSent,
+    ProviderDispatchObserver, ProviderDispatchUnknown, ProviderEndpointKind,
+    ProviderReprepareReason, ProviderRequestShape, ReprepareRequired, RoundOutcome, RoundRequest,
+    StreamingChatAdapter, VisionInputRejected,
 };
 use super::super::types::{AssistantAgent, ChatUsage, ProviderFormat, ThinkTagFilter};
 use crate::provider::ThinkingStyle;
@@ -586,7 +587,14 @@ async fn send_chat_request(
     }
     let Some(resp) = super::cancel::send_with_cancel(http_req.body(body.to_vec()), cancel)
         .await
-        .map_err(|e| ProviderDispatchUnknown(e.to_string()))?
+        .map_err(|e| match super::cancel::classify_send_error(e) {
+            super::cancel::SendErrorPhase::DefinitelyNotSent(error) => {
+                anyhow::Error::new(ProviderDefinitelyNotSent(error.to_string()))
+            }
+            super::cancel::SendErrorPhase::MayHaveBeenSent(error) => {
+                anyhow::Error::new(ProviderDispatchUnknown(error.to_string()))
+            }
+        })?
     else {
         return Ok(None);
     };
