@@ -15,15 +15,23 @@ ha-core = { path = "../ha-core" }
 
 anyhow = { workspace = true }
 blake3 = "1.8.5"
+chrono = { workspace = true }
 dirs = { workspace = true }
+flate2 = "1"
 ignore = "0.4.25"
 once_cell = { workspace = true }
 regex = { workspace = true }
+reqwest = { workspace = true }
 rust-embed = { version = "8", features = ["include-exclude"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = "3"
+tar = "0.4"
 tokio = { workspace = true }
 uuid = { workspace = true }
+url = { workspace = true }
+zip = "7"
 
 [dev-dependencies]
 ha-core = { path = "../ha-core", features = ["test-support"] }

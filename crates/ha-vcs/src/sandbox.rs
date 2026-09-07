@@ -289,7 +289,7 @@ fn normalize_local_docker_endpoint(raw: &str) -> Option<String> {
 }
 
 fn wsl_local_docker_command(endpoint: &str) -> Option<Command> {
-    let mut command = ha_core::platform::wsl_command()?;
+    let mut command = ha_core::platform::wsl_command(None)?;
     // Prevent WSLENV-exported Docker variables from overriding the validated
     // local endpoint. Docker configuration and registry credentials remain
     // available; only daemon-selection/TLS variables are cleared.
@@ -324,7 +324,7 @@ async fn command_stdout(command: &mut Command) -> Option<String> {
 }
 
 async fn configured_wsl_local_docker_endpoint() -> Option<String> {
-    let mut command = ha_core::platform::wsl_command()?;
+    let mut command = ha_core::platform::wsl_command(None)?;
     // Reading context metadata does not contact the configured daemon. The
     // returned endpoint is still treated as untrusted and accepted only when
     // it is a local Unix socket.
@@ -341,7 +341,7 @@ async fn configured_wsl_local_docker_endpoint() -> Option<String> {
 
 async fn canonicalize_wsl_docker_socket_path(endpoint: &str) -> Option<String> {
     let socket_path = endpoint.strip_prefix("unix://")?;
-    let mut command = ha_core::platform::wsl_command()?;
+    let mut command = ha_core::platform::wsl_command(None)?;
     command.args(["--exec", "readlink", "-f", "--", socket_path]);
     let canonical = command_stdout(&mut command).await?;
     let canonical = canonical.trim();
@@ -391,7 +391,7 @@ async fn wsl_docker_probe() -> WslDockerProbe {
         return probe;
     }
 
-    let Some(mut version) = ha_core::platform::wsl_command() else {
+    let Some(mut version) = ha_core::platform::wsl_command(None) else {
         return probe;
     };
     version.args(["--exec", "docker", "--version"]);
@@ -1349,7 +1349,7 @@ async fn terminate_wsl_docker_client(child: &mut tokio::process::Child) {
 }
 
 async fn wsl_numeric_id(flag: &str) -> Option<String> {
-    let mut command = ha_core::platform::wsl_command()?;
+    let mut command = ha_core::platform::wsl_command(None)?;
     command.args(["--exec", "id", flag]);
     let output = tokio::time::timeout(Duration::from_secs(5), command.output())
         .await
@@ -1386,7 +1386,7 @@ async fn exec_in_wsl_docker(
         )
     })?;
     validate_bind_mount(&host_cwd)?;
-    let wsl_cwd = ha_core::platform::path_to_wsl(&host_cwd)
+    let wsl_cwd = ha_core::platform::path_to_wsl(&host_cwd, None)
         .await
         .map_err(|e| {
             anyhow::anyhow!(
