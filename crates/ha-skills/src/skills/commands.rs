@@ -1150,8 +1150,8 @@ fn import_skill_zip_with_strategy(
         ));
     }
 
-    let target_root =
-        ha_core::paths::skills_dir().context("Cannot resolve Hope Agent managed skills directory")?;
+    let target_root = ha_core::paths::skills_dir()
+        .context("Cannot resolve Hope Agent managed skills directory")?;
     let mut target_names = HashMap::new();
     for skill_name in &dry_run.skill_names {
         let target_name = if rename_conflicts {
@@ -4098,7 +4098,8 @@ fn external_app_skills_root(app: &str) -> Option<PathBuf> {
 
 pub fn list_skills() -> Vec<SkillSummary> {
     let store = ha_core::config::cached_config();
-    let entries = load_all_skills_with_budget(&store.extra_skills_dirs, &store.skill_prompt_budget, None);
+    let entries =
+        load_all_skills_with_budget(&store.extra_skills_dirs, &store.skill_prompt_budget, None);
     let disabled = &store.disabled_skills;
     entries
         .into_iter()
@@ -4221,7 +4222,8 @@ pub fn remove_skill_env_var(skill: &str, key: &str, source: &str) -> Result<()> 
 /// `requires.env` are included.
 pub fn get_skills_env_status() -> HashMap<String, HashMap<String, bool>> {
     let store = ha_core::config::cached_config();
-    let entries = load_all_skills_with_budget(&store.extra_skills_dirs, &store.skill_prompt_budget, None);
+    let entries =
+        load_all_skills_with_budget(&store.extra_skills_dirs, &store.skill_prompt_budget, None);
     let mut result = HashMap::new();
     for entry in &entries {
         if entry.requires.env.is_empty() {
@@ -4244,7 +4246,8 @@ pub fn get_skills_env_status() -> HashMap<String, HashMap<String, bool>> {
 
 pub fn get_skills_status() -> Vec<SkillStatusEntry> {
     let store = ha_core::config::cached_config();
-    let entries = load_all_skills_with_budget(&store.extra_skills_dirs, &store.skill_prompt_budget, None);
+    let entries =
+        load_all_skills_with_budget(&store.extra_skills_dirs, &store.skill_prompt_budget, None);
     check_all_skills_status(
         &entries,
         &store.disabled_skills,
@@ -4282,7 +4285,10 @@ pub fn discard_draft_skill(name: &str) -> Result<()> {
 /// `false` = newly auto-created skills land in `Draft` for manual user activation.
 pub fn get_auto_review_promotion() -> bool {
     matches!(
-        ha_core::config::cached_config().skills.auto_review.promotion,
+        ha_core::config::cached_config()
+            .skills
+            .auto_review
+            .promotion,
         auto_review::AutoReviewPromotion::Auto
     )
 }

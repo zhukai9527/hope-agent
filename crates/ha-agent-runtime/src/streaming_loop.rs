@@ -2539,6 +2539,7 @@ impl RuntimeAgentExt for AssistantAgent {
             }
         };
 
+        let network_timeout = ha_core::config::cached_config().llm_network_timeout.clone();
         let client = crate::provider::apply_proxy(
             reqwest::Client::builder()
                 .user_agent(self.runtime_user_agent())
@@ -2551,7 +2552,15 @@ impl RuntimeAgentExt for AssistantAgent {
                 // budget by default. A request WAL claim must correspond
                 // to exactly one transport attempt, so retries belong to
                 // the outer typed plan state machine only.
-                .retry(reqwest::retry::never()),
+                .retry(reqwest::retry::never())
+                // Bound a silently hanging Provider: connect timeout for
+                // TCP/TLS setup, per-request timeout for the whole call.
+                .connect_timeout(std::time::Duration::from_secs(
+                    network_timeout.connect_timeout_secs,
+                ))
+                .timeout(std::time::Duration::from_secs(
+                    network_timeout.total_timeout_secs,
+                )),
         )
         .build()
         .map_err(|e| anyhow::anyhow!("HTTP client error: {}", e))?;

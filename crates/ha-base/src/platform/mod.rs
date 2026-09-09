@@ -296,6 +296,13 @@ pub fn wsl_tool_on_path(name: &str) -> bool {
     imp::wsl_tool_on_path(name)
 }
 
+/// Probe whether `name` is resolvable inside a specific WSL distribution
+/// (`None` = default). Windows only, synchronous with a short timeout.
+/// Non-Windows returns `false`.
+pub fn wsl_tool_on_path_in(distro: Option<&str>, name: &str) -> bool {
+    imp::wsl_tool_on_path_in(distro, name)
+}
+
 /// Suppress the transient console window that Windows would otherwise flash
 /// when spawning a console subprocess. No-op on Unix.
 ///

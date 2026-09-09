@@ -843,9 +843,24 @@ pub(crate) async fn parse_anthropic_sse(
     let mut buffer = Vec::new();
     let mut saw_message_stop = false;
 
-    'anthropic_stream: while let Some(chunk) =
-        super::cancel::next_chunk_or_cancel(&mut stream, cancel).await
-    {
+    let mut first_token_pending = true;
+
+    'anthropic_stream: loop {
+        let next_chunk = if first_token_pending {
+            let timeout_secs = ha_core::config::cached_config()
+                .llm_network_timeout
+                .first_token_timeout_secs;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                super::cancel::next_chunk_or_cancel(&mut stream, cancel),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("LLM first token timeout after {}s", timeout_secs))?
+        } else {
+            super::cancel::next_chunk_or_cancel(&mut stream, cancel).await
+        };
+        let Some(chunk) = next_chunk else { break };
+        first_token_pending = false;
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(_) if cancel.load(Ordering::SeqCst) => break,

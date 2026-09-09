@@ -420,9 +420,18 @@ pub(super) fn wsl_available() -> bool {
 /// timeout. Non-zero exit, spawn failure, or timeout all mean "not present"
 /// and never panic.
 pub(super) fn wsl_tool_on_path(name: &str) -> bool {
+    wsl_tool_on_path_in(None, name)
+}
+
+/// Probe whether `name` is resolvable inside `distro` (default when `None`).
+/// See [`wsl_tool_on_path`] for the probe mechanics.
+pub(super) fn wsl_tool_on_path_in(distro: Option<&str>, name: &str) -> bool {
     let mut cmd = Command::new("wsl.exe");
     cmd.creation_flags(CREATE_NO_WINDOW);
-    cmd.args(["--exec", "sh", "-lc", &format!("command -v -- \"$1\"", )]);
+    if let Some(distro) = distro.filter(|value| !value.trim().is_empty()) {
+        cmd.args(["-d", distro]);
+    }
+    cmd.args(["--exec", "sh", "-lc", &format!("command -v -- \"$1\"",)]);
     cmd.arg("probe").arg(name);
     cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

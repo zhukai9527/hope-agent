@@ -852,6 +852,26 @@ pub async fn save_timeout_policy_config(
 }
 
 #[tauri::command]
+pub async fn get_llm_network_timeout_config(
+) -> Result<ha_core::config::LlmNetworkTimeoutConfig, CmdError> {
+    let store = ha_core::config::load_config()?;
+    Ok(store.llm_network_timeout)
+}
+
+#[tauri::command]
+pub async fn save_llm_network_timeout_config(
+    config: ha_core::config::LlmNetworkTimeoutConfig,
+) -> Result<(), CmdError> {
+    ha_core::config::validate_llm_network_timeout(&config).map_err(CmdError::msg)?;
+    ha_core::config::mutate_config_async(("llm_network_timeout", "settings-ui"), move |store| {
+        store.llm_network_timeout = config;
+        Ok(())
+    })
+    .await
+    .map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn get_approval_timeout() -> Result<u64, CmdError> {
     let store = ha_core::config::load_config()?;
     Ok(store.permission.approval_timeout_secs)

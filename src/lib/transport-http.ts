@@ -1772,6 +1772,14 @@ const COMMAND_MAP: Record<string, EndpointDef> = {
   set_tool_timeout: { method: "POST", path: "/api/config/tool-timeout" },
   get_timeout_policy_config: { method: "GET", path: "/api/config/timeout-policy" },
   save_timeout_policy_config: { method: "PUT", path: "/api/config/timeout-policy" },
+  get_llm_network_timeout_config: {
+    method: "GET",
+    path: "/api/config/llm-network-timeout",
+  },
+  save_llm_network_timeout_config: {
+    method: "PUT",
+    path: "/api/config/llm-network-timeout",
+  },
   get_approval_timeout: { method: "GET", path: "/api/config/approval-timeout" },
   set_approval_timeout: { method: "POST", path: "/api/config/approval-timeout" },
   get_approval_timeout_enabled: { method: "GET", path: "/api/config/approval-timeout-enabled" },

@@ -41,7 +41,10 @@ impl ExecutionTarget {
             "host" => Ok(Self::Host),
             "wsl" => Ok(Self::Wsl),
             "docker" => Ok(Self::Docker),
-            other => Err(anyhow::anyhow!("Unsupported exec target '{}'; expected auto, host, wsl, or docker", other)),
+            other => Err(anyhow::anyhow!(
+                "Unsupported exec target '{}'; expected auto, host, wsl, or docker",
+                other
+            )),
         }
     }
 }
@@ -73,7 +76,9 @@ fn resolve_auto_target(
     wsl_ok: bool,
     probe_wsl: &dyn Fn(&str) -> bool,
 ) -> (ExecutionTarget, String) {
-    if force_sandbox || requested_sandbox || sandbox_mode == crate::permission::SandboxMode::Isolated
+    if force_sandbox
+        || requested_sandbox
+        || sandbox_mode == crate::permission::SandboxMode::Isolated
     {
         return (ExecutionTarget::Docker, String::from("forced-isolation"));
     }
@@ -86,7 +91,10 @@ fn resolve_auto_target(
     // Never hand a Linux/WSL working tree to the Windows shell. Native Windows
     // paths stay on Host so node_modules and native toolchains are not mixed.
     if cfg!(windows) {
-        let path = cwd.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+        let path = cwd
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
         if path.starts_with("/home/") || path.starts_with("/mnt/") {
             // A WSL working tree cannot reach native Windows tools; prefer WSL
             // when the leading command is available there, else Docker.
@@ -106,10 +114,7 @@ fn resolve_auto_target(
         if wsl_ok && probe_wsl(&tool) {
             return (ExecutionTarget::Wsl, format!("wsl:{}true", tool));
         }
-        return (
-            ExecutionTarget::Docker,
-            format!("fallback:{}false", tool),
-        );
+        return (ExecutionTarget::Docker, format!("fallback:{}false", tool));
     }
 
     (ExecutionTarget::Host, String::from("no-token"))
@@ -854,6 +859,18 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
     let session_cwd = cwd.clone().unwrap_or_else(|| ctx.default_cwd());
     let target = ExecutionTarget::parse(args.get("target").and_then(|v| v.as_str()))?;
     let mut probe_result = String::new();
+    // Auto WSL target may need to try multiple installed distributions before
+    // falling through to Docker. `wsl_tool_on_path` only probes the default
+    // distro; a tool that lives only in a non-default distro (e.g. Docker
+    // inside a Debian/other distro while Ubuntu is the default) would be
+    // missed and incorrectly fall back to Docker. Enumerate all distros up
+    // front and remember which one actually resolved the tool.
+    let wsl_distros = if cfg!(windows) && crate::platform::wsl_available() {
+        crate::platform::wsl_distributions().await
+    } else {
+        Vec::new()
+    };
+    let auto_wsl_distro: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
     let effective_target = match target {
         ExecutionTarget::Auto => {
             let (elected, probe) = resolve_auto_target(
@@ -864,15 +881,38 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
                 requested_sandbox,
                 &|name| crate::platform::command_on_path(name),
                 crate::platform::wsl_available(),
-                &|name| crate::platform::wsl_tool_on_path(name),
+                &|name| {
+                    // Default distro first — zero-arg matches what the shell
+                    // would resolve, so it stays preferred when present.
+                    if crate::platform::wsl_tool_on_path(name) {
+                        return true;
+                    }
+                    for distro in &wsl_distros {
+                        if crate::platform::wsl_tool_on_path_in(Some(distro), name) {
+                            *auto_wsl_distro.borrow_mut() = Some(distro.clone());
+                            return true;
+                        }
+                    }
+                    false
+                },
             );
-            probe_result = probe;
+            probe_result = format!(
+                "{}{}",
+                probe,
+                auto_wsl_distro
+                    .borrow()
+                    .as_ref()
+                    .map(|d| format!(":wslDistro={}", d))
+                    .unwrap_or_default()
+            );
             elected
         }
         explicit => explicit,
     };
     if matches!(effective_target, ExecutionTarget::Wsl) && !cfg!(windows) {
-        return Err(anyhow::anyhow!("exec target=wsl is only supported on Windows; use target=host on macOS/Linux"));
+        return Err(anyhow::anyhow!(
+            "exec target=wsl is only supported on Windows; use target=host on macOS/Linux"
+        ));
     }
     // GUI turns are represented as `Some(Gui)` in the execution context.
     // Do not reject the attended desktop owner merely because the source is
@@ -881,14 +921,18 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         ctx.chat_source,
         None | Some(crate::knowledge::KbAccessSource::Gui)
     );
-    if matches!(effective_target, ExecutionTarget::Host | ExecutionTarget::Wsl)
-        && (!crate::app_init::is_desktop()
-            || !host_allowed_source
-            || ctx.subagent_depth > 0)
+    if matches!(
+        effective_target,
+        ExecutionTarget::Host | ExecutionTarget::Wsl
+    ) && (!crate::app_init::is_desktop() || !host_allowed_source || ctx.subagent_depth > 0)
     {
         return Err(anyhow::anyhow!(
             "exec target={} is restricted to the attended desktop owner execution surface",
-            match effective_target { ExecutionTarget::Host => "host", ExecutionTarget::Wsl => "wsl", _ => "auto" }
+            match effective_target {
+                ExecutionTarget::Host => "host",
+                ExecutionTarget::Wsl => "wsl",
+                _ => "auto",
+            }
         ));
     }
     let sandbox_mode = if matches!(effective_target, ExecutionTarget::Docker) {
@@ -907,7 +951,11 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         ExecutionTarget::Wsl => "wsl",
         ExecutionTarget::Docker => "docker",
     };
-    let distro = args.get("distro").and_then(|v| v.as_str());
+    let distro = args
+        .get("distro")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| auto_wsl_distro.borrow().clone());
 
     let yield_ms = args
         .get("yield_ms")
@@ -966,7 +1014,7 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
         ExecutionTarget::Wsl => crate::platform::wsl_shell_command(
             command,
             std::path::Path::new(&session_cwd),
-            distro,
+            distro.as_deref(),
         )
         .ok_or_else(|| anyhow::anyhow!("exec target=wsl is unavailable on this platform"))?,
         ExecutionTarget::Host | ExecutionTarget::Auto => {
@@ -976,7 +1024,10 @@ pub(crate) async fn tool_exec(args: &Value, ctx: &super::ToolExecContext) -> Res
     };
 
     // WSL receives its cwd through `--cd`; host commands use the native path.
-    if !matches!(effective_target, ExecutionTarget::Wsl | ExecutionTarget::Docker) {
+    if !matches!(
+        effective_target,
+        ExecutionTarget::Wsl | ExecutionTarget::Docker
+    ) {
         cmd.current_dir(&session_cwd);
     }
 

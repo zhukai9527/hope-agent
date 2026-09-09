@@ -1704,6 +1704,14 @@ fn build_router_with_cors(
             put(routes::config::save_timeout_policy_config),
         )
         .route(
+            "/config/llm-network-timeout",
+            get(routes::config::get_llm_network_timeout_config),
+        )
+        .route(
+            "/config/llm-network-timeout",
+            put(routes::config::save_llm_network_timeout_config),
+        )
+        .route(
             "/config/approval-timeout",
             get(routes::config::get_approval_timeout),
         )

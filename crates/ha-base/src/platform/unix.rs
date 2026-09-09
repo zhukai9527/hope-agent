@@ -550,7 +550,7 @@ pub(super) fn hide_console_tokio(_cmd: &mut tokio::process::Command) {}
 /// resolvable; failures never record environment details.
 pub(super) fn command_on_path(name: &str) -> bool {
     let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(format!("command -v -- \"$1\"", ));
+    cmd.arg("-c").arg(format!("command -v -- \"$1\"",));
     cmd.arg("probe").arg(name);
     cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -577,6 +577,10 @@ pub(super) async fn wsl_status() -> super::WslStatus {
 
 pub(super) async fn wsl_distributions() -> Vec<String> {
     Vec::new()
+}
+
+pub(super) fn wsl_tool_on_path_in(_distro: Option<&str>, _name: &str) -> bool {
+    false
 }
 
 pub(super) async fn path_to_wsl(_path: &Path, _distro: Option<&str>) -> io::Result<Option<String>> {

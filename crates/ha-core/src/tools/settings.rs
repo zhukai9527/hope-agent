@@ -92,6 +92,7 @@ const SETTINGS_CATEGORY_RISKS: &[(&str, &str)] = &[
     ("web_fetch", "medium"),
     ("web_search", "medium"),
     ("timeout_policy", "medium"),
+    ("llm_network_timeout", "medium"),
     ("deferred_tools", "medium"),
     ("async_tools", "medium"),
     ("approval", "medium"),
@@ -275,6 +276,9 @@ fn side_effect_note(category: &str) -> Option<&'static str> {
         ),
         "timeout_policy" => Some(
             "Controls model-supplied runtime timeout overrides for long-running work (exec.timeout, async job_timeout_secs, sub-agent / ACP / cron per-job timeouts). It does not affect short polling windows or network/connect timeouts. modelRuntimeOverrides = allow | warn | ignore_when_user_unlimited."
+        ),
+        "llm_network_timeout" => Some(
+            "Network-layer timeouts for LLM provider HTTP calls. connectTimeoutSecs bounds TCP/TLS setup, totalTimeoutSecs bounds the whole request, firstTokenTimeoutSecs bounds time-to-first-token. All three must be positive and ≤ total. Tuning them changes how long a silently hanging Provider blocks the turn before it fails as a classified Timeout (retryable); lowering firstToken/total too far can interrupt slow-but-healthy streaming."
         ),
         "mcp_servers" => Some(
             "Read-only via this tool. Server configs carry OAuth tokens, stdio command paths and trust acknowledgements; writes must go through Settings → MCP Servers which drives the trust dialog and writes credentials with 0600 permissions."
@@ -621,6 +625,7 @@ fn read_category(category: &str) -> Result<Value> {
         "reasoning_effort" => Ok(json!({ "reasoningEffort": cfg.reasoning_effort })),
         "tool_timeout" => Ok(json!({ "toolTimeout": cfg.tool_timeout })),
         "timeout_policy" => Ok(serde_json::to_value(&cfg.timeout_policy)?),
+        "llm_network_timeout" => Ok(serde_json::to_value(&cfg.llm_network_timeout)?),
         "unattended_approval" => Ok(json!({
             "unattendedApprovalAction": cfg.permission.unattended_approval_action,
         })),
@@ -1246,6 +1251,14 @@ fn apply_app_config_update(
             }
         }
         "timeout_policy" => merge_field(&mut store.timeout_policy, values)?,
+        "llm_network_timeout" => {
+            let next = serde_json::from_value::<crate::config::LlmNetworkTimeoutConfig>(
+                serde_json::to_value(values)?,
+            )
+            .map_err(|e| anyhow::anyhow!("invalid llm_network_timeout payload: {e}"))?;
+            crate::config::validate_llm_network_timeout(&next).map_err(anyhow::Error::msg)?;
+            store.llm_network_timeout = next;
+        }
         "approval" => {
             if let Some(v) = values
                 .get("approvalTimeoutEnabled")

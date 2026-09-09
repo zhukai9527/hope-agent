@@ -680,6 +680,8 @@ pub fn run() {
             commands::config::set_tool_timeout,
             commands::config::get_timeout_policy_config,
             commands::config::save_timeout_policy_config,
+            commands::config::get_llm_network_timeout_config,
+            commands::config::save_llm_network_timeout_config,
             commands::config::get_approval_timeout,
             commands::config::get_approval_timeout_enabled,
             commands::config::set_approval_timeout,

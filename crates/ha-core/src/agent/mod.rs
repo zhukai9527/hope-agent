@@ -4677,7 +4677,7 @@ impl AssistantAgent {
             agent_tool_filter,
             denied_tools,
             skill_allowed_tools,
-            force_sandbox: sandbox_mode.enabled(),
+            force_sandbox: sandbox_mode == crate::permission::SandboxMode::Isolated,
             sandbox_mode,
             // Load both ArcSwaps once per ctx build so the snapshot is
             // internally consistent with the schema build that just preceded

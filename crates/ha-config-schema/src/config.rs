@@ -103,6 +103,76 @@ pub struct TimeoutPolicyConfig {
     pub model_runtime_overrides: ModelRuntimeTimeoutOverrides,
 }
 
+/// Network-layer timeouts for LLM provider HTTP calls. Independent of
+/// `tool_timeout` / model-supplied runtime overrides: those govern how long a
+/// long-running foreground job may keep the UI attached, while these bound the
+/// HTTP transport itself so a silently hanging Provider (no response headers,
+/// no first token) fails with a classified `Timeout` instead of blocking the
+/// turn indefinitely.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmNetworkTimeoutConfig {
+    /// TCP/TLS connect timeout in seconds. Applied to the reqwest client used
+    /// for chat / side-query / automation model calls.
+    #[serde(default = "default_llm_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+    /// Whole-request timeout in seconds (connect + send + full response body).
+    /// Applied as the reqwest per-request timeout, so a Provider that accepts
+    /// the request but never finishes streaming also terminates.
+    #[serde(default = "default_llm_total_timeout_secs")]
+    pub total_timeout_secs: u64,
+    /// Time-to-first-token budget in seconds. The streaming loop waits up to
+    /// this long for the first SSE chunk after response headers; on expiry the
+    /// turn fails with `Timeout` instead of hanging on an empty stream.
+    #[serde(default = "default_llm_first_token_timeout_secs")]
+    pub first_token_timeout_secs: u64,
+}
+
+impl Default for LlmNetworkTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout_secs: default_llm_connect_timeout_secs(),
+            total_timeout_secs: default_llm_total_timeout_secs(),
+            first_token_timeout_secs: default_llm_first_token_timeout_secs(),
+        }
+    }
+}
+
+fn default_llm_connect_timeout_secs() -> u64 {
+    30
+}
+
+fn default_llm_total_timeout_secs() -> u64 {
+    600
+}
+
+fn default_llm_first_token_timeout_secs() -> u64 {
+    120
+}
+
+/// Validate network timeouts: connect <= total, first-token <= total, and all
+/// values are positive. `0` is rejected because an unbounded Provider call is
+/// exactly the hang this config exists to prevent.
+pub fn validate_llm_network_timeout(config: &LlmNetworkTimeoutConfig) -> Result<(), String> {
+    let connect = config.connect_timeout_secs;
+    let total = config.total_timeout_secs;
+    let first_token = config.first_token_timeout_secs;
+    if connect == 0 || total == 0 || first_token == 0 {
+        return Err("LLM network timeouts must be positive (connect/total/firstToken > 0)".into());
+    }
+    if connect > total {
+        return Err(format!(
+            "LLM connect timeout ({connect}s) cannot exceed total timeout ({total}s)"
+        ));
+    }
+    if first_token > total {
+        return Err(format!(
+            "LLM first-token timeout ({first_token}s) cannot exceed total timeout ({total}s)"
+        ));
+    }
+    Ok(())
+}
+
 // ── Quick Prompt Config ──────────────────────────────────────────
 
 pub const MAX_QUICK_PROMPT_CONTENT_CHARS: usize = 20_000;
@@ -1394,6 +1464,11 @@ pub struct AppConfig {
     /// waits and network request timeouts keep their own bounded semantics.
     #[serde(default)]
     pub timeout_policy: TimeoutPolicyConfig,
+    /// Network-layer timeouts for LLM provider HTTP calls (connect / total /
+    /// first-token). Governed by `ha-settings` (MEDIUM category) and the
+    /// Provider Settings UI; validated by `validate_llm_network_timeout`.
+    #[serde(default)]
+    pub llm_network_timeout: LlmNetworkTimeoutConfig,
     /// Threshold (bytes) for persisting large tool results to disk.
     /// Results exceeding this size are written to disk with a preview in context.
     /// Default: 50000 (50KB). Set to 0 to disable.
@@ -1711,6 +1786,7 @@ impl Default for AppConfig {
             pdf: crate::tools::pdf::PdfToolConfig::default(),
             tool_timeout: default_tool_timeout(),
             timeout_policy: TimeoutPolicyConfig::default(),
+            llm_network_timeout: LlmNetworkTimeoutConfig::default(),
             tool_result_disk_threshold: None,
             theme: default_theme(),
             enhanced_focus_indicators: false,

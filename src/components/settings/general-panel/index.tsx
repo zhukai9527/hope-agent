@@ -12,6 +12,7 @@ import {
 } from "./SystemSection"
 import ShortcutSection from "./ShortcutSection"
 import ProxySection from "./ProxySection"
+import LlmNetworkTimeoutSection from "./LlmNetworkTimeoutSection"
 import OnboardingResetSection from "./OnboardingResetSection"
 import FocusIndicatorSection from "./FocusIndicatorSection"
 import SettingsResetControl from "../SettingsResetControl"
@@ -88,7 +89,10 @@ export default function GeneralPanel() {
 
         {/* Network / Proxy */}
         <TabsContent value="network" className="flex-1 overflow-y-auto px-6 pb-6">
-          <ProxySection key={revisions.network} />
+          <div className="w-full space-y-8 pt-4">
+            <ProxySection key={revisions.network} />
+            <LlmNetworkTimeoutSection />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

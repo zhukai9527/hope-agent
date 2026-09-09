@@ -698,6 +698,26 @@ pub async fn save_timeout_policy_config(
     Ok(Json(json!({ "saved": true })))
 }
 
+/// `GET /api/config/llm-network-timeout` -- get LLM network-layer timeouts.
+pub async fn get_llm_network_timeout_config(
+) -> Result<Json<ha_core::config::LlmNetworkTimeoutConfig>, AppError> {
+    let store = load_config()?;
+    Ok(Json(store.llm_network_timeout))
+}
+
+/// `PUT /api/config/llm-network-timeout` -- save LLM network-layer timeouts.
+pub async fn save_llm_network_timeout_config(
+    Json(body): Json<ConfigBody<ha_core::config::LlmNetworkTimeoutConfig>>,
+) -> Result<Json<Value>, AppError> {
+    ha_core::config::validate_llm_network_timeout(&body.config).map_err(AppError::bad_request)?;
+    ha_core::config::mutate_config_async(("llm_network_timeout", "http"), move |store| {
+        store.llm_network_timeout = body.config;
+        Ok(())
+    })
+    .await?;
+    Ok(Json(json!({ "saved": true })))
+}
+
 /// `GET /api/config/approval-timeout` -- get tool approval wait timeout (seconds).
 pub async fn get_approval_timeout() -> Result<Json<Value>, AppError> {
     let store = load_config()?;
